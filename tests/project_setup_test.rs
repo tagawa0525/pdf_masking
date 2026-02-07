@@ -2,37 +2,37 @@
 
 #[test]
 fn test_cargo_dependencies_present() {
-    // Cargo.tomlに必要な依存関係が全て定義されていることを確認
     let manifest = std::fs::read_to_string("Cargo.toml").expect("Cargo.toml should exist");
 
+    // [dependencies] セクション内のキー名として存在するか確認
+    // 行頭が依存名で始まるパターンでマッチし、部分文字列の偽陽性を防ぐ
     let required_deps = [
         "thiserror",
-        "serde",
-        "serde_yaml",
+        "serde ", // "serde_yml" と区別するためスペース付き
+        "serde_yml",
         "rayon",
         "sha2",
         "hex",
-        "anyhow",
     ];
 
     for dep in required_deps {
+        let dep_trimmed = dep.trim();
+        let found = manifest.lines().any(|line| {
+            let trimmed = line.trim();
+            trimmed.starts_with(dep_trimmed)
+                && trimmed[dep_trimmed.len()..]
+                    .starts_with(|c: char| c == ' ' || c == '=' || c == '.')
+        });
         assert!(
-            manifest.contains(dep),
+            found,
             "Cargo.toml should contain dependency: {}",
-            dep
+            dep_trimmed
         );
     }
 }
 
 #[test]
-fn test_error_module_compiles() {
-    // error.rs モジュールがコンパイルできることを確認
-    // 実際のコンパイルテストはcargo buildで行われる
-}
-
-#[test]
 fn test_all_module_stubs_exist() {
-    // 全モジュールファイルが存在することを確認
     let module_paths = [
         "src/error.rs",
         "src/config/mod.rs",
