@@ -21,7 +21,8 @@ lopdf = "0.39.0"
 # Leptonica (Phase 3+, via system library)
 leptonica-sys = "0.4.9"
 
-# JBIG2 encoding (Phase 4+, will use custom C bindings)
+# JBIG2 encoding (Phase 4+, via C++ shim)
+libc = "0.2"
 
 # Parallel processing
 rayon = "1.11.0"
@@ -29,6 +30,9 @@ rayon = "1.11.0"
 # Hashing
 sha2 = "0.10.9"
 hex = "0.4.3"
+
+[build-dependencies]
+cc = "1.2"
 
 # Testing utilities
 [dev-dependencies]
