@@ -1,11 +1,24 @@
 // Phase 3: 安全ラッパー（Pix型、RAII Drop）
 
 use super::leptonica_sys::{
-    pixClone, pixCreate, pixDestroy, pixGetData, pixGetDepth, pixGetHeight, pixGetRegionsBinary,
-    pixGetWidth, pixGetWpl, pixOtsuAdaptiveThreshold, pixSetAll, PIX,
+    pixClone, pixConvertRGBToGray, pixCreate, pixDestroy, pixGetData, pixGetDepth, pixGetHeight,
+    pixGetRegionsBinary, pixGetWidth, pixGetWpl, pixOtsuAdaptiveThreshold, pixSetAll, PIX,
 };
 use crate::error::{PdfMaskError, Result};
 use std::ptr;
+
+/// Named result from `pixGetRegionsBinary`.
+///
+/// Each field is `None` when leptonica returned a NULL pointer for that
+/// region type (e.g. the image contains no halftone regions).
+pub struct RegionMasks {
+    /// Halftone (image) region mask
+    pub halftone: Option<Pix>,
+    /// Textline region mask
+    pub textline: Option<Pix>,
+    /// Text block region mask
+    pub block: Option<Pix>,
+}
 
 /// Safe wrapper around leptonica's PIX structure
 /// Implements RAII pattern for automatic memory management
@@ -172,9 +185,13 @@ impl Pix {
 
     /// Get region masks from binary image
     ///
+    /// Returns a [`RegionMasks`] with named fields for each mask type.
+    /// Each field is `None` when leptonica returns a NULL pointer for that
+    /// region (e.g., no halftone regions detected).
+    ///
     /// # Returns
-    /// `Ok(Vec<Pix>)` containing mask for each region, `Err` on failure
-    pub fn get_region_masks(&self) -> Result<Vec<Pix>> {
+    /// `Ok(RegionMasks)` on success, `Err` on failure
+    pub fn get_region_masks(&self) -> Result<RegionMasks> {
         unsafe {
             let mut pix_hm: *mut PIX = ptr::null_mut();
             let mut pix_tm: *mut PIX = ptr::null_mut();
@@ -201,19 +218,27 @@ impl Pix {
                 return Err(PdfMaskError::segmentation("Failed to get region masks"));
             }
 
-            // Collect the three output masks if they were created
-            let mut masks = Vec::new();
-            if !pix_hm.is_null() {
-                masks.push(Pix { ptr: pix_hm });
-            }
-            if !pix_tm.is_null() {
-                masks.push(Pix { ptr: pix_tm });
-            }
-            if !pix_tb.is_null() {
-                masks.push(Pix { ptr: pix_tb });
-            }
+            let halftone = if pix_hm.is_null() {
+                None
+            } else {
+                Some(Pix { ptr: pix_hm })
+            };
+            let textline = if pix_tm.is_null() {
+                None
+            } else {
+                Some(Pix { ptr: pix_tm })
+            };
+            let block = if pix_tb.is_null() {
+                None
+            } else {
+                Some(Pix { ptr: pix_tb })
+            };
 
-            Ok(masks)
+            Ok(RegionMasks {
+                halftone,
+                textline,
+                block,
+            })
         }
     }
 
@@ -276,6 +301,26 @@ impl Pix {
             let ptr = pixClone(self.ptr);
             if ptr.is_null() {
                 Err(PdfMaskError::segmentation("Failed to clone Pix"))
+            } else {
+                Ok(Pix { ptr })
+            }
+        }
+    }
+
+    /// Convert a 32-bit RGB(A) Pix to an 8-bit grayscale Pix.
+    ///
+    /// Uses default luminance weights (0.3 R, 0.59 G, 0.11 B) when all
+    /// weight parameters are zero.
+    ///
+    /// # Returns
+    /// `Ok(Pix)` containing the 8-bit grayscale image, `Err` on failure
+    pub fn convert_to_gray(&self) -> Result<Pix> {
+        unsafe {
+            let ptr = pixConvertRGBToGray(self.ptr, 0.0, 0.0, 0.0);
+            if ptr.is_null() {
+                Err(PdfMaskError::segmentation(
+                    "Failed to convert Pix to grayscale",
+                ))
             } else {
                 Ok(Pix { ptr })
             }

@@ -1,2 +1,35 @@
-// Phase 5: image crate: fg/bg → JPEG bytes
-// TODO: Implement in Phase 5
+// Phase 5: image crate: fg/bg -> JPEG bytes
+
+use crate::error::PdfMaskError;
+use image::{DynamicImage, RgbaImage};
+use std::io::Cursor;
+
+/// Encode raw RGBA pixel data to JPEG bytes.
+///
+/// Converts RGBA to RGB (dropping the alpha channel) and compresses with
+/// the specified quality (1-100).
+///
+/// # Arguments
+/// * `rgba_data` - Raw RGBA pixel data (4 bytes per pixel)
+/// * `width`     - Image width in pixels
+/// * `height`    - Image height in pixels
+/// * `quality`   - JPEG quality (1 = worst, 100 = best)
+pub fn encode_rgba_to_jpeg(
+    rgba_data: &[u8],
+    width: u32,
+    height: u32,
+    quality: u8,
+) -> crate::error::Result<Vec<u8>> {
+    let img = RgbaImage::from_raw(width, height, rgba_data.to_vec())
+        .ok_or_else(|| PdfMaskError::jpeg_encode("Failed to create image from RGBA data"))?;
+
+    let dynamic = DynamicImage::ImageRgba8(img);
+    let rgb = dynamic.to_rgb8();
+
+    let mut buf = Cursor::new(Vec::new());
+    let encoder = image::codecs::jpeg::JpegEncoder::new_with_quality(&mut buf, quality);
+    rgb.write_with_encoder(encoder)
+        .map_err(|e| PdfMaskError::jpeg_encode(e.to_string()))?;
+
+    Ok(buf.into_inner())
+}

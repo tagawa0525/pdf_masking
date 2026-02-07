@@ -65,6 +65,14 @@ fn test_pix_get_region_masks() {
     let pix = pix.unwrap();
     let result = pix.get_region_masks();
     assert!(result.is_ok());
+
+    // RegionMasks has named fields; each may be None for empty images
+    let masks = result.unwrap();
+    // For a blank 1-bit image, textline may or may not be detected
+    // Just verify the struct is accessible
+    let _ = masks.halftone;
+    let _ = masks.textline;
+    let _ = masks.block;
 }
 
 // Fix #2, #10: Renamed from test_pix_clone_independence to
