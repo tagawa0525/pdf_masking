@@ -36,60 +36,67 @@ impl PdfReader {
 
         let mut names = Vec::new();
 
-        // リソース辞書からXObjectを収集するクロージャ
-        let mut collect_from_dict = |dict: &lopdf::Dictionary| {
-            if let Ok(xobject_entry) = dict.get(b"XObject") {
-                let xobject_dict = match xobject_entry {
-                    lopdf::Object::Dictionary(d) => Some(d),
-                    lopdf::Object::Reference(id) => self
-                        .doc
-                        .get_object(*id)
-                        .and_then(lopdf::Object::as_dict)
-                        .ok(),
-                    _ => None,
-                };
-                if let Some(xobject_dict) = xobject_dict {
-                    for (name_bytes, value) in xobject_dict.iter() {
-                        // XObjectの実体を取得してSubtype=Imageかチェック
-                        let obj_dict = match value {
-                            lopdf::Object::Reference(id) => self
-                                .doc
-                                .get_object(*id)
-                                .and_then(lopdf::Object::as_stream)
-                                .map(|s| &s.dict)
-                                .ok(),
-                            lopdf::Object::Stream(s) => Some(&s.dict),
-                            _ => None,
-                        };
-                        if let Some(d) = obj_dict {
-                            if let Ok(subtype) = d.get(b"Subtype").and_then(lopdf::Object::as_name)
-                            {
-                                if subtype == b"Image" {
-                                    if let Ok(name) = std::str::from_utf8(name_bytes) {
-                                        names.push(name.to_string());
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        };
-
         // ページ辞書に直接埋め込まれたResources
         if let Some(dict) = resource_dict {
-            collect_from_dict(dict);
+            names.extend(self.collect_image_names_from_dict(dict)?);
         }
 
         // 参照されているResources（親ページツリーから継承されたものも含む）
         for res_id in resource_ids {
-            if let Ok(dict) = self.doc.get_dictionary(res_id) {
-                collect_from_dict(dict);
-            }
+            let dict = self
+                .doc
+                .get_dictionary(res_id)
+                .map_err(|e| crate::error::PdfMaskError::pdf_read(e.to_string()))?;
+            names.extend(self.collect_image_names_from_dict(dict)?);
         }
 
         names.sort();
         names.dedup();
+        Ok(names)
+    }
+
+    /// リソース辞書からXObject/Image名を収集する。
+    fn collect_image_names_from_dict(
+        &self,
+        dict: &lopdf::Dictionary,
+    ) -> crate::error::Result<Vec<String>> {
+        let mut names = Vec::new();
+
+        let xobject_entry = match dict.get(b"XObject") {
+            Ok(entry) => entry,
+            Err(_) => return Ok(names), // XObjectエントリがない場合は空を返す
+        };
+
+        let xobject_dict = match xobject_entry {
+            lopdf::Object::Dictionary(d) => d,
+            lopdf::Object::Reference(id) => self
+                .doc
+                .get_object(*id)
+                .and_then(lopdf::Object::as_dict)
+                .map_err(|e| crate::error::PdfMaskError::pdf_read(e.to_string()))?,
+            _ => return Ok(names),
+        };
+
+        for (name_bytes, value) in xobject_dict.iter() {
+            // XObjectの実体を取得してSubtype=Imageかチェック
+            let obj_dict = match value {
+                lopdf::Object::Reference(id) => self
+                    .doc
+                    .get_object(*id)
+                    .and_then(lopdf::Object::as_stream)
+                    .map(|s| &s.dict)
+                    .map_err(|e| crate::error::PdfMaskError::pdf_read(e.to_string()))?,
+                lopdf::Object::Stream(s) => &s.dict,
+                _ => continue,
+            };
+            if let Ok(subtype) = obj_dict.get(b"Subtype").and_then(lopdf::Object::as_name) {
+                if subtype == b"Image" {
+                    let name = String::from_utf8_lossy(name_bytes);
+                    names.push(name.into_owned());
+                }
+            }
+        }
+
         Ok(names)
     }
 

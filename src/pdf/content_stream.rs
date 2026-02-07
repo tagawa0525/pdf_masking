@@ -60,11 +60,14 @@ pub struct ImagePlacement {
     pub bbox: BBox,
 }
 
-/// コンテンツストリームを解析し、画像XObjectの配置情報を抽出する。
+/// コンテンツストリームを解析し、全XObjectの配置情報を抽出する。
 ///
 /// CTMスタック(q/Q)を追跡し、cmオペレータでCTMを更新する。
 /// DoオペレータでXObject名とその時点のCTM・BBoxを記録する。
-pub fn extract_image_placements(content_bytes: &[u8]) -> crate::error::Result<Vec<ImagePlacement>> {
+/// Image XObjectだけでなくForm XObjectも含む全XObjectの配置を返す。
+pub fn extract_xobject_placements(
+    content_bytes: &[u8],
+) -> crate::error::Result<Vec<ImagePlacement>> {
     // 空バイト列の場合、lopdfのパーサがエラーを返す可能性があるため特別扱い
     if content_bytes.is_empty() {
         return Ok(Vec::new());

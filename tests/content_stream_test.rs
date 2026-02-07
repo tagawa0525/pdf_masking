@@ -1,6 +1,6 @@
 // Phase 2: コンテンツストリーム解析テスト
 
-use pdf_masking::pdf::content_stream::{extract_image_placements, Matrix};
+use pdf_masking::pdf::content_stream::{extract_xobject_placements, Matrix};
 use pdf_masking::pdf::reader::PdfReader;
 
 use lopdf::content::{Content, Operation};
@@ -69,7 +69,7 @@ fn create_test_pdf(
 
     doc.save(&path).expect("save PDF");
 
-    let path_str = path.to_str().unwrap().to_string();
+    let path_str = path.to_string_lossy().to_string();
     (dir, path_str)
 }
 
@@ -159,7 +159,7 @@ fn test_open_nonexistent_file() {
 #[test]
 fn test_ctm_identity() {
     // 空のコンテンツストリーム → ImagePlacement無し
-    let placements = extract_image_placements(b"").expect("parse empty stream");
+    let placements = extract_xobject_placements(b"").expect("parse empty stream");
     assert!(
         placements.is_empty(),
         "empty stream should yield no placements"
@@ -186,7 +186,7 @@ fn test_ctm_cm_operator() {
     ];
     let content = Content { operations: ops };
     let bytes = content.encode().expect("encode");
-    let placements = extract_image_placements(&bytes).expect("parse");
+    let placements = extract_xobject_placements(&bytes).expect("parse");
     assert_eq!(placements.len(), 1);
     let p = &placements[0];
     assert_eq!(p.name, "Im1");
@@ -234,7 +234,7 @@ fn test_graphics_state_save_restore() {
     ];
     let content = Content { operations: ops };
     let bytes = content.encode().expect("encode");
-    let placements = extract_image_placements(&bytes).expect("parse");
+    let placements = extract_xobject_placements(&bytes).expect("parse");
     assert_eq!(placements.len(), 1);
     // Q後なのでCTMはidentityに戻る
     assert_eq!(placements[0].ctm, Matrix::identity());
@@ -245,7 +245,7 @@ fn test_do_operator_extracts_image() {
     let ops = vec![Operation::new("Do", vec![Object::Name(b"Im1".to_vec())])];
     let content = Content { operations: ops };
     let bytes = content.encode().expect("encode");
-    let placements = extract_image_placements(&bytes).expect("parse");
+    let placements = extract_xobject_placements(&bytes).expect("parse");
     assert_eq!(placements.len(), 1);
     assert_eq!(placements[0].name, "Im1");
     assert_eq!(placements[0].ctm, Matrix::identity());
@@ -281,7 +281,7 @@ fn test_multiple_images() {
     ];
     let content = Content { operations: ops };
     let bytes = content.encode().expect("encode");
-    let placements = extract_image_placements(&bytes).expect("parse");
+    let placements = extract_xobject_placements(&bytes).expect("parse");
     assert_eq!(placements.len(), 2);
     assert_eq!(placements[0].name, "Im1");
     assert_eq!(placements[1].name, "Im2");
@@ -299,49 +299,10 @@ fn test_multiple_images() {
         }
     );
 
-    // Im2のCTM: (100,0,0,100,0,0) * cm(1,0,0,1,200,300)
-    // a = 100*1 + 0*0 = 100
-    // b = 100*0 + 0*1 = 0
-    // c = 0*1 + 100*0 = 0
-    // d = 0*0 + 100*1 = 100
-    // e = 0*1 + 0*0 + 200 = 200
-    // f = 0*0 + 0*1 + 300 = 300
-    // Wait, need to use the actual formula:
-    // e = m1.e * m2.a + m1.f * m2.c + m2.e = 0*1 + 0*0 + 200 = 200
-    // f = m1.e * m2.b + m1.f * m2.d + m2.f = 0*0 + 0*1 + 300 = 300
-    // BUT this is current_ctm * new_cm, so:
-    // current = (100,0,0,100,0,0), new = (1,0,0,1,200,300)
-    // a = 100*1 + 0*0 = 100
-    // b = 100*0 + 0*1 = 0
-    // c = 0*1 + 100*0 = 0
-    // d = 0*0 + 100*1 = 100
-    // e = 0*1 + 0*0 + 200 = 200
-    // f = 0*0 + 0*1 + 300 = 300
-    // Hmm, but the PDF spec says cm updates CTM as CTM' = CTM x cm_matrix
-    // Using the multiply formula from the spec:
-    // (M1 = current CTM, M2 = cm operand matrix)
-    // e = m1.e * m2.a + m1.f * m2.c + m2.e
-    // For current=(100,0,0,100,0,0) * (1,0,0,1,200,300):
-    // e = 0*1 + 0*0 + 200 = 200
-    // f = 0*0 + 0*1 + 300 = 300
-    // So the result ctm = (100,0,0,100,200,300)
-    // But wait, when we have a scaling matrix and then translate,
-    // the translation in user space is scaled.
-    // Actually let me reconsider. PDF spec: CTM' = cm_matrix x CTM
-    // No, PDF spec says: The cm operator concatenates the given matrix
-    // with the current transformation matrix (CTM), replacing the CTM
-    // with the result. That is: CTM' = matrix x CTM (pre-multiplication).
-    // But the provided multiply formula says: self * other
-    // and the instruction says: current_CTM = current_CTM × Matrix(a,b,c,d,e,f)
-    // Let's follow the formula exactly as specified:
-    // CTM' = current_ctm.multiply(&cm_matrix)
-    // With formula:
-    // a = m1.a * m2.a + m1.b * m2.c = 100*1 + 0*0 = 100
-    // b = m1.a * m2.b + m1.b * m2.d = 100*0 + 0*1 = 0
-    // c = m1.c * m2.a + m1.d * m2.c = 0*1 + 100*0 = 0
-    // d = m1.c * m2.b + m1.d * m2.d = 0*0 + 100*1 = 100
-    // e = m1.e * m2.a + m1.f * m2.c + m2.e = 0*1 + 0*0 + 200 = 200
-    // f = m1.e * m2.b + m1.f * m2.d + m2.f = 0*0 + 0*1 + 300 = 300
+    // 行列積: CTM' = current_ctm.multiply(&cm_matrix)
+    // current_ctm = (100, 0, 0, 100, 0, 0)
+    // cm_matrix   = (  1, 0, 0,   1, 200, 300)
+    // → (100, 0, 0, 100, 200, 300)
     assert_eq!(
         placements[1].ctm,
         Matrix {
@@ -379,7 +340,7 @@ fn test_ctm_bbox_calculation() {
     ];
     let content = Content { operations: ops };
     let bytes = content.encode().expect("encode");
-    let placements = extract_image_placements(&bytes).expect("parse");
+    let placements = extract_xobject_placements(&bytes).expect("parse");
     assert_eq!(placements.len(), 1);
     assert_approx(placements[0].bbox.x_min, 100.0);
     assert_approx(placements[0].bbox.y_min, 50.0);
@@ -426,7 +387,7 @@ fn test_nested_graphics_states() {
     ];
     let content = Content { operations: ops };
     let bytes = content.encode().expect("encode");
-    let placements = extract_image_placements(&bytes).expect("parse");
+    let placements = extract_xobject_placements(&bytes).expect("parse");
     assert_eq!(placements.len(), 2);
 
     // Im1: cm(A) = (2, 0, 0, 2, 10, 20)
