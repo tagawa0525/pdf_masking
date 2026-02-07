@@ -94,6 +94,17 @@ pub enum PdfMaskError {
 
 各フェーズ = 1 feature branch。RED→GREEN→REFACTORサイクルをコミット履歴に残す。
 
+### ブランチワークフロー
+
+1. feature branchを作成
+2. RED: テストを先に書いてコミット
+3. GREEN: 実装を追加してテストを通すコミット
+4. REFACTOR: 必要に応じてリファクタリング
+5. `git push` → GitHub PRを作成
+6. GitHub Copilotの自動レビューを待機
+7. レビューコメントを評価し、妥当なものを修正コミット
+8. マージ → ブランチ削除
+
 ### Phase 0: プロジェクト基盤
 
 **Branch:** `feat/project-setup`

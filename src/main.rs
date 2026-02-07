@@ -1,14 +1,4 @@
-mod cache;
-mod config;
-mod error;
-mod ffi;
-mod linearize;
-mod mrc;
-mod pdf;
-mod pipeline;
-mod render;
-
-use crate::error::Result;
+use pdf_masking::error::Result;
 use std::env;
 
 fn main() -> Result<()> {
