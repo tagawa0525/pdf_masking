@@ -1,2 +1,9 @@
+pub mod cache;
 pub mod config;
 pub mod error;
+pub mod ffi;
+pub mod linearize;
+pub mod mrc;
+pub mod pdf;
+pub mod pipeline;
+pub mod render;

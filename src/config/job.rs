@@ -1,3 +1,4 @@
+use serde::de::{self, SeqAccess, Visitor};
 use serde::Deserialize;
 
 #[derive(Debug, Clone, Deserialize)]
@@ -83,11 +84,65 @@ pub fn parse_page_range(s: &str) -> crate::error::Result<Vec<u32>> {
     Ok(pages)
 }
 
-/// serdeのdeserialize_withで使用するページ範囲デシリアライザ
+/// YAML配列の各要素（文字列または整数）を表す中間型。
+///
+/// 整数はそのままページ番号に、文字列は `parse_page_range` でパースされる。
+#[derive(Debug, Clone, Deserialize)]
+#[serde(untagged)]
+enum PageElement {
+    Integer(u32),
+    Range(String),
+}
+
+/// serdeのdeserialize_withで使用するページ範囲デシリアライザ。
+///
+/// 以下の両形式を受け付ける:
+/// - 文字列形式: `pages: "1, 3, 5-10"`
+/// - YAML配列形式: `pages: [1, 3, "5-10", 15]`
 fn deserialize_pages<'de, D>(deserializer: D) -> Result<Vec<u32>, D::Error>
 where
     D: serde::Deserializer<'de>,
 {
-    let s = String::deserialize(deserializer)?;
-    parse_page_range(&s).map_err(serde::de::Error::custom)
+    struct PagesVisitor;
+
+    impl<'de> Visitor<'de> for PagesVisitor {
+        type Value = Vec<u32>;
+
+        fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+            formatter.write_str("a page range string (e.g. \"1, 3, 5-10\") or a YAML sequence (e.g. [1, 3, \"5-10\"])")
+        }
+
+        fn visit_str<E>(self, value: &str) -> Result<Vec<u32>, E>
+        where
+            E: de::Error,
+        {
+            parse_page_range(value).map_err(de::Error::custom)
+        }
+
+        fn visit_seq<A>(self, mut seq: A) -> Result<Vec<u32>, A::Error>
+        where
+            A: SeqAccess<'de>,
+        {
+            let mut pages = Vec::new();
+            while let Some(elem) = seq.next_element::<PageElement>()? {
+                match elem {
+                    PageElement::Integer(n) => pages.push(n),
+                    PageElement::Range(s) => {
+                        let parsed = parse_page_range(&s).map_err(de::Error::custom)?;
+                        pages.extend(parsed);
+                    }
+                }
+            }
+
+            if pages.is_empty() {
+                return Err(de::Error::custom("Page sequence cannot be empty"));
+            }
+
+            pages.sort();
+            pages.dedup();
+            Ok(pages)
+        }
+    }
+
+    deserializer.deserialize_any(PagesVisitor)
 }

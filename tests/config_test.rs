@@ -267,3 +267,45 @@ fn test_auto_detect_settings_yaml_missing() {
         "should use default when settings.yaml absent"
     );
 }
+
+// ============================================================
+// 6. YAML配列形式のpagesフィールド
+// ============================================================
+
+#[test]
+fn test_job_pages_yaml_sequence_integers() {
+    let yaml = r#"
+jobs:
+  - input: "input.pdf"
+    output: "output.pdf"
+    pages: [1, 3, 5]
+"#;
+    let job_file: JobFile =
+        serde_yml::from_str(yaml).expect("should parse YAML sequence of integers");
+    assert_eq!(job_file.jobs[0].pages, vec![1, 3, 5]);
+}
+
+#[test]
+fn test_job_pages_yaml_sequence_with_ranges() {
+    let yaml = r#"
+jobs:
+  - input: "input.pdf"
+    output: "output.pdf"
+    pages: [1, 3, "5-10", 15]
+"#;
+    let job_file: JobFile =
+        serde_yml::from_str(yaml).expect("should parse YAML sequence with ranges");
+    assert_eq!(job_file.jobs[0].pages, vec![1, 3, 5, 6, 7, 8, 9, 10, 15]);
+}
+
+#[test]
+fn test_job_pages_yaml_string_form() {
+    let yaml = r#"
+jobs:
+  - input: "input.pdf"
+    output: "output.pdf"
+    pages: "1, 3, 5-10"
+"#;
+    let job_file: JobFile = serde_yml::from_str(yaml).expect("should parse string form pages");
+    assert_eq!(job_file.jobs[0].pages, vec![1, 3, 5, 6, 7, 8, 9, 10]);
+}
