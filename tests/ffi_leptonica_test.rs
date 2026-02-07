@@ -67,8 +67,12 @@ fn test_pix_get_region_masks() {
     assert!(result.is_ok());
 }
 
+// Fix #2, #10: Renamed from test_pix_clone_independence to
+// test_pix_clone_lifecycle. pixClone creates a refcounted alias, not an
+// independent deep copy. The test verifies that dropping one alias leaves
+// the other valid.
 #[test]
-fn test_pix_clone_independence() {
+fn test_pix_clone_lifecycle() {
     let pix1 = Pix::create(50, 50, 8);
     assert!(pix1.is_ok());
 
@@ -78,12 +82,14 @@ fn test_pix_clone_independence() {
 
     let pix2 = pix2_result.unwrap();
 
-    // Verify they have the same dimensions
+    // Verify both aliases report the same dimensions
     assert_eq!(pix1.get_width(), pix2.get_width());
     assert_eq!(pix1.get_height(), pix2.get_height());
 
-    // They should be independent instances
-    // (dropping one should not affect the other)
+    // Drop the original; the refcounted alias should remain valid
+    drop(pix1);
+    assert_eq!(pix2.get_width(), 50);
+    assert_eq!(pix2.get_height(), 50);
 }
 
 #[test]

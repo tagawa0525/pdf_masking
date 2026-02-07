@@ -52,7 +52,7 @@
             ]}:$LD_LIBRARY_PATH"
             export PKG_CONFIG_PATH="${pkgs.leptonica}/lib/pkgconfig:$PKG_CONFIG_PATH"
             export LIBCLANG_PATH="${pkgs.libclang.lib}/lib"
-            export BINDGEN_EXTRA_CLANG_ARGS="-I${pkgs.llvmPackages.libclang.lib}/lib/clang/${pkgs.llvmPackages.libclang.version}/include"
+            export BINDGEN_EXTRA_CLANG_ARGS="''${BINDGEN_EXTRA_CLANG_ARGS:-} -I${pkgs.libclang.lib}/lib/clang/${pkgs.libclang.version}/include"
           '';
         };
       }
