@@ -89,11 +89,11 @@ impl PdfReader {
                 lopdf::Object::Stream(s) => &s.dict,
                 _ => continue,
             };
-            if let Ok(subtype) = obj_dict.get(b"Subtype").and_then(lopdf::Object::as_name) {
-                if subtype == b"Image" {
-                    let name = String::from_utf8_lossy(name_bytes);
-                    names.push(name.into_owned());
-                }
+            if let Ok(subtype) = obj_dict.get(b"Subtype").and_then(lopdf::Object::as_name)
+                && subtype == b"Image"
+            {
+                let name = String::from_utf8_lossy(name_bytes);
+                names.push(name.into_owned());
             }
         }
 
