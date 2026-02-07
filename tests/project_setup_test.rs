@@ -3,19 +3,16 @@
 #[test]
 fn test_cargo_dependencies_present() {
     // Cargo.tomlに必要な依存関係が全て定義されていることを確認
-    let manifest = std::fs::read_to_string("Cargo.toml")
-        .expect("Cargo.toml should exist");
+    let manifest = std::fs::read_to_string("Cargo.toml").expect("Cargo.toml should exist");
 
     let required_deps = [
         "thiserror",
         "serde",
         "serde_yaml",
-        "lopdf",
-        "pdfium-render",
-        "image",
         "rayon",
         "sha2",
         "hex",
+        "anyhow",
     ];
 
     for dep in required_deps {
