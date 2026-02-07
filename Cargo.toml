@@ -19,7 +19,7 @@ lopdf = "0.39.0"
 # image = "0.25.9"
 
 # Leptonica (Phase 3+, via system library)
-# leptonica-sys = "0.4.9"
+leptonica-sys = "0.4.9"
 
 # JBIG2 encoding (Phase 4+, will use custom C bindings)
 
