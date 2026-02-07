@@ -12,14 +12,14 @@ serde = { version = "1.0.228", features = ["derive"] }
 serde_yml = "0.0.12"
 
 # PDF processing (Phase 2+)
-# lopdf = "0.32"
+lopdf = "0.39.0"
 # pdfium-render = { version = "0.8", features = ["static"] }
 
 # Image processing (Phase 5+)
-# image = "0.24"
+# image = "0.25.9"
 
 # Leptonica (Phase 3+, via system library)
-# leptonica-sys = "0.3"
+# leptonica-sys = "0.4.9"
 
 # JBIG2 encoding (Phase 4+, will use custom C bindings)
 
