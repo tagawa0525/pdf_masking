@@ -8,7 +8,7 @@ edition = "2021"
 thiserror = "2.0.18"
 
 # Configuration parsing
-serde = { version = "1.0", features = ["derive"] }
+serde = { version = "1.0.228", features = ["derive"] }
 serde_yml = "0.0.12"
 
 # PDF processing (Phase 2+)
@@ -24,12 +24,12 @@ serde_yml = "0.0.12"
 # JBIG2 encoding (Phase 4+, will use custom C bindings)
 
 # Parallel processing
-rayon = "1.7"
+rayon = "1.11.0"
 
 # Hashing
-sha2 = "0.10"
-hex = "0.4"
+sha2 = "0.10.9"
+hex = "0.4.3"
 
 # Testing utilities
 [dev-dependencies]
-tempfile = "3.8"
+tempfile = "3.24.0"
