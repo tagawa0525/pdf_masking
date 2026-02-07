@@ -14,7 +14,7 @@ use crate::ffi::leptonica::Pix;
 ///
 /// # Returns
 /// `Ok(Vec<u8>)` containing the JBIG2 encoded data, or `Err` on failure.
-pub fn encode_generic(pix: &Pix) -> crate::error::Result<Vec<u8>> {
+pub fn encode_generic(pix: &mut Pix) -> crate::error::Result<Vec<u8>> {
     if pix.get_depth() != 1 {
         return Err(PdfMaskError::jbig2_encode(format!(
             "JBIG2 encoding requires 1-bit PIX, got {}-bit",
@@ -26,18 +26,27 @@ pub fn encode_generic(pix: &Pix) -> crate::error::Result<Vec<u8>> {
 
     let buf = unsafe {
         jbig2enc_sys::jbig2enc_encode_generic_c(
-            pix.as_mut_ptr(),
-            1,  // duplicate_line_removal (TPGD)
-            -1, // tpl_x (auto)
-            -1, // tpl_y (auto)
-            0,  // use_refinement (off for generic encoding)
+            pix.as_mut_ptr(), // SAFETY: pix is &mut, pointer not used after this block
+            1,                // duplicate_line_removal (TPGD)
+            -1,               // tpl_x (auto)
+            -1,               // tpl_y (auto)
+            0,                // use_refinement (off for generic encoding)
             &mut length,
         )
     };
 
-    if buf.is_null() || length <= 0 {
+    if buf.is_null() {
         return Err(PdfMaskError::jbig2_encode(
-            "jbig2_encode_generic returned NULL or zero-length buffer",
+            "jbig2_encode_generic returned NULL buffer",
+        ));
+    }
+    if length <= 0 {
+        // Free the non-null buffer before returning to avoid a memory leak
+        unsafe {
+            libc::free(buf as *mut libc::c_void);
+        }
+        return Err(PdfMaskError::jbig2_encode(
+            "jbig2_encode_generic returned zero-length buffer",
         ));
     }
 

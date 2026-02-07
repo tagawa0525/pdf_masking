@@ -220,19 +220,34 @@ impl Pix {
     /// Return the raw mutable pointer to the underlying PIX.
     ///
     /// # Safety
-    /// The caller must not use this pointer after the `Pix` is dropped.
-    pub fn as_mut_ptr(&self) -> *mut PIX {
+    /// - The caller must not use this pointer after the `Pix` is dropped.
+    /// - The caller must ensure no aliasing violations occur while the
+    ///   pointer is in use.
+    pub(crate) unsafe fn as_mut_ptr(&mut self) -> *mut PIX {
         self.ptr
     }
 
     /// Set all pixels in the image to the given value.
     ///
-    /// For 1-bit images: `value = 1` sets all pixels to black (foreground),
-    /// `value = 0` keeps all pixels white (background, which is the default).
+    /// Only 1-bit images are supported. `value = 1` sets all pixels to black
+    /// (foreground) via leptonica's `pixSetAll`. `value = 0` is a no-op because
+    /// PIX data is zero-initialized at creation time.
     ///
-    /// For 1-bit images, this uses leptonica's `pixSetAll` when value is 1.
-    /// For value 0, pixels are already cleared at creation time.
-    pub fn set_all_pixels(&self, value: u32) -> Result<()> {
+    /// # Errors
+    /// Returns an error if `depth != 1` or `value > 1`.
+    pub fn set_all_pixels(&mut self, value: u32) -> Result<()> {
+        if self.get_depth() != 1 {
+            return Err(PdfMaskError::segmentation(format!(
+                "set_all_pixels only supports 1-bit images, got {}-bit",
+                self.get_depth()
+            )));
+        }
+        if value > 1 {
+            return Err(PdfMaskError::segmentation(format!(
+                "set_all_pixels value must be 0 or 1 for 1-bit images, got {}",
+                value
+            )));
+        }
         if value == 0 {
             // PIX is zero-initialized at creation; nothing to do
             return Ok(());
