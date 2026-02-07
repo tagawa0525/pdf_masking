@@ -2,7 +2,7 @@
 
 use super::leptonica_sys::{
     pixClone, pixCreate, pixDestroy, pixGetData, pixGetDepth, pixGetHeight, pixGetRegionsBinary,
-    pixGetWidth, pixGetWpl, pixOtsuAdaptiveThreshold, PIX,
+    pixGetWidth, pixGetWpl, pixOtsuAdaptiveThreshold, pixSetAll, PIX,
 };
 use crate::error::{PdfMaskError, Result};
 use std::ptr;
@@ -215,6 +215,35 @@ impl Pix {
 
             Ok(masks)
         }
+    }
+
+    /// Return the raw mutable pointer to the underlying PIX.
+    ///
+    /// # Safety
+    /// The caller must not use this pointer after the `Pix` is dropped.
+    pub fn as_mut_ptr(&self) -> *mut PIX {
+        self.ptr
+    }
+
+    /// Set all pixels in the image to the given value.
+    ///
+    /// For 1-bit images: `value = 1` sets all pixels to black (foreground),
+    /// `value = 0` keeps all pixels white (background, which is the default).
+    ///
+    /// For 1-bit images, this uses leptonica's `pixSetAll` when value is 1.
+    /// For value 0, pixels are already cleared at creation time.
+    pub fn set_all_pixels(&self, value: u32) -> Result<()> {
+        if value == 0 {
+            // PIX is zero-initialized at creation; nothing to do
+            return Ok(());
+        }
+        unsafe {
+            let ret = pixSetAll(self.ptr);
+            if ret != 0 {
+                return Err(PdfMaskError::segmentation("pixSetAll failed"));
+            }
+        }
+        Ok(())
     }
 
     /// Create a refcounted alias of this Pix via leptonica's pixClone.

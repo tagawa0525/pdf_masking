@@ -53,6 +53,13 @@
             export PKG_CONFIG_PATH="${pkgs.leptonica}/lib/pkgconfig:$PKG_CONFIG_PATH"
             export LIBCLANG_PATH="${pkgs.libclang.lib}/lib"
             export BINDGEN_EXTRA_CLANG_ARGS="''${BINDGEN_EXTRA_CLANG_ARGS:-} -I${pkgs.libclang.lib}/lib/clang/${pkgs.libclang.version}/include"
+
+            # jbig2enc paths (no pkg-config support)
+            export JBIG2ENC_INCLUDE_PATH="${pkgs.jbig2enc}/include"
+            export JBIG2ENC_LIB_PATH="${pkgs.jbig2enc}/lib"
+
+            # leptonica paths for C++ shim compilation
+            export LEPTONICA_INCLUDE_PATH="${pkgs.leptonica}/include"
           '';
         };
       }

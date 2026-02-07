@@ -655,8 +655,10 @@ checksum = "42f5e15c9953c5e4ccceeb2e7382a716482c34515315f7b03532b8b4e8393d2d"
 name = "pdf_masking"
 version = "0.1.0"
 dependencies = [
+ "cc",
  "hex",
  "leptonica-sys",
+ "libc",
  "lopdf",
  "rayon",
  "serde",
