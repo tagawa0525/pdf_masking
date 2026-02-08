@@ -32,7 +32,7 @@ fn main() {
         // Nixのg++ラッパーが-D_FORTIFY_SOURCE=3を注入するが、
         // デバッグビルド（-O なし）では機能しないためglibcが#warningを出す。
         // ラッパー側のフラグは制御できないため、#warningディレクティブを抑制する。
-        .flag("-Wno-cpp")
+        .flag_if_supported("-Wno-cpp")
         .compile("jbig2enc_shim");
 
     // Link against jbig2enc shared library
