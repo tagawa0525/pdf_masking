@@ -39,8 +39,7 @@ fn create_pdfium() -> crate::error::Result<Pdfium> {
     } else {
         PathBuf::from(lib_path_str)
     };
-    let bindings = Pdfium::bind_to_library(lib_name)
-        .map_err(|e| crate::error::PdfMaskError::render(e.to_string()))?;
+    let bindings = Pdfium::bind_to_library(lib_name)?;
     Ok(Pdfium::new(bindings))
 }
 
@@ -74,17 +73,12 @@ pub fn render_page(
 
     let pdfium = create_pdfium()?;
 
-    let document = pdfium
-        .load_pdf_from_file(pdf_path, None)
-        .map_err(|e| crate::error::PdfMaskError::render(e.to_string()))?;
+    let document = pdfium.load_pdf_from_file(pdf_path, None)?;
 
     let page_index_u16 = u16::try_from(page_index)
         .map_err(|_| crate::error::PdfMaskError::render("page index exceeds u16 range"))?;
 
-    let page = document
-        .pages()
-        .get(page_index_u16)
-        .map_err(|e| crate::error::PdfMaskError::render(e.to_string()))?;
+    let page = document.pages().get(page_index_u16)?;
 
     // PDF default user unit: 1 point = 1/72 inch
     // At the given DPI, each point maps to (dpi / 72) pixels
@@ -97,9 +91,7 @@ pub fn render_page(
         .set_target_width(width_px)
         .set_target_height(height_px);
 
-    let bitmap = page
-        .render_with_config(&config)
-        .map_err(|e| crate::error::PdfMaskError::render(e.to_string()))?;
+    let bitmap = page.render_with_config(&config)?;
 
     Ok(bitmap.as_image())
 }

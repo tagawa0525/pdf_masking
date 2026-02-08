@@ -62,8 +62,7 @@ pub fn encode_rgba_to_jpeg(
 pub(crate) fn encode_rgb_to_jpeg(rgb: &RgbImage, quality: u8) -> crate::error::Result<Vec<u8>> {
     let mut buf = Cursor::new(Vec::new());
     let encoder = image::codecs::jpeg::JpegEncoder::new_with_quality(&mut buf, quality);
-    rgb.write_with_encoder(encoder)
-        .map_err(|e| PdfMaskError::jpeg_encode(e.to_string()))?;
+    rgb.write_with_encoder(encoder)?;
 
     Ok(buf.into_inner())
 }

@@ -91,8 +91,7 @@ impl CacheStore {
             width: layers.width,
             height: layers.height,
         };
-        let metadata_json =
-            serde_json::to_string(&metadata).map_err(|e| PdfMaskError::cache(e.to_string()))?;
+        let metadata_json = serde_json::to_string(&metadata)?;
         fs::write(tmp_dir.join("metadata.json"), metadata_json.as_bytes())
             .map_err(|e| PdfMaskError::cache(e.to_string()))?;
 
@@ -123,8 +122,7 @@ impl CacheStore {
 
         let metadata_str = fs::read_to_string(dir.join("metadata.json"))
             .map_err(|e| PdfMaskError::cache(e.to_string()))?;
-        let metadata: CacheMetadata =
-            serde_json::from_str(&metadata_str).map_err(|e| PdfMaskError::cache(e.to_string()))?;
+        let metadata: CacheMetadata = serde_json::from_str(&metadata_str)?;
 
         if metadata.cache_key != key {
             return Err(PdfMaskError::cache(format!(
