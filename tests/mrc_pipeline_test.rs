@@ -443,3 +443,148 @@ fn test_mrc_layers_has_all_components() {
         "Background JPEG layer should not be empty"
     );
 }
+
+// ---- compose_text_masked tests ----
+
+/// Test compose_text_masked with empty content stream.
+#[test]
+fn test_compose_text_masked_empty_content() {
+    let (data, width, height) = create_test_rgba_image();
+    let image_streams = std::collections::HashMap::new();
+
+    let params = compositor::TextMaskedParams {
+        content_bytes: b"",
+        rgba_data: &data,
+        bitmap_width: width,
+        bitmap_height: height,
+        page_width_pts: 612.0,
+        page_height_pts: 792.0,
+        image_streams: &image_streams,
+        quality: 75,
+        color_mode: ColorMode::Rgb,
+        page_index: 0,
+    };
+
+    let result = compositor::compose_text_masked(&params);
+    assert!(
+        result.is_ok(),
+        "compose_text_masked failed: {:?}",
+        result.err()
+    );
+
+    let text_data = result.unwrap();
+    assert_eq!(text_data.page_index, 0);
+    assert!(matches!(text_data.color_mode, ColorMode::Rgb));
+    assert!(text_data.stripped_content_stream.is_empty());
+    assert!(text_data.modified_images.is_empty());
+}
+
+/// Test compose_text_masked strips BT...ET blocks from content.
+#[test]
+fn test_compose_text_masked_strips_text() {
+    let content = b"BT /F1 12 Tf (Hello) Tj ET";
+    let (data, width, height) = create_test_rgba_image();
+    let image_streams = std::collections::HashMap::new();
+
+    let params = compositor::TextMaskedParams {
+        content_bytes: content,
+        rgba_data: &data,
+        bitmap_width: width,
+        bitmap_height: height,
+        page_width_pts: 612.0,
+        page_height_pts: 792.0,
+        image_streams: &image_streams,
+        quality: 75,
+        color_mode: ColorMode::Rgb,
+        page_index: 2,
+    };
+
+    let result = compositor::compose_text_masked(&params);
+    assert!(
+        result.is_ok(),
+        "compose_text_masked failed: {:?}",
+        result.err()
+    );
+
+    let text_data = result.unwrap();
+    // BT...ET should be stripped from the content stream
+    assert!(text_data.stripped_content_stream.is_empty());
+    assert_eq!(text_data.page_index, 2);
+}
+
+/// Test compose_text_masked in grayscale mode.
+#[test]
+fn test_compose_text_masked_grayscale() {
+    let (data, width, height) = create_test_rgba_image();
+    let image_streams = std::collections::HashMap::new();
+
+    let params = compositor::TextMaskedParams {
+        content_bytes: b"",
+        rgba_data: &data,
+        bitmap_width: width,
+        bitmap_height: height,
+        page_width_pts: 100.0,
+        page_height_pts: 100.0,
+        image_streams: &image_streams,
+        quality: 50,
+        color_mode: ColorMode::Grayscale,
+        page_index: 1,
+    };
+
+    let result = compositor::compose_text_masked(&params);
+    assert!(result.is_ok(), "grayscale failed: {:?}", result.err());
+
+    let text_data = result.unwrap();
+    assert!(matches!(text_data.color_mode, ColorMode::Grayscale));
+    // Text regions should have valid JPEG data
+    for region in &text_data.text_regions {
+        assert!(!region.jpeg_data.is_empty());
+        assert!(region.jpeg_data.starts_with(&[0xFF, 0xD8]));
+        assert!(region.pixel_width > 0);
+        assert!(region.pixel_height > 0);
+    }
+}
+
+/// Test that text regions have valid PDF bounding boxes.
+#[test]
+fn test_compose_text_masked_valid_bboxes() {
+    let (data, width, height) = create_test_rgba_image();
+    let image_streams = std::collections::HashMap::new();
+
+    let params = compositor::TextMaskedParams {
+        content_bytes: b"",
+        rgba_data: &data,
+        bitmap_width: width,
+        bitmap_height: height,
+        page_width_pts: 200.0,
+        page_height_pts: 200.0,
+        image_streams: &image_streams,
+        quality: 75,
+        color_mode: ColorMode::Rgb,
+        page_index: 0,
+    };
+
+    let result = compositor::compose_text_masked(&params).expect("should succeed");
+
+    // Each text region should have a valid PDF BBox
+    for region in &result.text_regions {
+        assert!(
+            region.bbox_points.x_min >= 0.0,
+            "x_min should be >= 0: {}",
+            region.bbox_points.x_min
+        );
+        assert!(
+            region.bbox_points.y_min >= 0.0,
+            "y_min should be >= 0: {}",
+            region.bbox_points.y_min
+        );
+        assert!(
+            region.bbox_points.x_max > region.bbox_points.x_min,
+            "x_max should > x_min"
+        );
+        assert!(
+            region.bbox_points.y_max > region.bbox_points.y_min,
+            "y_max should > y_min"
+        );
+    }
+}

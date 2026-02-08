@@ -163,6 +163,11 @@ pub fn run_job(config: &JobConfig) -> crate::error::Result<JobResult> {
                 writer.copy_page_from(reader.document(), page_num)?;
                 // Skip pages are NOT added to masked_page_ids (no font optimization)
             }
+            PageOutput::TextMasked(_) => {
+                return Err(PdfMaskError::pdf_write(
+                    "TextMasked page writing not yet implemented",
+                ));
+            }
         }
     }
 

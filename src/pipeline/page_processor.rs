@@ -72,7 +72,7 @@ pub fn process_page(
                     });
                 }
             }
-            PageOutput::Skip(_) => {}
+            PageOutput::Skip(_) | PageOutput::TextMasked(_) => {}
         }
         // Dimension mismatch: treat as cache miss and recompose
     }

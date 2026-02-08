@@ -107,7 +107,7 @@ impl CacheStore {
                 layers.height,
                 ColorMode::Bw,
             ),
-            PageOutput::Skip(_) => return Ok(()), // Skipはキャッシュ不要
+            PageOutput::Skip(_) | PageOutput::TextMasked(_) => return Ok(()), // Skip/TextMaskedはキャッシュ未対応
         };
 
         let dir = self.key_dir(key)?;

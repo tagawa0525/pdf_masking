@@ -1,9 +1,18 @@
 // Phase 5: pipeline integration: bitmap + config -> MrcLayers
 
-use super::{BwLayers, MrcLayers, jbig2, jpeg, segmenter};
+use std::collections::HashMap;
+
+use super::{
+    BwLayers, ImageModification, MrcLayers, TextMaskedData, TextRegionCrop, jbig2, jpeg, segmenter,
+};
 use crate::config::job::ColorMode;
 use crate::error::PdfMaskError;
 use crate::mrc::segmenter::PixelBBox;
+use crate::pdf::content_stream::{
+    extract_white_fill_rects, extract_xobject_placements, pixel_to_page_coords,
+    strip_text_operators,
+};
+use crate::pdf::image_xobject::{bbox_overlaps, redact_image_regions};
 use image::{DynamicImage, RgbaImage};
 
 /// Configuration for MRC layer generation.
@@ -138,5 +147,130 @@ pub fn compose_bw(rgba_data: &[u8], width: u32, height: u32) -> crate::error::Re
         mask_jbig2,
         width,
         height,
+    })
+}
+
+/// テキスト選択的ラスタライズの入力パラメータ。
+pub struct TextMaskedParams<'a> {
+    /// 元のコンテンツストリーム
+    pub content_bytes: &'a [u8],
+    /// レンダリング済みRGBAビットマップ
+    pub rgba_data: &'a [u8],
+    /// ビットマップ幅(px)
+    pub bitmap_width: u32,
+    /// ビットマップ高さ(px)
+    pub bitmap_height: u32,
+    /// ページ幅(pt)
+    pub page_width_pts: f64,
+    /// ページ高さ(pt)
+    pub page_height_pts: f64,
+    /// XObject名 → lopdf::Stream のマップ
+    pub image_streams: &'a HashMap<String, lopdf::Stream>,
+    /// JPEG品質 (1-100)
+    pub quality: u8,
+    /// RGB or Grayscale
+    pub color_mode: ColorMode,
+    /// ページ番号(0-based)
+    pub page_index: u32,
+}
+
+/// テキスト選択的ラスタライズ: テキストのみ画像化し、画像XObjectは保持。
+///
+/// # Pipeline
+/// 1. コンテンツストリームからBT...ETブロックを除去
+/// 2. 白色fill矩形を検出
+/// 3. 画像XObject配置を取得
+/// 4. 白色矩形と重なる画像をリダクション
+/// 5. ビットマップからテキスト領域を抽出・JPEG化
+pub fn compose_text_masked(params: &TextMaskedParams) -> crate::error::Result<TextMaskedData> {
+    // 1. テキスト除去済みコンテンツストリーム
+    let stripped_content_stream = strip_text_operators(params.content_bytes)?;
+
+    // 2. 白色fill矩形を検出
+    let white_rects = extract_white_fill_rects(params.content_bytes)?;
+
+    // 3. 画像XObject配置を取得
+    let placements = extract_xobject_placements(params.content_bytes)?;
+
+    // 4. 白色矩形と重なる画像をリダクション
+    let mut modified_images: HashMap<String, ImageModification> = HashMap::new();
+    for placement in &placements {
+        if let Some(stream) = params.image_streams.get(&placement.name) {
+            let overlapping: Vec<_> = white_rects
+                .iter()
+                .filter(|wr| bbox_overlaps(wr, &placement.bbox))
+                .cloned()
+                .collect();
+
+            if !overlapping.is_empty()
+                && let Some(redacted) = redact_image_regions(stream, &overlapping, &placement.bbox)?
+            {
+                modified_images.insert(
+                    placement.name.clone(),
+                    ImageModification {
+                        data: redacted.data,
+                        filter: redacted.filter,
+                        color_space: redacted.color_space,
+                        bits_per_component: redacted.bits_per_component,
+                    },
+                );
+            }
+        }
+    }
+
+    // 5. ビットマップからテキスト領域を抽出・JPEG化
+    /// テキスト領域のマージ距離（px）。近接する矩形を結合してXObject数を削減する。
+    const TEXT_BBOX_MERGE_DISTANCE: u32 = 5;
+
+    let text_mask =
+        segmenter::segment_text_mask(params.rgba_data, params.bitmap_width, params.bitmap_height)?;
+    let bboxes = segmenter::extract_text_bboxes(&text_mask, TEXT_BBOX_MERGE_DISTANCE)?;
+
+    // テキスト領域が無い場合はビットマップコピーを回避して早期リターン
+    if bboxes.is_empty() {
+        return Ok(TextMaskedData {
+            stripped_content_stream,
+            text_regions: Vec::new(),
+            modified_images,
+            page_index: params.page_index,
+            color_mode: params.color_mode,
+        });
+    }
+
+    let bitmap = RgbaImage::from_raw(
+        params.bitmap_width,
+        params.bitmap_height,
+        params.rgba_data.to_vec(),
+    )
+    .ok_or_else(|| PdfMaskError::jpeg_encode("Failed to create bitmap from RGBA data"))?;
+    let dynamic = DynamicImage::ImageRgba8(bitmap);
+
+    let crops = crop_text_regions(&dynamic, &bboxes, params.quality, params.color_mode)?;
+
+    let text_regions: Vec<TextRegionCrop> = crops
+        .into_iter()
+        .map(|(jpeg_data, pixel_bbox)| {
+            let bbox_points = pixel_to_page_coords(
+                &pixel_bbox,
+                params.page_width_pts,
+                params.page_height_pts,
+                params.bitmap_width,
+                params.bitmap_height,
+            )?;
+            Ok(TextRegionCrop {
+                jpeg_data,
+                bbox_points,
+                pixel_width: pixel_bbox.width,
+                pixel_height: pixel_bbox.height,
+            })
+        })
+        .collect::<crate::error::Result<Vec<_>>>()?;
+
+    Ok(TextMaskedData {
+        stripped_content_stream,
+        text_regions,
+        modified_images,
+        page_index: params.page_index,
+        color_mode: params.color_mode,
     })
 }
