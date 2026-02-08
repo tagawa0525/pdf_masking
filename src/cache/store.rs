@@ -87,6 +87,9 @@ impl CacheStore {
     /// 書き込みはアトミック: 一時ディレクトリにファイルを書き込み、
     /// 最後にrenameで最終パスに移動する。
     pub fn store(&self, key: &str, output: &PageOutput) -> crate::error::Result<()> {
+        // キャッシュキーの検証（Skip含め全ケースで一貫性を保つ）
+        validate_cache_key(key)?;
+
         let (mask_jbig2, fg, bg, width, height, mode) = match output {
             PageOutput::Mrc(layers) => (
                 &layers.mask_jbig2,
