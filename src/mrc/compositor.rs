@@ -3,6 +3,7 @@
 use super::{BwLayers, MrcLayers, jbig2, jpeg, segmenter};
 use crate::config::job::ColorMode;
 use crate::error::PdfMaskError;
+use crate::mrc::segmenter::PixelBBox;
 use image::{DynamicImage, RgbaImage};
 
 /// Configuration for MRC layer generation.
@@ -70,6 +71,49 @@ pub fn compose(
         height,
         color_mode,
     })
+}
+
+/// テキスト領域をビットマップからクロップし、JPEG化する。
+///
+/// 各 PixelBBox 領域をクロップして、指定のカラーモードとクオリティで
+/// JPEG エンコードする。
+///
+/// # Arguments
+/// * `bitmap` - レンダリング済みのページビットマップ
+/// * `bboxes` - テキスト領域の矩形リスト（ピクセル座標）
+/// * `quality` - JPEG 品質 (1-100)
+/// * `color_mode` - RGB または Grayscale
+///
+/// # Returns
+/// `(jpeg_data, bbox)` のペアリスト
+pub fn crop_text_regions(
+    bitmap: &DynamicImage,
+    bboxes: &[PixelBBox],
+    quality: u8,
+    color_mode: ColorMode,
+) -> crate::error::Result<Vec<(Vec<u8>, PixelBBox)>> {
+    let mut results = Vec::with_capacity(bboxes.len());
+
+    for bbox in bboxes {
+        // クロップ
+        let cropped = bitmap.crop_imm(bbox.x, bbox.y, bbox.width, bbox.height);
+
+        // カラーモードに応じてエンコード
+        let jpeg_data = match color_mode {
+            ColorMode::Grayscale => {
+                let gray = cropped.to_luma8();
+                jpeg::encode_gray_to_jpeg(&gray, quality)?
+            }
+            _ => {
+                let rgb = cropped.to_rgb8();
+                jpeg::encode_rgb_to_jpeg(&rgb, quality)?
+            }
+        };
+
+        results.push((jpeg_data, bbox.clone()));
+    }
+
+    Ok(results)
 }
 
 /// BWモード: segmenter + JBIG2のみ。JPEG層なし。
