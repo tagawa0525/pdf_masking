@@ -184,10 +184,10 @@ fn test_store_and_retrieve() {
     let expected_height = layers.height;
 
     store
-        .store(TEST_KEY, &PageOutput::Mrc(layers))
+        .store(TEST_KEY, &PageOutput::Mrc(layers), None)
         .expect("store should succeed");
     let retrieved = store
-        .retrieve(TEST_KEY, ColorMode::Rgb)
+        .retrieve(TEST_KEY, ColorMode::Rgb, None)
         .expect("retrieve should succeed")
         .expect("should return Some for stored key");
 
@@ -211,7 +211,7 @@ fn test_cache_miss() {
     let nonexistent_key = "0000000000000000000000000000000000000000000000000000000000000000";
 
     let result = store
-        .retrieve(nonexistent_key, ColorMode::Rgb)
+        .retrieve(nonexistent_key, ColorMode::Rgb, None)
         .expect("retrieve should succeed even on miss");
 
     assert!(
@@ -233,7 +233,7 @@ fn test_cache_hit_after_store() {
     );
 
     store
-        .store(TEST_KEY, &PageOutput::Mrc(layers))
+        .store(TEST_KEY, &PageOutput::Mrc(layers), None)
         .expect("store should succeed");
 
     assert!(store.contains(TEST_KEY), "Key should exist after storing");
@@ -251,7 +251,7 @@ fn test_cache_dir_creation() {
     assert!(!cache_path.exists());
 
     store
-        .store(TEST_KEY, &PageOutput::Mrc(layers))
+        .store(TEST_KEY, &PageOutput::Mrc(layers), None)
         .expect("store should create directories and succeed");
 
     // After storing, the cache directory and key subdirectory should exist
@@ -266,15 +266,16 @@ fn test_store_rejects_invalid_key() {
     let output = PageOutput::Mrc(sample_layers());
 
     // Too short
-    assert!(store.store("abc123", &output).is_err());
+    assert!(store.store("abc123", &output, None).is_err());
     // Path traversal attempt
-    assert!(store.store("../etc/passwd", &output).is_err());
+    assert!(store.store("../etc/passwd", &output, None).is_err());
     // Contains non-hex characters
     assert!(
         store
             .store(
                 "zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz",
-                &output
+                &output,
+                None
             )
             .is_err()
     );
@@ -286,8 +287,12 @@ fn test_retrieve_rejects_invalid_key() {
     let dir = tempdir().expect("failed to create temp dir");
     let store = CacheStore::new(dir.path());
 
-    assert!(store.retrieve("../etc/passwd", ColorMode::Rgb).is_err());
-    assert!(store.retrieve("short", ColorMode::Rgb).is_err());
+    assert!(
+        store
+            .retrieve("../etc/passwd", ColorMode::Rgb, None)
+            .is_err()
+    );
+    assert!(store.retrieve("short", ColorMode::Rgb, None).is_err());
 }
 
 /// Test that contains returns false for invalid keys.
@@ -327,7 +332,7 @@ fn test_new_accepts_path() {
     let layers = sample_layers();
 
     store
-        .store(TEST_KEY, &PageOutput::Mrc(layers))
+        .store(TEST_KEY, &PageOutput::Mrc(layers), None)
         .expect("store should succeed");
     assert!(store.contains(TEST_KEY));
 }
@@ -364,11 +369,11 @@ fn test_store_and_retrieve_text_masked() {
     let data = sample_text_masked_data();
 
     store
-        .store(TEST_KEY_TM, &PageOutput::TextMasked(data))
+        .store(TEST_KEY_TM, &PageOutput::TextMasked(data), Some((100, 100)))
         .expect("store TextMasked should succeed");
 
     let retrieved = store
-        .retrieve(TEST_KEY_TM, ColorMode::Rgb)
+        .retrieve(TEST_KEY_TM, ColorMode::Rgb, None)
         .expect("retrieve should succeed")
         .expect("should return Some for stored TextMasked key");
 
@@ -422,11 +427,11 @@ fn test_store_and_retrieve_text_masked_with_modified_images() {
     };
 
     store
-        .store(TEST_KEY_TM, &PageOutput::TextMasked(data))
+        .store(TEST_KEY_TM, &PageOutput::TextMasked(data), Some((100, 100)))
         .expect("store should succeed");
 
     let retrieved = store
-        .retrieve(TEST_KEY_TM, ColorMode::Grayscale)
+        .retrieve(TEST_KEY_TM, ColorMode::Grayscale, None)
         .expect("retrieve should succeed")
         .expect("should return Some");
 
@@ -460,7 +465,7 @@ fn test_contains_text_masked() {
 
     let data = sample_text_masked_data();
     store
-        .store(TEST_KEY_TM, &PageOutput::TextMasked(data))
+        .store(TEST_KEY_TM, &PageOutput::TextMasked(data), Some((100, 100)))
         .expect("store should succeed");
 
     assert!(
@@ -505,7 +510,7 @@ fn test_text_masked_cache_files_on_disk() {
     };
 
     store
-        .store(TEST_KEY_TM, &PageOutput::TextMasked(data))
+        .store(TEST_KEY_TM, &PageOutput::TextMasked(data), Some((100, 100)))
         .expect("store should succeed");
 
     let key_dir = dir.path().join(TEST_KEY_TM);

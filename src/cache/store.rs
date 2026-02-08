@@ -112,6 +112,20 @@ fn str_to_color_mode(s: &str) -> Option<ColorMode> {
     }
 }
 
+/// XObject名をファイル名として安全な文字列にエンコードする。
+/// 英数字と `_`, `-` 以外は `%XX` (hex) に変換。
+fn sanitize_xobject_name(name: &str) -> String {
+    let mut result = String::with_capacity(name.len());
+    for b in name.bytes() {
+        if b.is_ascii_alphanumeric() || b == b'_' || b == b'-' {
+            result.push(b as char);
+        } else {
+            result.push_str(&format!("%{:02X}", b));
+        }
+    }
+    result
+}
+
 impl CacheStore {
     /// 指定されたディレクトリをキャッシュルートとして新しい CacheStore を作成する。
     pub fn new(cache_dir: impl AsRef<Path>) -> Self {
@@ -131,12 +145,20 @@ impl CacheStore {
     /// キャッシュディレクトリが存在しない場合は自動的に作成する。
     /// 書き込みはアトミック: 一時ディレクトリにファイルを書き込み、
     /// 最後にrenameで最終パスに移動する。
-    pub fn store(&self, key: &str, output: &PageOutput) -> crate::error::Result<()> {
+    pub fn store(
+        &self,
+        key: &str,
+        output: &PageOutput,
+        bitmap_dims: Option<(u32, u32)>,
+    ) -> crate::error::Result<()> {
         validate_cache_key(key)?;
 
         match output {
             PageOutput::Skip(_) => return Ok(()),
-            PageOutput::TextMasked(data) => return self.store_text_masked(key, data),
+            PageOutput::TextMasked(data) => {
+                let (w, h) = bitmap_dims.unwrap_or((0, 0));
+                return self.store_text_masked(key, data, w, h);
+            }
             _ => {}
         }
 
@@ -208,7 +230,13 @@ impl CacheStore {
     }
 
     /// TextMaskedData をキャッシュに保存する。
-    fn store_text_masked(&self, key: &str, data: &TextMaskedData) -> crate::error::Result<()> {
+    fn store_text_masked(
+        &self,
+        key: &str,
+        data: &TextMaskedData,
+        bitmap_width: u32,
+        bitmap_height: u32,
+    ) -> crate::error::Result<()> {
         let dir = self.key_dir(key)?;
         let tmp_dir = dir.with_extension("tmp");
 
@@ -238,10 +266,11 @@ impl CacheStore {
             });
         }
 
-        // modified_*.bin
+        // modified_*.bin (XObject名をサニタイズしてファイル名に使用)
         let mut modified_metas = Vec::with_capacity(data.modified_images.len());
         for (name, modification) in &data.modified_images {
-            let filename = format!("modified_{}.bin", name);
+            let safe_name = sanitize_xobject_name(name);
+            let filename = format!("modified_{}.bin", safe_name);
             fs::write(tmp_dir.join(&filename), &modification.data)
                 .map_err(|e| PdfMaskError::cache(e.to_string()))?;
             modified_metas.push(ModifiedImageMeta {
@@ -256,8 +285,8 @@ impl CacheStore {
         let metadata = CacheMetadata {
             cache_key: key.to_string(),
             cache_type: "text_masked".to_string(),
-            width: 0,
-            height: 0,
+            width: bitmap_width,
+            height: bitmap_height,
             color_mode: color_mode_to_str(data.color_mode).to_string(),
             page_index: data.page_index,
             regions: region_metas,
@@ -277,10 +306,14 @@ impl CacheStore {
     }
 
     /// キャッシュから PageOutput を取得する。キャッシュミスの場合は None を返す。
+    ///
+    /// `bitmap_dims` が指定された場合、キャッシュされたビットマップ寸法と比較し、
+    /// 不一致ならキャッシュミス（None）を返す。
     pub fn retrieve(
         &self,
         key: &str,
         expected_mode: ColorMode,
+        bitmap_dims: Option<(u32, u32)>,
     ) -> crate::error::Result<Option<PageOutput>> {
         let dir = self.key_dir(key)?;
         if !dir.exists() {
@@ -301,6 +334,13 @@ impl CacheStore {
         // カラーモードが一致しない場合はキャッシュミス
         if metadata.color_mode != color_mode_to_str(expected_mode) {
             return Ok(None);
+        }
+
+        // ビットマップ寸法の一致チェック（指定された場合）
+        if let Some((bw, bh)) = bitmap_dims {
+            if metadata.width != bw || metadata.height != bh {
+                return Ok(None);
+            }
         }
 
         // TextMasked エントリの場合
