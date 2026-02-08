@@ -205,23 +205,17 @@ where
 }
 
 impl Job {
-    /// ページ→カラーモードのマップを構築する。
+    /// ページ→カラーモードのオーバーライドマップを構築する。
     ///
-    /// - デフォルトカラーモード（fallback）は引数で指定
     /// - bw_pages, grayscale_pages, rgb_pages, skip_pages からオーバーライドを収集
     /// - 同一ページが複数リストに含まれる場合はエラー
-    /// - リストに含まれないページは HashMap に含まれない（= デフォルトを使用）
-    ///
-    /// # Arguments
-    /// * `default_mode` - Jobのcolor_modeがNoneの場合に使うデフォルト
+    /// - リストに含まれないページは HashMap に含まれない
+    ///   （= デフォルトカラーモードは呼び出し側で決定・適用する）
     ///
     /// # Returns
     /// ページ番号(1-based) → ColorMode のマップ。
-    /// マップに含まれないページはデフォルトモードを使う。
-    pub fn resolve_page_modes(
-        &self,
-        _default_mode: ColorMode,
-    ) -> crate::error::Result<HashMap<u32, ColorMode>> {
+    /// マップに含まれないページには、呼び出し側で用意したデフォルトモードを使うこと。
+    pub fn resolve_page_modes(&self) -> crate::error::Result<HashMap<u32, ColorMode>> {
         let mut page_to_mode: HashMap<u32, ColorMode> = HashMap::new();
 
         // 各 *_pages リストを処理

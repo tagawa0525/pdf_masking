@@ -85,7 +85,7 @@ fn main() -> ExitCode {
 
             // Resolve per-page color mode overrides (1-based)
             let default_mode = merged.color_mode;
-            let overrides = match job.resolve_page_modes(default_mode) {
+            let overrides = match job.resolve_page_modes() {
                 Ok(m) => m,
                 Err(e) => {
                     eprintln!("ERROR: {e}");

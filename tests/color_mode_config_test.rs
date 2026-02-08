@@ -155,9 +155,7 @@ jobs:
     let job_file: JobFile = serde_yml::from_str(yaml).expect("should parse");
     let job = &job_file.jobs[0];
 
-    let page_modes = job
-        .resolve_page_modes(ColorMode::Rgb)
-        .expect("should resolve");
+    let page_modes = job.resolve_page_modes().expect("should resolve");
 
     // デフォルトはbw、オーバーライドなし
     assert_eq!(page_modes.len(), 0, "no overrides -> empty map");
@@ -176,9 +174,7 @@ jobs:
     let job_file: JobFile = serde_yml::from_str(yaml).expect("should parse");
     let job = &job_file.jobs[0];
 
-    let page_modes = job
-        .resolve_page_modes(ColorMode::Bw)
-        .expect("should resolve");
+    let page_modes = job.resolve_page_modes().expect("should resolve");
 
     assert_eq!(page_modes.get(&5), Some(&ColorMode::Rgb));
     assert_eq!(page_modes.get(&6), Some(&ColorMode::Rgb));
@@ -203,7 +199,7 @@ jobs:
     let job_file: JobFile = serde_yml::from_str(yaml).expect("should parse");
     let job = &job_file.jobs[0];
 
-    let result = job.resolve_page_modes(ColorMode::Bw);
+    let result = job.resolve_page_modes();
     assert!(result.is_err(), "should detect conflict on page 7 and 8");
 
     let err_msg = result.unwrap_err().to_string();
@@ -228,9 +224,7 @@ jobs:
     let job_file: JobFile = serde_yml::from_str(yaml).expect("should parse");
     let job = &job_file.jobs[0];
 
-    let page_modes = job
-        .resolve_page_modes(ColorMode::Rgb)
-        .expect("should resolve");
+    let page_modes = job.resolve_page_modes().expect("should resolve");
 
     assert_eq!(page_modes.get(&1), Some(&ColorMode::Bw));
     assert_eq!(page_modes.get(&2), Some(&ColorMode::Grayscale));
