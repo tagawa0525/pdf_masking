@@ -22,7 +22,15 @@ fn test_process_page_cache_miss() {
         preserve_images: true,
     };
 
-    let result = process_page(0, &img, content_stream, &mrc_config, &cache_settings, None);
+    let result = process_page(
+        0,
+        &img,
+        content_stream,
+        &mrc_config,
+        &cache_settings,
+        None,
+        "test.pdf",
+    );
     assert!(
         result.is_ok(),
         "process_page should succeed: {:?}",
@@ -67,6 +75,7 @@ fn test_process_page_cache_hit() {
         &mrc_config,
         &cache_settings,
         Some(&cache_store),
+        "test.pdf",
     );
     assert!(result1.is_ok());
     let processed1 = result1.unwrap();
@@ -82,6 +91,7 @@ fn test_process_page_cache_hit() {
         &mrc_config,
         &cache_settings,
         Some(&cache_store),
+        "test.pdf",
     );
     assert!(result2.is_ok());
     let processed2 = result2.unwrap();

@@ -67,15 +67,25 @@ impl CacheStore {
     /// MrcLayers をキャッシュに保存する。
     ///
     /// キャッシュディレクトリが存在しない場合は自動的に作成する。
+    /// 書き込みはアトミック: 一時ディレクトリにファイルを書き込み、
+    /// 最後にrenameで最終パスに移動する。これにより、並列アクセス時に
+    /// 部分的なエントリが見えることを防止する。
     pub fn store(&self, key: &str, layers: &MrcLayers) -> crate::error::Result<()> {
         let dir = self.key_dir(key)?;
-        fs::create_dir_all(&dir).map_err(|e| PdfMaskError::cache(e.to_string()))?;
+        let tmp_dir = dir.with_extension("tmp");
 
-        fs::write(dir.join("mask.jbig2"), &layers.mask_jbig2)
+        // 一時ディレクトリに書き込む
+        // 既存のtmpディレクトリがあれば削除（前回の失敗したstore等）
+        if tmp_dir.exists() {
+            let _ = fs::remove_dir_all(&tmp_dir);
+        }
+        fs::create_dir_all(&tmp_dir).map_err(|e| PdfMaskError::cache(e.to_string()))?;
+
+        fs::write(tmp_dir.join("mask.jbig2"), &layers.mask_jbig2)
             .map_err(|e| PdfMaskError::cache(e.to_string()))?;
-        fs::write(dir.join("foreground.jpg"), &layers.foreground_jpeg)
+        fs::write(tmp_dir.join("foreground.jpg"), &layers.foreground_jpeg)
             .map_err(|e| PdfMaskError::cache(e.to_string()))?;
-        fs::write(dir.join("background.jpg"), &layers.background_jpeg)
+        fs::write(tmp_dir.join("background.jpg"), &layers.background_jpeg)
             .map_err(|e| PdfMaskError::cache(e.to_string()))?;
 
         let metadata = CacheMetadata {
@@ -85,8 +95,16 @@ impl CacheStore {
         };
         let metadata_json =
             serde_json::to_string(&metadata).map_err(|e| PdfMaskError::cache(e.to_string()))?;
-        fs::write(dir.join("metadata.json"), metadata_json.as_bytes())
+        fs::write(tmp_dir.join("metadata.json"), metadata_json.as_bytes())
             .map_err(|e| PdfMaskError::cache(e.to_string()))?;
+
+        // 既存のキャッシュエントリがあれば削除
+        if dir.exists() {
+            let _ = fs::remove_dir_all(&dir);
+        }
+
+        // アトミックにrename（同一ファイルシステム上）
+        fs::rename(&tmp_dir, &dir).map_err(|e| PdfMaskError::cache(e.to_string()))?;
 
         Ok(())
     }

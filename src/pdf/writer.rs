@@ -29,8 +29,13 @@ fn escape_pdf_name(name: &str) -> String {
 }
 
 /// MrcLayersからPDF XObjectを作成し、ページに追加する。
+///
+/// 複数ページをサポートする。最初の`write_mrc_page`呼び出しでPages/Catalog構造を作成し、
+/// 以降の呼び出しでは既存のKids配列にページを追加する。
 pub struct MrcPageWriter {
     doc: Document,
+    /// 共有Pagesノード。最初のwrite_mrc_page呼び出しで作成される。
+    pages_id: Option<lopdf::ObjectId>,
 }
 
 impl Default for MrcPageWriter {
@@ -43,7 +48,14 @@ impl MrcPageWriter {
     pub fn new() -> Self {
         Self {
             doc: Document::with_version("1.5"),
+            pages_id: None,
         }
+    }
+
+    /// 内部のlopdf::Documentへの可変参照を返す。
+    /// PDF最適化などの後処理に使用する。
+    pub fn document_mut(&mut self) -> &mut Document {
+        &mut self.doc
     }
 
     /// 背景JPEG XObjectを追加する。
@@ -131,7 +143,10 @@ impl MrcPageWriter {
     }
 
     /// MrcLayersからPDFページを構築する。
-    pub fn write_mrc_page(&mut self, layers: &MrcLayers) -> crate::error::Result<()> {
+    ///
+    /// 最初の呼び出しでPages/Catalog構造を作成し、以降の呼び出しでは
+    /// 既存のKids配列にページを追加する。追加されたページのObjectIdを返す。
+    pub fn write_mrc_page(&mut self, layers: &MrcLayers) -> crate::error::Result<lopdf::ObjectId> {
         let width = layers.width;
         let height = layers.height;
 
@@ -140,8 +155,15 @@ impl MrcPageWriter {
         let mask_id = self.add_mask_xobject(&layers.mask_jbig2, width, height);
         let fg_id = self.add_foreground_xobject(&layers.foreground_jpeg, width, height, mask_id);
 
-        // Pagesノードを作成
-        let pages_id = self.doc.new_object_id();
+        // Pages構造を初期化（初回のみ）またはIDを取得
+        let pages_id = match self.pages_id {
+            Some(id) => id,
+            None => {
+                let id = self.doc.new_object_id();
+                self.pages_id = Some(id);
+                id
+            }
+        };
 
         // XObjectリソース辞書を構築
         let mut xobject_dict = lopdf::Dictionary::new();
@@ -172,22 +194,37 @@ impl MrcPageWriter {
             "Contents" => content_id,
         });
 
-        // Pagesノードを設定
-        let pages = dictionary! {
-            "Type" => "Pages",
-            "Kids" => vec![page_id.into()],
-            "Count" => 1,
-        };
-        self.doc.objects.insert(pages_id, Object::Dictionary(pages));
+        // PagesノードにKidsを追加/更新
+        if let Some(Object::Dictionary(pages_dict)) = self.doc.objects.get_mut(&pages_id) {
+            // 既存のPagesノードにページを追加
+            if let Ok(kids) = pages_dict.get_mut(b"Kids") {
+                if let Ok(kids_array) = kids.as_array_mut() {
+                    kids_array.push(page_id.into());
+                }
+            }
+            if let Ok(count_obj) = pages_dict.get_mut(b"Count") {
+                if let Ok(count) = count_obj.as_i64() {
+                    *count_obj = Object::Integer(count + 1);
+                }
+            }
+        } else {
+            // 初回: Pagesノードを新規作成
+            let pages = dictionary! {
+                "Type" => "Pages",
+                "Kids" => vec![page_id.into()],
+                "Count" => 1,
+            };
+            self.doc.objects.insert(pages_id, Object::Dictionary(pages));
 
-        // Catalogを作成
-        let catalog_id = self.doc.add_object(dictionary! {
-            "Type" => "Catalog",
-            "Pages" => pages_id,
-        });
-        self.doc.trailer.set("Root", catalog_id);
+            // Catalogを作成（初回のみ）
+            let catalog_id = self.doc.add_object(dictionary! {
+                "Type" => "Catalog",
+                "Pages" => pages_id,
+            });
+            self.doc.trailer.set("Root", catalog_id);
+        }
 
-        Ok(())
+        Ok(page_id)
     }
 
     /// PDFドキュメントをバイト列として出力する。
@@ -308,5 +345,44 @@ mod tests {
         let pdf_bytes = writer.save_to_bytes().expect("save to bytes");
         let doc = Document::load_mem(&pdf_bytes).expect("load PDF from memory");
         assert_eq!(doc.get_pages().len(), 1);
+    }
+
+    #[test]
+    fn test_multi_page_write() {
+        let layers1 = crate::mrc::MrcLayers {
+            background_jpeg: vec![0xFF, 0xD8, 0xFF, 0xE0],
+            foreground_jpeg: vec![0xFF, 0xD8, 0xFF, 0xE1],
+            mask_jbig2: vec![0x97, 0x4A, 0x42, 0x32],
+            width: 640,
+            height: 480,
+        };
+        let layers2 = crate::mrc::MrcLayers {
+            background_jpeg: vec![0xFF, 0xD8, 0xFF, 0xE0, 0x01],
+            foreground_jpeg: vec![0xFF, 0xD8, 0xFF, 0xE1, 0x01],
+            mask_jbig2: vec![0x97, 0x4A, 0x42, 0x32, 0x01],
+            width: 800,
+            height: 600,
+        };
+        let layers3 = crate::mrc::MrcLayers {
+            background_jpeg: vec![0xFF, 0xD8, 0xFF, 0xE0, 0x02],
+            foreground_jpeg: vec![0xFF, 0xD8, 0xFF, 0xE1, 0x02],
+            mask_jbig2: vec![0x97, 0x4A, 0x42, 0x32, 0x02],
+            width: 1024,
+            height: 768,
+        };
+
+        let mut writer = MrcPageWriter::new();
+        let id1 = writer.write_mrc_page(&layers1).expect("write page 1");
+        let id2 = writer.write_mrc_page(&layers2).expect("write page 2");
+        let id3 = writer.write_mrc_page(&layers3).expect("write page 3");
+
+        // All page IDs should be unique
+        assert_ne!(id1, id2);
+        assert_ne!(id2, id3);
+        assert_ne!(id1, id3);
+
+        let pdf_bytes = writer.save_to_bytes().expect("save to bytes");
+        let doc = Document::load_mem(&pdf_bytes).expect("load PDF from memory");
+        assert_eq!(doc.get_pages().len(), 3, "should have 3 pages");
     }
 }

@@ -18,7 +18,10 @@ pub struct ProcessedPage {
 /// Process a single page: check cache -> MRC compose -> store in cache.
 ///
 /// `content_stream` is used with settings to compute the cache key.
-/// If cache hits, return cached layers. Otherwise run MRC compose.
+/// `pdf_path` and `page_index` are included in the cache key to prevent
+/// collisions across different PDFs.
+/// If cache hits and dimensions match the bitmap, return cached layers.
+/// Otherwise run MRC compose.
 #[allow(dead_code)]
 pub fn process_page(
     page_index: u32,
@@ -27,17 +30,25 @@ pub fn process_page(
     mrc_config: &MrcConfig,
     cache_settings: &CacheSettings,
     cache_store: Option<&CacheStore>,
+    pdf_path: &str,
 ) -> crate::error::Result<ProcessedPage> {
-    let cache_key = compute_cache_key(content_stream, cache_settings);
+    let cache_key = compute_cache_key(content_stream, cache_settings, pdf_path, page_index);
+
+    let bitmap_width = bitmap.width();
+    let bitmap_height = bitmap.height();
 
     // Check cache first
     if let Some(store) = cache_store {
         if let Some(layers) = store.retrieve(&cache_key)? {
-            return Ok(ProcessedPage {
-                page_index,
-                mrc_layers: layers,
-                cache_key,
-            });
+            // Validate cached layer dimensions against current bitmap
+            if layers.width == bitmap_width && layers.height == bitmap_height {
+                return Ok(ProcessedPage {
+                    page_index,
+                    mrc_layers: layers,
+                    cache_key,
+                });
+            }
+            // Dimension mismatch: treat as cache miss and recompose
         }
     }
 

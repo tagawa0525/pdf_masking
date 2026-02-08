@@ -93,6 +93,7 @@ pub fn run_job(config: &JobConfig) -> crate::error::Result<JobResult> {
                 &mrc_config,
                 &cache_settings,
                 cache_store.as_ref(),
+                &config.input_path,
             )
         })
         .collect();
@@ -110,9 +111,14 @@ pub fn run_job(config: &JobConfig) -> crate::error::Result<JobResult> {
 
     // --- Phase D: PDF assembly + optimization (sequential) ---
     let mut writer = MrcPageWriter::new();
+    let mut masked_page_ids: Vec<lopdf::ObjectId> = Vec::new();
     for page in &successful_pages {
-        writer.write_mrc_page(&page.mrc_layers)?;
+        let page_id = writer.write_mrc_page(&page.mrc_layers)?;
+        masked_page_ids.push(page_id);
     }
+
+    // Run optimization on the assembled document
+    crate::pdf::optimizer::optimize(writer.document_mut(), &masked_page_ids)?;
 
     let pdf_bytes = writer.save_to_bytes()?;
     std::fs::write(&config.output_path, pdf_bytes)?;

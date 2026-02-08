@@ -32,11 +32,19 @@ fn settings_to_canonical_json(settings: &CacheSettings) -> String {
 
 /// コンテンツストリームと設定からキャッシュキー（SHA-256ハッシュ）を計算する。
 ///
-/// ハッシュ入力: `content_stream || settings_canonical_json`
+/// ハッシュ入力: `pdf_path || page_index || content_stream || settings_canonical_json`
+/// PDFパスとページインデックスを含めることで、異なるPDF間のキー衝突を防止する。
 /// 設定は正規化されたJSON形式（キーのアルファベット順）で結合される。
 #[allow(dead_code)]
-pub fn compute_cache_key(content_stream: &[u8], settings: &CacheSettings) -> String {
+pub fn compute_cache_key(
+    content_stream: &[u8],
+    settings: &CacheSettings,
+    pdf_path: &str,
+    page_index: u32,
+) -> String {
     let mut hasher = Sha256::new();
+    hasher.update(pdf_path.as_bytes());
+    hasher.update(page_index.to_le_bytes());
     hasher.update(content_stream);
 
     // 設定を正規化JSON形式で追加（キーはアルファベット順で固定）
