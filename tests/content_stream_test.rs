@@ -623,7 +623,7 @@ fn test_pixel_to_page_coords_basic() {
         width: 2550,
         height: 3300,
     };
-    let bbox = pixel_to_page_coords(&pixel_bbox, 612.0, 792.0, 2550, 3300);
+    let bbox = pixel_to_page_coords(&pixel_bbox, 612.0, 792.0, 2550, 3300).expect("coords");
     assert_approx(bbox.x_min, 0.0);
     assert_approx(bbox.y_min, 0.0);
     assert_approx(bbox.x_max, 612.0);
@@ -640,7 +640,7 @@ fn test_pixel_to_page_coords_y_inversion() {
         height: 100,
     };
     // 1000x1000px bitmap, 100x100pt page
-    let bbox = pixel_to_page_coords(&pixel_bbox, 100.0, 100.0, 1000, 1000);
+    let bbox = pixel_to_page_coords(&pixel_bbox, 100.0, 100.0, 1000, 1000).expect("coords");
     // ビットマップ (0,0)-(100,100) → PDF (0,90)-(10,100)
     assert_approx(bbox.x_min, 0.0);
     assert_approx(bbox.y_min, 90.0); // 100 - 100*0.1 = 90
@@ -658,7 +658,7 @@ fn test_pixel_to_page_coords_center_region() {
         height: 500,
     };
     // 1000x1000px bitmap, 100x100pt page → scale=0.1
-    let bbox = pixel_to_page_coords(&pixel_bbox, 100.0, 100.0, 1000, 1000);
+    let bbox = pixel_to_page_coords(&pixel_bbox, 100.0, 100.0, 1000, 1000).expect("coords");
     assert_approx(bbox.x_min, 25.0);
     assert_approx(bbox.y_min, 25.0); // 100 - (250+500)*0.1 = 25
     assert_approx(bbox.x_max, 75.0);
@@ -675,11 +675,26 @@ fn test_pixel_to_page_coords_bottom_right() {
         height: 100,
     };
     // 1000x1000px bitmap, 100x100pt page → scale=0.1
-    let bbox = pixel_to_page_coords(&pixel_bbox, 100.0, 100.0, 1000, 1000);
+    let bbox = pixel_to_page_coords(&pixel_bbox, 100.0, 100.0, 1000, 1000).expect("coords");
     assert_approx(bbox.x_min, 90.0);
     assert_approx(bbox.y_min, 0.0); // 100 - (900+100)*0.1 = 0
     assert_approx(bbox.x_max, 100.0);
     assert_approx(bbox.y_max, 10.0); // 100 - 900*0.1 = 10
+}
+
+#[test]
+fn test_pixel_to_page_coords_zero_bitmap_rejected() {
+    let pixel_bbox = PixelBBox {
+        x: 0,
+        y: 0,
+        width: 10,
+        height: 10,
+    };
+    let result = pixel_to_page_coords(&pixel_bbox, 100.0, 100.0, 0, 1000);
+    assert!(result.is_err(), "Should reject zero bitmap width");
+
+    let result = pixel_to_page_coords(&pixel_bbox, 100.0, 100.0, 1000, 0);
+    assert!(result.is_err(), "Should reject zero bitmap height");
 }
 
 // ============================================================

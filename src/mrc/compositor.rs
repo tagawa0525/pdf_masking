@@ -92,6 +92,13 @@ pub fn crop_text_regions(
     quality: u8,
     color_mode: ColorMode,
 ) -> crate::error::Result<Vec<(Vec<u8>, PixelBBox)>> {
+    if !(1..=100).contains(&quality) {
+        return Err(PdfMaskError::jpeg_encode(format!(
+            "JPEG quality must be 1-100, got {}",
+            quality
+        )));
+    }
+
     let mut results = Vec::with_capacity(bboxes.len());
 
     for bbox in bboxes {
@@ -104,9 +111,15 @@ pub fn crop_text_regions(
                 let gray = cropped.to_luma8();
                 jpeg::encode_gray_to_jpeg(&gray, quality)?
             }
-            _ => {
+            ColorMode::Rgb => {
                 let rgb = cropped.to_rgb8();
                 jpeg::encode_rgb_to_jpeg(&rgb, quality)?
+            }
+            ColorMode::Bw | ColorMode::Skip => {
+                return Err(PdfMaskError::jpeg_encode(format!(
+                    "crop_text_regions does not support {:?} color mode",
+                    color_mode
+                )));
             }
         };
 
