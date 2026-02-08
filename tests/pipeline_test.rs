@@ -24,7 +24,7 @@ fn test_process_page_cache_miss() {
         fg_dpi: 100,
         bg_quality: 50,
         fg_quality: 30,
-        preserve_images: true,
+        preserve_images: false,
         color_mode: ColorMode::Rgb,
     };
 
@@ -76,7 +76,7 @@ fn test_process_page_cache_hit() {
         fg_dpi: 100,
         bg_quality: 50,
         fg_quality: 30,
-        preserve_images: true,
+        preserve_images: false,
         color_mode: ColorMode::Rgb,
     };
 
@@ -191,7 +191,6 @@ fn test_process_page_text_masked_with_image_streams() {
 /// preserve_images=true かつ image_streams=None の場合もTextMaskedモードを使用する。
 /// 画像XObjectが無いページでもテキスト領域のみをJPEG化する方がMRCより効率的。
 #[test]
-#[ignore] // RED: image_streams=None でもTextMaskedを使う実装が未完
 fn test_process_page_text_masked_without_image_streams() {
     let img = DynamicImage::ImageRgba8(RgbaImage::new(100, 100));
     let content_stream = b"BT /F1 12 Tf (Hello) Tj ET";
