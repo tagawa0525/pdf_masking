@@ -15,6 +15,7 @@ pub struct Settings {
     pub cache_dir: PathBuf,
     pub preserve_images: bool,
     pub linearize: bool,
+    pub text_to_outlines: bool,
 }
 
 impl Default for Settings {
@@ -29,6 +30,7 @@ impl Default for Settings {
             cache_dir: PathBuf::from(".cache"),
             preserve_images: true,
             linearize: true,
+            text_to_outlines: false,
         }
     }
 }

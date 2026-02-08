@@ -298,6 +298,7 @@ fn test_job_config_creation() {
         fg_quality: 30,
         preserve_images: true,
         cache_dir: Some(PathBuf::from(".cache")),
+        text_to_outlines: false,
     };
 
     assert_eq!(config.input_path, Path::new("input.pdf"));

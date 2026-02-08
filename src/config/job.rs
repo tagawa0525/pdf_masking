@@ -36,6 +36,7 @@ pub struct Job {
     pub fg_quality: Option<u8>,
     pub preserve_images: Option<bool>,
     pub linearize: Option<bool>,
+    pub text_to_outlines: Option<bool>,
 }
 
 /// ページ範囲文字列をパースしてページ番号のベクタに変換する。

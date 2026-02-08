@@ -94,6 +94,7 @@ fn main() -> ExitCode {
                 fg_quality: merged.fg_quality,
                 preserve_images: merged.preserve_images,
                 cache_dir: Some(merged.cache_dir),
+                text_to_outlines: merged.text_to_outlines,
             });
         }
     }
