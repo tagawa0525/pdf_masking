@@ -1,6 +1,8 @@
 // Phase 5: pipeline integration: bitmap + config -> MrcLayers
 
-use super::{BwLayers, MrcLayers, jbig2, jpeg, segmenter};
+use std::collections::HashMap;
+
+use super::{BwLayers, MrcLayers, TextMaskedData, jbig2, jpeg, segmenter};
 use crate::config::job::ColorMode;
 use crate::error::PdfMaskError;
 use crate::mrc::segmenter::PixelBBox;
@@ -139,4 +141,40 @@ pub fn compose_bw(rgba_data: &[u8], width: u32, height: u32) -> crate::error::Re
         width,
         height,
     })
+}
+
+/// テキスト選択的ラスタライズの入力パラメータ。
+pub struct TextMaskedParams<'a> {
+    /// 元のコンテンツストリーム
+    pub content_bytes: &'a [u8],
+    /// レンダリング済みRGBAビットマップ
+    pub rgba_data: &'a [u8],
+    /// ビットマップ幅(px)
+    pub bitmap_width: u32,
+    /// ビットマップ高さ(px)
+    pub bitmap_height: u32,
+    /// ページ幅(pt)
+    pub page_width_pts: f64,
+    /// ページ高さ(pt)
+    pub page_height_pts: f64,
+    /// XObject名 → lopdf::Stream のマップ
+    pub image_streams: &'a HashMap<String, lopdf::Stream>,
+    /// JPEG品質 (1-100)
+    pub quality: u8,
+    /// RGB or Grayscale
+    pub color_mode: ColorMode,
+    /// ページ番号(0-based)
+    pub page_index: u32,
+}
+
+/// テキスト選択的ラスタライズ: テキストのみ画像化し、画像XObjectは保持。
+///
+/// # Pipeline
+/// 1. コンテンツストリームからBT...ETブロックを除去
+/// 2. 白色fill矩形を検出
+/// 3. 画像XObject配置を取得
+/// 4. 白色矩形と重なる画像をリダクション
+/// 5. ビットマップからテキスト領域を抽出・JPEG化
+pub fn compose_text_masked(_params: &TextMaskedParams) -> crate::error::Result<TextMaskedData> {
+    todo!("GREEN phase: implement compose_text_masked")
 }
