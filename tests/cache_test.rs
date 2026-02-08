@@ -3,12 +3,14 @@
 // Tests for cache key computation (hash.rs) and file-system cache store (store.rs).
 // Each test verifies a specific aspect of the caching layer.
 
+use std::collections::HashMap;
 use std::path::Path;
 
 use pdf_masking::cache::hash::{CacheSettings, compute_cache_key};
 use pdf_masking::cache::store::CacheStore;
 use pdf_masking::config::job::ColorMode;
-use pdf_masking::mrc::{MrcLayers, PageOutput};
+use pdf_masking::mrc::{ImageModification, MrcLayers, PageOutput, TextMaskedData, TextRegionCrop};
+use pdf_masking::pdf::content_stream::BBox;
 use tempfile::tempdir;
 
 // ---- hash.rs tests ----
@@ -328,4 +330,191 @@ fn test_new_accepts_path() {
         .store(TEST_KEY, &PageOutput::Mrc(layers))
         .expect("store should succeed");
     assert!(store.contains(TEST_KEY));
+}
+
+// ---- TextMasked cache tests ----
+
+const TEST_KEY_TM: &str = "b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3";
+
+fn sample_text_masked_data() -> TextMaskedData {
+    TextMaskedData {
+        stripped_content_stream: b"q 100 0 0 100 0 0 cm /Im1 Do Q".to_vec(),
+        text_regions: vec![TextRegionCrop {
+            jpeg_data: vec![0xFF, 0xD8, 0xFF, 0xE0, 0x00, 0x10],
+            bbox_points: BBox {
+                x_min: 72.0,
+                y_min: 600.0,
+                x_max: 200.0,
+                y_max: 700.0,
+            },
+            pixel_width: 128,
+            pixel_height: 100,
+        }],
+        modified_images: HashMap::new(),
+        page_index: 0,
+        color_mode: ColorMode::Rgb,
+    }
+}
+
+/// TextMaskedDataをstore→retrieveし、全フィールドが一致することを検証。
+#[test]
+#[ignore]
+fn test_store_and_retrieve_text_masked() {
+    let dir = tempdir().expect("create temp dir");
+    let store = CacheStore::new(dir.path());
+    let data = sample_text_masked_data();
+
+    store
+        .store(TEST_KEY_TM, &PageOutput::TextMasked(data))
+        .expect("store TextMasked should succeed");
+
+    let retrieved = store
+        .retrieve(TEST_KEY_TM, ColorMode::Rgb)
+        .expect("retrieve should succeed")
+        .expect("should return Some for stored TextMasked key");
+
+    match retrieved {
+        PageOutput::TextMasked(tm) => {
+            assert_eq!(
+                tm.stripped_content_stream,
+                b"q 100 0 0 100 0 0 cm /Im1 Do Q"
+            );
+            assert_eq!(tm.page_index, 0);
+            assert_eq!(tm.color_mode, ColorMode::Rgb);
+            assert_eq!(tm.text_regions.len(), 1);
+            let region = &tm.text_regions[0];
+            assert_eq!(region.jpeg_data, vec![0xFF, 0xD8, 0xFF, 0xE0, 0x00, 0x10]);
+            assert_eq!(region.pixel_width, 128);
+            assert_eq!(region.pixel_height, 100);
+            assert!((region.bbox_points.x_min - 72.0).abs() < f64::EPSILON);
+            assert!((region.bbox_points.y_max - 700.0).abs() < f64::EPSILON);
+            assert!(tm.modified_images.is_empty());
+        }
+        other => panic!(
+            "expected PageOutput::TextMasked, got {:?}",
+            std::mem::discriminant(&other)
+        ),
+    }
+}
+
+/// modified_imagesを含むTextMaskedDataをstore→retrieveし、画像データが復元されることを検証。
+#[test]
+#[ignore]
+fn test_store_and_retrieve_text_masked_with_modified_images() {
+    let dir = tempdir().expect("create temp dir");
+    let store = CacheStore::new(dir.path());
+
+    let mut modified_images = HashMap::new();
+    modified_images.insert(
+        "Im1".to_string(),
+        ImageModification {
+            data: vec![0xBB; 200],
+            filter: "DCTDecode".to_string(),
+            color_space: "DeviceGray".to_string(),
+            bits_per_component: 8,
+        },
+    );
+
+    let data = TextMaskedData {
+        stripped_content_stream: b"q Q".to_vec(),
+        text_regions: vec![],
+        modified_images,
+        page_index: 2,
+        color_mode: ColorMode::Grayscale,
+    };
+
+    store
+        .store(TEST_KEY_TM, &PageOutput::TextMasked(data))
+        .expect("store should succeed");
+
+    let retrieved = store
+        .retrieve(TEST_KEY_TM, ColorMode::Grayscale)
+        .expect("retrieve should succeed")
+        .expect("should return Some");
+
+    match retrieved {
+        PageOutput::TextMasked(tm) => {
+            assert_eq!(tm.page_index, 2);
+            assert_eq!(tm.color_mode, ColorMode::Grayscale);
+            assert_eq!(tm.stripped_content_stream, b"q Q");
+            assert!(tm.text_regions.is_empty());
+            assert_eq!(tm.modified_images.len(), 1);
+            let img = tm.modified_images.get("Im1").expect("Im1 should exist");
+            assert_eq!(img.data, vec![0xBB; 200]);
+            assert_eq!(img.filter, "DCTDecode");
+            assert_eq!(img.color_space, "DeviceGray");
+            assert_eq!(img.bits_per_component, 8);
+        }
+        other => panic!(
+            "expected PageOutput::TextMasked, got {:?}",
+            std::mem::discriminant(&other)
+        ),
+    }
+}
+
+/// TextMaskedDataをstore後にcontainsがtrueを返すことを検証。
+#[test]
+#[ignore]
+fn test_contains_text_masked() {
+    let dir = tempdir().expect("create temp dir");
+    let store = CacheStore::new(dir.path());
+
+    assert!(!store.contains(TEST_KEY_TM));
+
+    let data = sample_text_masked_data();
+    store
+        .store(TEST_KEY_TM, &PageOutput::TextMasked(data))
+        .expect("store should succeed");
+
+    assert!(
+        store.contains(TEST_KEY_TM),
+        "contains should return true after storing TextMasked"
+    );
+}
+
+/// TextMaskedキャッシュのディスク上のファイル構造を検証。
+#[test]
+#[ignore]
+fn test_text_masked_cache_files_on_disk() {
+    let dir = tempdir().expect("create temp dir");
+    let store = CacheStore::new(dir.path());
+
+    let mut modified_images = HashMap::new();
+    modified_images.insert(
+        "Im1".to_string(),
+        ImageModification {
+            data: vec![0xCC; 50],
+            filter: "FlateDecode".to_string(),
+            color_space: "DeviceRGB".to_string(),
+            bits_per_component: 8,
+        },
+    );
+
+    let data = TextMaskedData {
+        stripped_content_stream: b"q Q".to_vec(),
+        text_regions: vec![TextRegionCrop {
+            jpeg_data: vec![0xFF, 0xD8],
+            bbox_points: BBox {
+                x_min: 0.0,
+                y_min: 0.0,
+                x_max: 100.0,
+                y_max: 100.0,
+            },
+            pixel_width: 50,
+            pixel_height: 50,
+        }],
+        modified_images,
+        page_index: 0,
+        color_mode: ColorMode::Rgb,
+    };
+
+    store
+        .store(TEST_KEY_TM, &PageOutput::TextMasked(data))
+        .expect("store should succeed");
+
+    let key_dir = dir.path().join(TEST_KEY_TM);
+    assert!(key_dir.join("metadata.json").exists());
+    assert!(key_dir.join("stripped_content.bin").exists());
+    assert!(key_dir.join("region_0.jpg").exists());
+    assert!(key_dir.join("modified_Im1.bin").exists());
 }

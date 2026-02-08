@@ -264,6 +264,96 @@ fn test_job_config_creation() {
     assert_eq!(config.cache_dir, Some(PathBuf::from(".cache")));
 }
 
+/// TextMaskedモードでキャッシュが効くことを検証（store → 2回目でcache hit）
+#[test]
+#[ignore]
+fn test_process_page_text_masked_cache_roundtrip() {
+    use std::collections::HashMap;
+
+    let tmp_dir = tempfile::tempdir().expect("create temp dir");
+    let cache_store = CacheStore::new(tmp_dir.path());
+
+    let img = DynamicImage::ImageRgba8(RgbaImage::new(100, 100));
+    let content_stream = b"BT /F1 12 Tf (Hello) Tj ET";
+    let mrc_config = MrcConfig {
+        bg_quality: 50,
+        fg_quality: 30,
+    };
+    let cache_settings = CacheSettings {
+        dpi: 300,
+        fg_dpi: 100,
+        bg_quality: 50,
+        fg_quality: 30,
+        preserve_images: true,
+        color_mode: ColorMode::Rgb,
+    };
+
+    let mut image_streams = HashMap::new();
+    let img_stream = lopdf::Stream::new(
+        dictionary! {
+            "Type" => "XObject",
+            "Subtype" => "Image",
+            "Width" => 50,
+            "Height" => 50,
+            "ColorSpace" => "DeviceRGB",
+            "BitsPerComponent" => 8,
+        },
+        vec![0u8; 4],
+    );
+    image_streams.insert("Im1".to_string(), img_stream);
+
+    // 1回目: cache miss → TextMasked生成 + キャッシュ保存
+    let result1 = process_page(
+        0,
+        &img,
+        content_stream,
+        &mrc_config,
+        &cache_settings,
+        Some(&cache_store),
+        Path::new("test.pdf"),
+        Some(&image_streams),
+    );
+    assert!(
+        result1.is_ok(),
+        "first call should succeed: {:?}",
+        result1.err()
+    );
+    let processed1 = result1.unwrap();
+    assert!(matches!(&processed1.output, PageOutput::TextMasked(_)));
+    assert!(cache_store.contains(&processed1.cache_key));
+
+    // 2回目: cache hit → キャッシュから復元
+    let result2 = process_page(
+        0,
+        &img,
+        content_stream,
+        &mrc_config,
+        &cache_settings,
+        Some(&cache_store),
+        Path::new("test.pdf"),
+        Some(&image_streams),
+    );
+    assert!(
+        result2.is_ok(),
+        "second call should succeed: {:?}",
+        result2.err()
+    );
+    let processed2 = result2.unwrap();
+
+    // 同じcache keyであること
+    assert_eq!(processed1.cache_key, processed2.cache_key);
+    // TextMaskedとして復元されること
+    match (&processed1.output, &processed2.output) {
+        (PageOutput::TextMasked(d1), PageOutput::TextMasked(d2)) => {
+            assert_eq!(d1.page_index, d2.page_index);
+            assert_eq!(d1.color_mode, d2.color_mode);
+            assert_eq!(d1.text_regions.len(), d2.text_regions.len());
+            assert_eq!(d1.modified_images.len(), d2.modified_images.len());
+        }
+        _ => panic!("expected TextMasked for both calls"),
+    }
+}
+
 #[test]
 fn test_run_all_jobs_empty() {
     let jobs: Vec<JobConfig> = vec![];

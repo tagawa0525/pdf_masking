@@ -4,9 +4,17 @@
 // MRC entries: mask.jbig2, foreground.jpg, background.jpg, metadata.json
 // BW entries: mask.jbig2, metadata.json
 
+#[allow(unused_imports)]
+use std::collections::HashMap;
+
 use crate::config::job::ColorMode;
 use crate::error::PdfMaskError;
-use crate::mrc::{BwLayers, MrcLayers, PageOutput};
+#[allow(unused_imports)]
+use crate::mrc::{
+    BwLayers, ImageModification, MrcLayers, PageOutput, TextMaskedData, TextRegionCrop,
+};
+#[allow(unused_imports)]
+use crate::pdf::content_stream::BBox;
 use serde_json;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -29,14 +37,43 @@ pub struct CacheStore {
     cache_dir: PathBuf,
 }
 
-/// metadata.json に保存する画像のメタデータ。
+/// metadata.json に保存するキャッシュエントリのメタデータ。
 #[derive(serde::Serialize, serde::Deserialize)]
 struct CacheMetadata {
     cache_key: String,
+    #[serde(default)]
+    cache_type: String,
+    #[serde(default)]
     width: u32,
+    #[serde(default)]
     height: u32,
     #[serde(default = "default_color_mode")]
     color_mode: String,
+    #[serde(default)]
+    page_index: u32,
+    #[serde(default)]
+    regions: Vec<TextRegionMeta>,
+    #[serde(default)]
+    modified_images: Vec<ModifiedImageMeta>,
+}
+
+/// テキスト領域のキャッシュメタデータ。
+#[derive(serde::Serialize, serde::Deserialize)]
+struct TextRegionMeta {
+    bbox: BBox,
+    pixel_width: u32,
+    pixel_height: u32,
+    file: String,
+}
+
+/// リダクション済み画像のキャッシュメタデータ。
+#[derive(serde::Serialize, serde::Deserialize)]
+struct ModifiedImageMeta {
+    name: String,
+    filter: String,
+    color_space: String,
+    bits_per_component: u8,
+    file: String,
 }
 
 fn default_color_mode() -> String {
@@ -130,11 +167,19 @@ impl CacheStore {
                 .map_err(|e| PdfMaskError::cache(e.to_string()))?;
         }
 
+        let cache_type = match output {
+            PageOutput::BwMask(_) => "bw",
+            _ => "mrc",
+        };
         let metadata = CacheMetadata {
             cache_key: key.to_string(),
+            cache_type: cache_type.to_string(),
             width,
             height,
             color_mode: color_mode_to_str(mode).to_string(),
+            page_index: 0,
+            regions: vec![],
+            modified_images: vec![],
         };
         let metadata_json = serde_json::to_string(&metadata)?;
         fs::write(tmp_dir.join("metadata.json"), metadata_json.as_bytes())
