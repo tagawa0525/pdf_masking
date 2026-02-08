@@ -242,3 +242,53 @@ pub fn strip_text_operators(content_bytes: &[u8]) -> crate::error::Result<Vec<u8
         .encode()
         .map_err(|e| crate::error::PdfMaskError::content_stream(e.to_string()))
 }
+
+/// ピクセル座標をPDFページ座標（ポイント）に変換する。
+///
+/// PDFの座標系は左下原点（Y軸上向き）、ビットマップは左上原点（Y軸下向き）。
+/// この関数はY軸反転を含む変換を行う。
+///
+/// # Arguments
+/// * `pixel_bbox` - ピクセル座標のバウンディングボックス
+/// * `page_width_pts` - ページ幅（ポイント）
+/// * `page_height_pts` - ページ高さ（ポイント）
+/// * `bitmap_width_px` - ビットマップ幅（ピクセル）
+/// * `bitmap_height_px` - ビットマップ高さ（ピクセル）
+///
+/// # Returns
+/// PDFポイント座標のBBox
+pub fn pixel_to_page_coords(
+    pixel_bbox: &crate::mrc::segmenter::PixelBBox,
+    page_width_pts: f64,
+    page_height_pts: f64,
+    bitmap_width_px: u32,
+    bitmap_height_px: u32,
+) -> crate::error::Result<BBox> {
+    if bitmap_width_px == 0 || bitmap_height_px == 0 {
+        return Err(crate::error::PdfMaskError::content_stream(
+            "bitmap dimensions must be non-zero for coordinate conversion",
+        ));
+    }
+
+    let scale_x = page_width_pts / bitmap_width_px as f64;
+    let scale_y = page_height_pts / bitmap_height_px as f64;
+
+    // u32オーバーフロー防止: u64で加算してからf64に変換
+    let pixel_right = pixel_bbox.x as u64 + pixel_bbox.width as u64;
+    let pixel_bottom = pixel_bbox.y as u64 + pixel_bbox.height as u64;
+
+    // ピクセル座標 → PDFポイント座標（Y軸反転）
+    let x_min = pixel_bbox.x as f64 * scale_x;
+    let x_max = pixel_right as f64 * scale_x;
+
+    // ビットマップのY=0（上端）はPDFのY=page_height_pts（上端）
+    let y_max = page_height_pts - (pixel_bbox.y as f64 * scale_y);
+    let y_min = page_height_pts - (pixel_bottom as f64 * scale_y);
+
+    Ok(BBox {
+        x_min,
+        y_min,
+        x_max,
+        y_max,
+    })
+}
