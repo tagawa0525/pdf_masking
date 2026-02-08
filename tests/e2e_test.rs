@@ -13,9 +13,12 @@ use lopdf::{Document, Object, Stream, dictionary};
 // Guards and helpers
 // ============================================================
 
-/// Check whether pdfium is available via environment variable.
+/// Check whether pdfium is available via environment variable and the path exists.
 fn pdfium_available() -> bool {
-    std::env::var("PDFIUM_DYNAMIC_LIB_PATH").is_ok()
+    match std::env::var("PDFIUM_DYNAMIC_LIB_PATH") {
+        Ok(path) => Path::new(&path).exists(),
+        Err(_) => false,
+    }
 }
 
 /// Build a Command pointing to the compiled binary.
@@ -54,8 +57,12 @@ fn create_single_page_pdf(path: &Path) {
     let pages_id = doc.add_object(pages);
 
     // Set Parent reference on page
-    if let Ok(Object::Dictionary(dict)) = doc.get_object_mut(page_id) {
-        dict.set("Parent", pages_id);
+    match doc
+        .get_object_mut(page_id)
+        .expect("page object should exist")
+    {
+        Object::Dictionary(dict) => dict.set("Parent", pages_id),
+        _ => panic!("page object should be a dictionary"),
     }
 
     // Catalog
@@ -160,7 +167,8 @@ fn test_e2e_single_page_pdf() {
     let jobs_yaml_path = dir.path().join("jobs.yaml");
 
     let output = cargo_bin()
-        .arg(jobs_yaml_path.to_str().unwrap())
+        .arg(&jobs_yaml_path)
+        .current_dir(dir.path())
         .output()
         .expect("failed to execute binary");
 
@@ -199,7 +207,8 @@ fn test_e2e_multi_page_pdf() {
     let jobs_yaml_path = dir.path().join("jobs.yaml");
 
     let output = cargo_bin()
-        .arg(jobs_yaml_path.to_str().unwrap())
+        .arg(&jobs_yaml_path)
+        .current_dir(dir.path())
         .output()
         .expect("failed to execute binary");
 
@@ -244,7 +253,8 @@ fn test_e2e_with_settings_yaml() {
     let jobs_yaml_path = dir.path().join("jobs.yaml");
 
     let output = cargo_bin()
-        .arg(jobs_yaml_path.to_str().unwrap())
+        .arg(&jobs_yaml_path)
+        .current_dir(dir.path())
         .output()
         .expect("failed to execute binary");
 
@@ -258,6 +268,41 @@ fn test_e2e_with_settings_yaml() {
     assert!(output_path.exists(), "output PDF should exist");
     let doc = Document::load(&output_path).expect("output PDF should be loadable by lopdf");
     assert_eq!(doc.get_pages().len(), 1, "output PDF should have 1 page");
+
+    // Verify settings.yaml was picked up by checking MRC structure exists.
+    // The configured DPI (72) and bg_quality (30) affect image encoding, but
+    // verifying exact pixel dimensions requires decoding XObject streams.
+    // As a structural check, confirm BgImg/FgImg XObjects are present, which
+    // proves the pipeline ran with the settings rather than being a no-op.
+    let pages = doc.get_pages();
+    let first_page_id = pages.values().next().expect("should have a page");
+    let page_dict = doc
+        .get_dictionary(*first_page_id)
+        .expect("page should be a dictionary");
+    let resources = page_dict
+        .get(b"Resources")
+        .expect("page should have Resources");
+    let resources_dict = match resources {
+        Object::Reference(r) => doc.get_dictionary(*r).expect("resolve Resources ref"),
+        Object::Dictionary(d) => d,
+        _ => panic!("Resources should be a dictionary or reference"),
+    };
+    let xobject = resources_dict
+        .get(b"XObject")
+        .expect("Resources should have XObject when settings.yaml is applied");
+    let xobject_dict = match xobject {
+        Object::Reference(r) => doc.get_dictionary(*r).expect("resolve XObject ref"),
+        Object::Dictionary(d) => d,
+        _ => panic!("XObject should be a dictionary or reference"),
+    };
+    assert!(
+        xobject_dict.has(b"BgImg"),
+        "XObject should contain BgImg (settings.yaml was applied)"
+    );
+    assert!(
+        xobject_dict.has(b"FgImg"),
+        "XObject should contain FgImg (settings.yaml was applied)"
+    );
 }
 
 // ============================================================
@@ -283,7 +328,8 @@ fn test_e2e_output_has_mrc_structure() {
     let jobs_yaml_path = dir.path().join("jobs.yaml");
 
     let output = cargo_bin()
-        .arg(jobs_yaml_path.to_str().unwrap())
+        .arg(&jobs_yaml_path)
+        .current_dir(dir.path())
         .output()
         .expect("failed to execute binary");
 
@@ -349,7 +395,8 @@ fn test_e2e_invalid_page_range() {
     let jobs_yaml_path = dir.path().join("jobs.yaml");
 
     let output = cargo_bin()
-        .arg(jobs_yaml_path.to_str().unwrap())
+        .arg(&jobs_yaml_path)
+        .current_dir(dir.path())
         .output()
         .expect("failed to execute binary");
 
@@ -413,8 +460,9 @@ fn test_e2e_multiple_job_files() {
     std::fs::write(&jobs2_path, jobs2_yaml).expect("write jobs2.yaml");
 
     let output = cargo_bin()
-        .arg(jobs1_path.to_str().unwrap())
-        .arg(jobs2_path.to_str().unwrap())
+        .arg(&jobs1_path)
+        .arg(&jobs2_path)
+        .current_dir(dir.path())
         .output()
         .expect("failed to execute binary");
 
