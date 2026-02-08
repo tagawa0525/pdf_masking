@@ -1,10 +1,12 @@
 use std::path::{Path, PathBuf};
 
+use crate::config::job::ColorMode;
 use serde::Deserialize;
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(default)]
 pub struct Settings {
+    pub color_mode: ColorMode,
     pub dpi: u32,
     pub fg_dpi: u32,
     pub bg_quality: u8,
@@ -18,6 +20,7 @@ pub struct Settings {
 impl Default for Settings {
     fn default() -> Self {
         Settings {
+            color_mode: ColorMode::Rgb,
             dpi: 300,
             fg_dpi: 100,
             bg_quality: 50,

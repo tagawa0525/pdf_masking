@@ -1,17 +1,35 @@
 use serde::Deserialize;
 use serde::de::{self, SeqAccess, Visitor};
+use std::collections::HashMap;
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct JobFile {
     pub jobs: Vec<Job>,
 }
 
+/// カラーモード: MRC処理の種類を指定
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ColorMode {
+    Rgb,
+    Grayscale,
+    Bw,
+    Skip,
+}
+
 #[derive(Debug, Clone, Deserialize)]
 pub struct Job {
     pub input: String,
     pub output: String,
-    #[serde(deserialize_with = "deserialize_pages")]
-    pub pages: Vec<u32>,
+    pub color_mode: Option<ColorMode>,
+    #[serde(default, deserialize_with = "deserialize_optional_pages")]
+    pub bw_pages: Option<Vec<u32>>,
+    #[serde(default, deserialize_with = "deserialize_optional_pages")]
+    pub grayscale_pages: Option<Vec<u32>>,
+    #[serde(default, deserialize_with = "deserialize_optional_pages")]
+    pub rgb_pages: Option<Vec<u32>>,
+    #[serde(default, deserialize_with = "deserialize_optional_pages")]
+    pub skip_pages: Option<Vec<u32>>,
     pub dpi: Option<u32>,
     pub fg_dpi: Option<u32>,
     pub bg_quality: Option<u8>,
@@ -145,4 +163,88 @@ where
     }
 
     deserializer.deserialize_any(PagesVisitor)
+}
+
+/// Optional<Vec<u32>>用のデシリアライザ（Noneを許容）
+fn deserialize_optional_pages<'de, D>(deserializer: D) -> Result<Option<Vec<u32>>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    struct OptionalPagesVisitor;
+
+    impl<'de> Visitor<'de> for OptionalPagesVisitor {
+        type Value = Option<Vec<u32>>;
+
+        fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+            formatter.write_str("an optional page range string or YAML sequence")
+        }
+
+        fn visit_none<E>(self) -> Result<Option<Vec<u32>>, E>
+        where
+            E: de::Error,
+        {
+            Ok(None)
+        }
+
+        fn visit_some<D>(self, deserializer: D) -> Result<Option<Vec<u32>>, D::Error>
+        where
+            D: serde::Deserializer<'de>,
+        {
+            deserialize_pages(deserializer).map(Some)
+        }
+
+        fn visit_unit<E>(self) -> Result<Option<Vec<u32>>, E>
+        where
+            E: de::Error,
+        {
+            Ok(None)
+        }
+    }
+
+    deserializer.deserialize_option(OptionalPagesVisitor)
+}
+
+impl Job {
+    /// ページ→カラーモードのマップを構築する。
+    ///
+    /// - デフォルトカラーモード（fallback）は引数で指定
+    /// - bw_pages, grayscale_pages, rgb_pages, skip_pages からオーバーライドを収集
+    /// - 同一ページが複数リストに含まれる場合はエラー
+    /// - リストに含まれないページは HashMap に含まれない（= デフォルトを使用）
+    ///
+    /// # Arguments
+    /// * `default_mode` - Jobのcolor_modeがNoneの場合に使うデフォルト
+    ///
+    /// # Returns
+    /// ページ番号(1-based) → ColorMode のマップ。
+    /// マップに含まれないページはデフォルトモードを使う。
+    pub fn resolve_page_modes(
+        &self,
+        _default_mode: ColorMode,
+    ) -> crate::error::Result<HashMap<u32, ColorMode>> {
+        let mut page_to_mode: HashMap<u32, ColorMode> = HashMap::new();
+
+        // 各 *_pages リストを処理
+        let lists = [
+            (ColorMode::Bw, self.bw_pages.as_deref()),
+            (ColorMode::Grayscale, self.grayscale_pages.as_deref()),
+            (ColorMode::Rgb, self.rgb_pages.as_deref()),
+            (ColorMode::Skip, self.skip_pages.as_deref()),
+        ];
+
+        for (mode, pages_opt) in lists {
+            if let Some(pages) = pages_opt {
+                for &page in pages {
+                    if let Some(existing_mode) = page_to_mode.insert(page, mode) {
+                        return Err(crate::error::PdfMaskError::config(format!(
+                            "Page {} specified in multiple mode lists: {:?} and {:?}",
+                            page, existing_mode, mode
+                        )));
+                    }
+                }
+            }
+        }
+
+        Ok(page_to_mode)
+    }
 }
