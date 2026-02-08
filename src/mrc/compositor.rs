@@ -7,7 +7,6 @@ use super::{
 };
 use crate::config::job::ColorMode;
 use crate::error::PdfMaskError;
-use crate::ffi::leptonica::Pix;
 use crate::mrc::segmenter::PixelBBox;
 use crate::pdf::content_stream::{
     extract_white_fill_rects, extract_xobject_placements, pixel_to_page_coords,
@@ -93,23 +92,11 @@ pub struct CroppedRegion {
     pub bits_per_component: u8,
 }
 
-/// クロップした画像をOtsu二値化してJBIG2エンコードする。
-/// 失敗時はNoneを返す（JPEGにフォールバック）。
-fn try_jbig2_encode(cropped: &DynamicImage) -> Option<Vec<u8>> {
-    let rgba = cropped.to_rgba8();
-    let (w, h) = (rgba.width(), rgba.height());
-    let pix = Pix::from_raw_rgba(w, h, rgba.as_raw()).ok()?;
-    let gray = pix.convert_to_gray().ok()?;
-    let tile_sx = w.clamp(16, 2000);
-    let tile_sy = h.clamp(16, 2000);
-    let mut binary = gray.otsu_adaptive_threshold(tile_sx, tile_sy).ok()?;
-    jbig2::encode_mask(&mut binary).ok()
-}
-
-/// テキスト領域をビットマップからクロップし、最適なフォーマットでエンコードする。
+/// テキスト領域をビットマップからクロップし、JPEGエンコードする。
 ///
-/// 各領域についてJPEGとJBIG2の両方を試行し、小さい方を採用する。
-/// テキストは通常白黒なのでJBIG2（1bit）の方が効率的。
+/// pdfiumでレンダリングされたテキストはアンチエイリアス処理されているため、
+/// JBIG2（1bit二値化）ではなくJPEG（8bit）でエンコードする。
+/// JBIG2はアンチエイリアスを破壊してテキストが判読不能になる。
 ///
 /// # Arguments
 /// * `bitmap` - レンダリング済みのページビットマップ
@@ -134,7 +121,6 @@ pub fn crop_text_regions(
     for bbox in bboxes {
         let cropped = bitmap.crop_imm(bbox.x, bbox.y, bbox.width, bbox.height);
 
-        // JPEG エンコード
         let (jpeg_data, jpeg_cs) = match color_mode {
             ColorMode::Grayscale => {
                 let gray = cropped.to_luma8();
@@ -152,25 +138,13 @@ pub fn crop_text_regions(
             }
         };
 
-        // JBIG2 エンコード試行: JPEGより小さければ採用
-        let region = match try_jbig2_encode(&cropped) {
-            Some(jbig2_data) if jbig2_data.len() < jpeg_data.len() => CroppedRegion {
-                data: jbig2_data,
-                bbox: bbox.clone(),
-                filter: "JBIG2Decode",
-                color_space: "DeviceGray",
-                bits_per_component: 1,
-            },
-            _ => CroppedRegion {
-                data: jpeg_data,
-                bbox: bbox.clone(),
-                filter: "DCTDecode",
-                color_space: jpeg_cs,
-                bits_per_component: 8,
-            },
-        };
-
-        results.push(region);
+        results.push(CroppedRegion {
+            data: jpeg_data,
+            bbox: bbox.clone(),
+            filter: "DCTDecode",
+            color_space: jpeg_cs,
+            bits_per_component: 8,
+        });
     }
 
     Ok(results)

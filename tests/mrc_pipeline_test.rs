@@ -583,18 +583,16 @@ fn test_compose_text_masked_valid_bboxes() {
     }
 }
 
-/// crop_text_regionsで白黒画像をクロップした場合、JBIG2が選択されること。
-/// segmenterをバイパスして直接crop_text_regionsをテストする。
+/// CroppedRegionのフォーマットフィールド(filter, color_space, bits_per_component)が
+/// 正しく設定されること。アンチエイリアス付きテキストにはJPEGを使用する。
 #[test]
-fn test_text_region_prefers_jbig2_for_bw() {
+fn test_crop_text_regions_format_fields() {
     use image::{DynamicImage, RgbaImage};
 
-    // 白黒テスト画像を作成（上半分黒、下半分白）
     let (data, width, height) = create_test_rgba_image();
     let bitmap = RgbaImage::from_raw(width, height, data).expect("create bitmap");
     let dynamic = DynamicImage::ImageRgba8(bitmap);
 
-    // テスト画像全体をカバーするbboxを明示的に指定
     let bboxes = vec![segmenter::PixelBBox {
         x: 0,
         y: 0,
@@ -602,20 +600,21 @@ fn test_text_region_prefers_jbig2_for_bw() {
         height,
     }];
 
+    // RGB mode
     let results =
         compositor::crop_text_regions(&dynamic, &bboxes, 50, ColorMode::Rgb).expect("crop");
-
-    assert_eq!(results.len(), 1, "should have one cropped region");
-
+    assert_eq!(results.len(), 1);
     let region = &results[0];
-    // 白黒画像なのでJBIG2の方がJPEGより小さくなるはず
-    assert_eq!(
-        region.filter,
-        "JBIG2Decode",
-        "black-and-white image should use JBIG2Decode, got filter={} (data size={})",
-        region.filter,
-        region.data.len()
-    );
+    assert_eq!(region.filter, "DCTDecode");
+    assert_eq!(region.color_space, "DeviceRGB");
+    assert_eq!(region.bits_per_component, 8);
+    assert!(region.data.starts_with(&[0xFF, 0xD8]), "should be JPEG");
+
+    // Grayscale mode
+    let results =
+        compositor::crop_text_regions(&dynamic, &bboxes, 50, ColorMode::Grayscale).expect("crop");
+    let region = &results[0];
+    assert_eq!(region.filter, "DCTDecode");
     assert_eq!(region.color_space, "DeviceGray");
-    assert_eq!(region.bits_per_component, 1);
+    assert_eq!(region.bits_per_component, 8);
 }
