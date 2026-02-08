@@ -293,6 +293,19 @@ pub fn pixel_to_page_coords(
     })
 }
 
+/// fill colorの状態
+#[derive(Debug, Clone)]
+struct FillColor {
+    /// 白色 (RGB: 1,1,1 / Gray: 1 / CMYK: 0,0,0,0) かどうか
+    is_white: bool,
+}
+
+impl FillColor {
+    fn default_black() -> Self {
+        FillColor { is_white: false }
+    }
+}
+
 /// コンテンツストリームから白色fill矩形の位置を抽出する。
 ///
 /// 追跡するオペレータ:
@@ -306,6 +319,215 @@ pub fn pixel_to_page_coords(
 ///
 /// # Returns
 /// CTM適用済みのページ座標BBoxリスト（白色fill矩形のみ）
-pub fn extract_white_fill_rects(_content_bytes: &[u8]) -> crate::error::Result<Vec<BBox>> {
-    todo!("PR 4: implement extract_white_fill_rects")
+pub fn extract_white_fill_rects(content_bytes: &[u8]) -> crate::error::Result<Vec<BBox>> {
+    if content_bytes.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let content = Content::decode(content_bytes)
+        .map_err(|e| crate::error::PdfMaskError::content_stream(e.to_string()))?;
+
+    let mut ctm_stack: Vec<Matrix> = vec![Matrix::identity()];
+    let mut fill_color_stack: Vec<FillColor> = vec![FillColor::default_black()];
+    let mut results: Vec<BBox> = Vec::new();
+
+    // 現在のパス上の矩形（reオペレータで設定）
+    let mut current_rect: Option<(f64, f64, f64, f64)> = None;
+
+    for op in &content.operations {
+        match op.operator.as_str() {
+            "q" => {
+                let current_ctm = ctm_stack.last().cloned().unwrap_or_else(Matrix::identity);
+                ctm_stack.push(current_ctm);
+                let current_fill = fill_color_stack
+                    .last()
+                    .cloned()
+                    .unwrap_or_else(FillColor::default_black);
+                fill_color_stack.push(current_fill);
+            }
+            "Q" => {
+                if ctm_stack.len() > 1 {
+                    ctm_stack.pop();
+                }
+                if fill_color_stack.len() > 1 {
+                    fill_color_stack.pop();
+                }
+            }
+            "cm" => {
+                if op.operands.len() == 6 {
+                    let vals: Vec<f64> = op
+                        .operands
+                        .iter()
+                        .map(operand_to_f64)
+                        .collect::<Result<Vec<_>, _>>()?;
+                    let cm_matrix = Matrix {
+                        a: vals[0],
+                        b: vals[1],
+                        c: vals[2],
+                        d: vals[3],
+                        e: vals[4],
+                        f: vals[5],
+                    };
+                    if let Some(current) = ctm_stack.last_mut() {
+                        *current = current.multiply(&cm_matrix);
+                    }
+                }
+            }
+            // Fill color operators
+            "rg" => {
+                // RGB fill color: r g b rg
+                if op.operands.len() == 3
+                    && let (Ok(r), Ok(g), Ok(b)) = (
+                        operand_to_f64(&op.operands[0]),
+                        operand_to_f64(&op.operands[1]),
+                        operand_to_f64(&op.operands[2]),
+                    )
+                    && let Some(fc) = fill_color_stack.last_mut()
+                {
+                    fc.is_white = is_white_rgb(r, g, b);
+                }
+            }
+            "g" => {
+                // Gray fill color: gray g
+                if op.operands.len() == 1
+                    && let Ok(gray) = operand_to_f64(&op.operands[0])
+                    && let Some(fc) = fill_color_stack.last_mut()
+                {
+                    fc.is_white = is_white_gray(gray);
+                }
+            }
+            "k" => {
+                // CMYK fill color: c m y k k
+                if op.operands.len() == 4
+                    && let (Ok(c), Ok(m), Ok(y), Ok(k)) = (
+                        operand_to_f64(&op.operands[0]),
+                        operand_to_f64(&op.operands[1]),
+                        operand_to_f64(&op.operands[2]),
+                        operand_to_f64(&op.operands[3]),
+                    )
+                    && let Some(fc) = fill_color_stack.last_mut()
+                {
+                    fc.is_white = is_white_cmyk(c, m, y, k);
+                }
+            }
+            "sc" | "scn" => {
+                // Generic fill color: 値の数で判定
+                if let Some(fc) = fill_color_stack.last_mut() {
+                    fc.is_white = match op.operands.len() {
+                        1 => operand_to_f64(&op.operands[0])
+                            .map(is_white_gray)
+                            .unwrap_or(false),
+                        3 => {
+                            if let (Ok(r), Ok(g), Ok(b)) = (
+                                operand_to_f64(&op.operands[0]),
+                                operand_to_f64(&op.operands[1]),
+                                operand_to_f64(&op.operands[2]),
+                            ) {
+                                is_white_rgb(r, g, b)
+                            } else {
+                                false
+                            }
+                        }
+                        4 => {
+                            if let (Ok(c), Ok(m), Ok(y), Ok(k)) = (
+                                operand_to_f64(&op.operands[0]),
+                                operand_to_f64(&op.operands[1]),
+                                operand_to_f64(&op.operands[2]),
+                                operand_to_f64(&op.operands[3]),
+                            ) {
+                                is_white_cmyk(c, m, y, k)
+                            } else {
+                                false
+                            }
+                        }
+                        _ => false,
+                    };
+                }
+            }
+            // Path construction: rectangle
+            "re" => {
+                if op.operands.len() == 4
+                    && let (Ok(x), Ok(y), Ok(w), Ok(h)) = (
+                        operand_to_f64(&op.operands[0]),
+                        operand_to_f64(&op.operands[1]),
+                        operand_to_f64(&op.operands[2]),
+                        operand_to_f64(&op.operands[3]),
+                    )
+                {
+                    current_rect = Some((x, y, w, h));
+                }
+            }
+            // Fill operators
+            "f" | "F" | "f*" => {
+                if let Some((x, y, w, h)) = current_rect {
+                    let is_white = fill_color_stack
+                        .last()
+                        .map(|fc| fc.is_white)
+                        .unwrap_or(false);
+                    if is_white {
+                        let ctm = ctm_stack.last().cloned().unwrap_or_else(Matrix::identity);
+                        let bbox = rect_to_bbox(&ctm, x, y, w, h);
+                        results.push(bbox);
+                    }
+                }
+                current_rect = None;
+            }
+            // Path end without fill
+            "S" | "s" | "B" | "B*" | "b" | "b*" | "n" => {
+                current_rect = None;
+            }
+            _ => {}
+        }
+    }
+
+    Ok(results)
+}
+
+/// 矩形(x, y, w, h)をCTMで変換しBBoxを返す。
+fn rect_to_bbox(ctm: &Matrix, x: f64, y: f64, w: f64, h: f64) -> BBox {
+    let corners = [(x, y), (x + w, y), (x, y + h), (x + w, y + h)];
+    let transformed: Vec<(f64, f64)> = corners
+        .iter()
+        .map(|&(px, py)| {
+            let x_prime = ctm.a * px + ctm.c * py + ctm.e;
+            let y_prime = ctm.b * px + ctm.d * py + ctm.f;
+            (x_prime, y_prime)
+        })
+        .collect();
+
+    let x_min = transformed
+        .iter()
+        .map(|p| p.0)
+        .fold(f64::INFINITY, f64::min);
+    let y_min = transformed
+        .iter()
+        .map(|p| p.1)
+        .fold(f64::INFINITY, f64::min);
+    let x_max = transformed
+        .iter()
+        .map(|p| p.0)
+        .fold(f64::NEG_INFINITY, f64::max);
+    let y_max = transformed
+        .iter()
+        .map(|p| p.1)
+        .fold(f64::NEG_INFINITY, f64::max);
+
+    BBox {
+        x_min,
+        y_min,
+        x_max,
+        y_max,
+    }
+}
+
+fn is_white_rgb(r: f64, g: f64, b: f64) -> bool {
+    (r - 1.0).abs() < 1e-6 && (g - 1.0).abs() < 1e-6 && (b - 1.0).abs() < 1e-6
+}
+
+fn is_white_gray(gray: f64) -> bool {
+    (gray - 1.0).abs() < 1e-6
+}
+
+fn is_white_cmyk(c: f64, m: f64, y: f64, k: f64) -> bool {
+    c.abs() < 1e-6 && m.abs() < 1e-6 && y.abs() < 1e-6 && k.abs() < 1e-6
 }
