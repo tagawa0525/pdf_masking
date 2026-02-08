@@ -226,7 +226,90 @@ jobs:
 }
 
 // ============================================================
-// 5. settings.yaml自動検出
+// 5. text_to_outlines フラグ
+// ============================================================
+
+#[test]
+fn test_settings_text_to_outlines_default_false() {
+    let settings = Settings::from_yaml("{}").expect("should use defaults");
+    assert!(
+        !settings.text_to_outlines,
+        "text_to_outlines should default to false"
+    );
+}
+
+#[test]
+fn test_settings_text_to_outlines_explicit_true() {
+    let yaml = "text_to_outlines: true";
+    let settings = Settings::from_yaml(yaml).expect("should parse");
+    assert!(settings.text_to_outlines);
+}
+
+#[test]
+fn test_job_text_to_outlines_none_by_default() {
+    let yaml = r#"
+jobs:
+  - input: "input.pdf"
+    output: "output.pdf"
+"#;
+    let job_file: JobFile = serde_yml::from_str(yaml).expect("parse");
+    assert!(job_file.jobs[0].text_to_outlines.is_none());
+}
+
+#[test]
+fn test_job_text_to_outlines_explicit() {
+    let yaml = r#"
+jobs:
+  - input: "input.pdf"
+    output: "output.pdf"
+    text_to_outlines: true
+"#;
+    let job_file: JobFile = serde_yml::from_str(yaml).expect("parse");
+    assert_eq!(job_file.jobs[0].text_to_outlines, Some(true));
+}
+
+#[test]
+fn test_merge_text_to_outlines_job_overrides_settings() {
+    let settings = Settings::from_yaml("text_to_outlines: false").expect("parse");
+    let job_yaml = r#"
+jobs:
+  - input: "in.pdf"
+    output: "out.pdf"
+    text_to_outlines: true
+"#;
+    let job_file: JobFile = serde_yml::from_str(job_yaml).expect("parse");
+    let merged = MergedConfig::new(&settings, &job_file.jobs[0]);
+    assert!(merged.text_to_outlines, "job should override settings");
+}
+
+#[test]
+fn test_merge_text_to_outlines_falls_back_to_settings() {
+    let settings = Settings::from_yaml("text_to_outlines: true").expect("parse");
+    let job_yaml = r#"
+jobs:
+  - input: "in.pdf"
+    output: "out.pdf"
+"#;
+    let job_file: JobFile = serde_yml::from_str(job_yaml).expect("parse");
+    let merged = MergedConfig::new(&settings, &job_file.jobs[0]);
+    assert!(merged.text_to_outlines, "should fall back to settings");
+}
+
+#[test]
+fn test_merge_text_to_outlines_default() {
+    let settings = Settings::default();
+    let job_yaml = r#"
+jobs:
+  - input: "in.pdf"
+    output: "out.pdf"
+"#;
+    let job_file: JobFile = serde_yml::from_str(job_yaml).expect("parse");
+    let merged = MergedConfig::new(&settings, &job_file.jobs[0]);
+    assert!(!merged.text_to_outlines, "should default to false");
+}
+
+// ============================================================
+// 6. settings.yaml自動検出
 // ============================================================
 
 #[test]
