@@ -13,7 +13,7 @@ serde_yml = "0.0.12"
 
 # PDF processing (Phase 2+)
 lopdf = "0.39.0"
-# pdfium-render = { version = "0.8", features = ["static"] }
+pdfium-render = { version = "0.8.37", features = ["static"] }
 
 # Image processing (Phase 5+)
 image = "0.25.9"
