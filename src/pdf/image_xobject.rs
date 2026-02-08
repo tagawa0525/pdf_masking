@@ -11,8 +11,9 @@ pub fn bbox_overlaps(a: &BBox, b: &BBox) -> bool {
 
 /// 画像データの指定領域を白で塗りつぶす（重なり領域のredaction）。
 ///
-/// v1ではplaceholder実装。実際のJPEGデコード→白塗り→再エンコードは
-/// Phase 7+で実装する。
+/// PHASE 7+ TODO: Placeholder implementation. Actual JPEG decode ->
+/// white fill -> re-encode logic will be implemented in Phase 7+.
+/// Currently only used in tests.
 #[allow(dead_code)]
 pub(crate) fn redact_region_placeholder() -> bool {
     true
