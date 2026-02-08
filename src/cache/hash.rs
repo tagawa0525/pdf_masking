@@ -3,6 +3,8 @@
 // Computes a cache key from a page's content stream bytes and MRC-relevant settings.
 // The key is a SHA-256 hash encoded as a lowercase hexadecimal string.
 
+use std::collections::BTreeMap;
+
 use sha2::{Digest, Sha256};
 
 /// MRC処理に影響する設定パラメータ。
@@ -20,14 +22,16 @@ pub struct CacheSettings {
 
 /// 設定を正規化JSON形式に変換する（キーはアルファベット順で固定）。
 fn settings_to_canonical_json(settings: &CacheSettings) -> String {
-    format!(
-        "{{\"bg_quality\":{},\"dpi\":{},\"fg_dpi\":{},\"fg_quality\":{},\"preserve_images\":{}}}",
-        settings.bg_quality,
-        settings.dpi,
-        settings.fg_dpi,
-        settings.fg_quality,
-        settings.preserve_images
-    )
+    let mut map = BTreeMap::new();
+    map.insert("bg_quality", serde_json::json!(settings.bg_quality));
+    map.insert("dpi", serde_json::json!(settings.dpi));
+    map.insert("fg_dpi", serde_json::json!(settings.fg_dpi));
+    map.insert("fg_quality", serde_json::json!(settings.fg_quality));
+    map.insert(
+        "preserve_images",
+        serde_json::json!(settings.preserve_images),
+    );
+    serde_json::to_string(&map).unwrap()
 }
 
 /// コンテンツストリームと設定からキャッシュキー（SHA-256ハッシュ）を計算する。
