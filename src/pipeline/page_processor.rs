@@ -8,7 +8,6 @@ use crate::mrc::MrcLayers;
 use crate::mrc::compositor::{MrcConfig, compose};
 
 /// Single page MRC processing result.
-#[allow(dead_code)]
 pub struct ProcessedPage {
     pub page_index: u32,
     pub mrc_layers: MrcLayers,
@@ -22,7 +21,6 @@ pub struct ProcessedPage {
 /// collisions across different PDFs.
 /// If cache hits and dimensions match the bitmap, return cached layers.
 /// Otherwise run MRC compose.
-#[allow(dead_code)]
 pub fn process_page(
     page_index: u32,
     bitmap: &DynamicImage,

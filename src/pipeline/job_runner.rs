@@ -12,7 +12,6 @@ use crate::pipeline::page_processor::{ProcessedPage, process_page};
 use crate::render::pdfium::render_page;
 
 /// Configuration for a single job.
-#[allow(dead_code)]
 pub struct JobConfig {
     pub input_path: String,
     pub output_path: String,
@@ -25,7 +24,6 @@ pub struct JobConfig {
 }
 
 /// Result of processing a single job.
-#[allow(dead_code)]
 pub struct JobResult {
     pub input_path: String,
     pub output_path: String,
@@ -38,7 +36,6 @@ pub struct JobResult {
 /// Phase B: Page rendering (sequential)
 /// Phase C: MRC processing (rayon parallel)
 /// Phase D: PDF assembly + optimization (sequential)
-#[allow(dead_code)]
 pub fn run_job(config: &JobConfig) -> crate::error::Result<JobResult> {
     // --- Phase A: Content stream analysis (sequential) ---
     // PdfReader uses 1-indexed pages, but config.pages are 0-indexed.
