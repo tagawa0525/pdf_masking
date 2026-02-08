@@ -127,9 +127,12 @@ $Jbig2BuildDir   = Join-Path $DepsDir "jbig2enc-build"
 $Jbig2InstallDir = Join-Path $DepsDir "jbig2enc"
 
 # ソース取得
+# jbig2enc は最終リリースがないため、動作確認済みのコミットにピン留めする。
+$Jbig2encCommit = "5aeb24dcc1e51cfbae68f64bb40b2a9f7e4cf034"
 if (-not (Test-Path (Join-Path $Jbig2SrcDir ".git"))) {
-    Write-Host "Cloning jbig2enc..."
+    Write-Host "Cloning jbig2enc (pinned to $Jbig2encCommit)..."
     git clone https://github.com/agl/jbig2enc.git $Jbig2SrcDir
+    git -C $Jbig2SrcDir checkout $Jbig2encCommit
 }
 
 # CMakeLists.txt をコピー (autotools は Windows 非対応)
@@ -171,7 +174,7 @@ Write-Step "pdfium (prebuilt binaries)"
 
 $PdfiumDir = Join-Path $DepsDir "pdfium"
 
-if (-not (Test-Path $PdfiumDir) -or -not (Get-ChildItem $PdfiumDir -Filter "*.dll" -Recurse -ErrorAction SilentlyContinue)) {
+if (-not (Test-Path $PdfiumDir) -or -not (Get-ChildItem $PdfiumDir -Filter "pdfium.dll" -Recurse -ErrorAction SilentlyContinue)) {
     New-Item -ItemType Directory -Path $PdfiumDir -Force | Out-Null
 
     Write-Host "Fetching latest release from $PdfiumRepo..."
@@ -224,7 +227,22 @@ if (-not (Test-Path $PdfiumDir) -or -not (Get-ChildItem $PdfiumDir -Filter "*.dl
         }
 
         Write-Host "Extracting..."
-        tar -xzf $archivePath -C $PdfiumDir
+        $assetNameLower = $asset.name.ToLowerInvariant()
+        try {
+            if ($assetNameLower -like "*.zip") {
+                Expand-Archive -Path $archivePath -DestinationPath $PdfiumDir -Force
+            } elseif ($assetNameLower -like "*.tar.gz" -or $assetNameLower -like "*.tgz") {
+                tar -xzf $archivePath -C $PdfiumDir
+                if ($LASTEXITCODE -ne 0) {
+                    throw "tar extraction failed with exit code $LASTEXITCODE"
+                }
+            } else {
+                throw "Unsupported pdfium archive format: $($asset.name)"
+            }
+        } catch {
+            Write-Host "Failed to extract pdfium archive: $_" -ForegroundColor Red
+            throw
+        }
         Remove-Item $archivePath -Force
     }
 }
