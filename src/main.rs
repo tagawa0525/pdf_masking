@@ -1,14 +1,157 @@
-use pdf_masking::error::Result;
-use std::env;
+use std::path::Path;
+use std::process::ExitCode;
 
-fn main() -> Result<()> {
-    let args: Vec<String> = env::args().collect();
+use pdf_masking::config::job::JobFile;
+use pdf_masking::config::merged::MergedConfig;
+use pdf_masking::config::{self};
+use pdf_masking::linearize;
+use pdf_masking::pipeline::job_runner::JobConfig;
+use pdf_masking::pipeline::orchestrator::run_all_jobs;
 
-    if args.len() < 2 {
+fn main() -> ExitCode {
+    let args: Vec<String> = std::env::args().skip(1).collect();
+
+    if args.is_empty() || args.iter().any(|a| a == "--help" || a == "-h") {
         eprintln!("Usage: pdf_masking <jobs.yaml>...");
-        std::process::exit(1);
+        eprintln!("  Process PDF files according to job specifications.");
+        return if args.is_empty() {
+            ExitCode::FAILURE
+        } else {
+            ExitCode::SUCCESS
+        };
     }
 
-    // Phase 12: CLI logic to be implemented
-    Ok(())
+    if args.iter().any(|a| a == "--version" || a == "-V") {
+        eprintln!("pdf_masking {}", env!("CARGO_PKG_VERSION"));
+        return ExitCode::SUCCESS;
+    }
+
+    // Collect job configs and their linearize flags from all job files.
+    let mut job_configs: Vec<JobConfig> = Vec::new();
+    let mut linearize_flags: Vec<bool> = Vec::new();
+
+    for job_file_arg in &args {
+        let job_file_path = Path::new(job_file_arg);
+
+        // Load settings from the same directory as the job file.
+        let settings = match config::load_settings_for_job(job_file_path) {
+            Ok(s) => s,
+            Err(e) => {
+                eprintln!("ERROR: Failed to load settings for {job_file_arg}: {e}");
+                return ExitCode::FAILURE;
+            }
+        };
+
+        // Read and parse the job YAML file.
+        let yaml_content = match std::fs::read_to_string(job_file_path) {
+            Ok(c) => c,
+            Err(e) => {
+                eprintln!("ERROR: Failed to read job file {job_file_arg}: {e}");
+                return ExitCode::FAILURE;
+            }
+        };
+
+        let job_file: JobFile = match serde_yml::from_str(&yaml_content) {
+            Ok(jf) => jf,
+            Err(e) => {
+                eprintln!("ERROR: Failed to parse job file {job_file_arg}: {e}");
+                return ExitCode::FAILURE;
+            }
+        };
+
+        // Resolve job file directory for relative paths.
+        let job_dir = job_file_path
+            .parent()
+            .unwrap_or_else(|| Path::new("."))
+            .to_path_buf();
+
+        // Merge settings with each job and construct JobConfig.
+        for job in &job_file.jobs {
+            let merged = MergedConfig::new(&settings, job);
+
+            let input_path = resolve_path(&job_dir, &job.input);
+            let output_path = resolve_path(&job_dir, &job.output);
+
+            // Convert 1-based YAML pages to 0-based indices for JobConfig.
+            let pages: Vec<u32> = match job
+                .pages
+                .iter()
+                .map(|&p| {
+                    if p == 0 {
+                        Err("Page number 0 is invalid; pages are 1-based in job files")
+                    } else {
+                        Ok(p - 1)
+                    }
+                })
+                .collect::<Result<Vec<u32>, _>>()
+            {
+                Ok(ps) => ps,
+                Err(e) => {
+                    eprintln!("ERROR: {e} in {job_file_arg}");
+                    return ExitCode::FAILURE;
+                }
+            };
+
+            job_configs.push(JobConfig {
+                input_path,
+                output_path,
+                pages,
+                dpi: merged.dpi,
+                bg_quality: merged.bg_quality,
+                fg_quality: merged.fg_quality,
+                preserve_images: merged.preserve_images,
+                cache_dir: Some(merged.cache_dir.clone()),
+            });
+
+            linearize_flags.push(merged.linearize);
+        }
+    }
+
+    // Run all jobs through the pipeline.
+    let results = run_all_jobs(&job_configs);
+
+    // Report results and optionally linearize.
+    let mut has_error = false;
+    for (i, result) in results.iter().enumerate() {
+        match result {
+            Ok(job_result) => {
+                eprintln!(
+                    "OK: {} -> {} ({} pages)",
+                    job_result.input_path, job_result.output_path, job_result.pages_processed
+                );
+
+                // Linearize output if configured.
+                if linearize_flags[i] {
+                    if let Err(e) = linearize::linearize_in_place(&job_result.output_path) {
+                        eprintln!("ERROR: Failed to linearize {}: {e}", job_result.output_path);
+                        has_error = true;
+                    }
+                }
+            }
+            Err(e) => {
+                eprintln!(
+                    "ERROR: {} -> {}: {e}",
+                    job_configs[i].input_path, job_configs[i].output_path
+                );
+                has_error = true;
+            }
+        }
+    }
+
+    if has_error {
+        ExitCode::FAILURE
+    } else {
+        ExitCode::SUCCESS
+    }
+}
+
+/// Resolve a potentially relative path against a base directory.
+/// If the path is already absolute, return it as-is.
+fn resolve_path(base_dir: &Path, path: &str) -> String {
+    let p = Path::new(path);
+    if p.is_absolute() {
+        path.to_string()
+    } else {
+        base_dir.join(p).to_string_lossy().to_string()
+    }
 }
