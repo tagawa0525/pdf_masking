@@ -232,6 +232,71 @@ fn test_no_text_blocks() {
     assert!(!result.non_text_operations.is_empty());
 }
 
+// ============================================================
+// 9. Tm後のTd回帰テスト（PDF仕様§9.4.2準拠）
+// ============================================================
+
+#[test]
+fn test_tm_then_td_correct_position() {
+    // Tm(1,0,0,1,50,700)でテキスト位置を設定後、Td(10,20)で相対移動
+    // 期待位置: (60, 720)
+    let content = b"BT /F1 12 Tf 1 0 0 1 50 700 Tm 10 20 Td (A) Tj ET";
+    let result = parse_content_operations(content).expect("should parse");
+
+    assert_eq!(result.text_commands.len(), 1);
+    let cmd = &result.text_commands[0];
+    assert!(
+        (cmd.text_matrix.e - 60.0).abs() < 1e-6,
+        "x should be 50+10=60, got {}",
+        cmd.text_matrix.e
+    );
+    assert!(
+        (cmd.text_matrix.f - 720.0).abs() < 1e-6,
+        "y should be 700+20=720, got {}",
+        cmd.text_matrix.f
+    );
+}
+
+#[test]
+fn test_td_then_t_star_uses_leading() {
+    // TD(-14)でleading=14を暗黙設定、T*で次行へ移動
+    let content = b"BT /F1 12 Tf 0 -14 TD (line1) Tj T* (line2) Tj ET";
+    let result = parse_content_operations(content).expect("should parse");
+
+    assert_eq!(result.text_commands.len(), 2);
+    // TD(0,-14): position = (0,-14), leading = 14
+    assert!(
+        (result.text_commands[0].text_matrix.f - (-14.0)).abs() < 1e-6,
+        "first line y should be -14, got {}",
+        result.text_commands[0].text_matrix.f
+    );
+    // T* = 0 -14 Td: position = (0, -14-14) = (0, -28)
+    assert!(
+        (result.text_commands[1].text_matrix.f - (-28.0)).abs() < 1e-6,
+        "second line y should be -28, got {}",
+        result.text_commands[1].text_matrix.f
+    );
+}
+
+#[test]
+fn test_tl_then_t_star() {
+    // TLでleadingを明示設定、T*で次行へ移動
+    let content = b"BT /F1 12 Tf 14 TL 0 700 Td (line1) Tj T* (line2) Tj ET";
+    let result = parse_content_operations(content).expect("should parse");
+
+    assert_eq!(result.text_commands.len(), 2);
+    assert!(
+        (result.text_commands[0].text_matrix.f - 700.0).abs() < 1e-6,
+        "first line y should be 700"
+    );
+    // T* = 0 -14 Td: y = 700 - 14 = 686
+    assert!(
+        (result.text_commands[1].text_matrix.f - 686.0).abs() < 1e-6,
+        "second line y should be 686, got {}",
+        result.text_commands[1].text_matrix.f
+    );
+}
+
 #[test]
 fn test_bt_without_tf_uses_default() {
     // Tf無しのBT...ETブロック（フォント未設定）

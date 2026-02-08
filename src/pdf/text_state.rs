@@ -56,6 +56,7 @@ struct TextState {
     word_spacing: f64,
     horizontal_scaling: f64,
     text_rise: f64,
+    text_leading: f64,
     text_matrix: Matrix,
     text_line_matrix: Matrix,
 }
@@ -69,9 +70,24 @@ impl TextState {
             word_spacing: 0.0,
             horizontal_scaling: 100.0,
             text_rise: 0.0,
+            text_leading: 0.0,
             text_matrix: Matrix::identity(),
             text_line_matrix: Matrix::identity(),
         }
+    }
+
+    /// T* オペレータ: 0 -TL Td と等価
+    fn apply_t_star(&mut self) {
+        let translate = Matrix {
+            a: 1.0,
+            b: 0.0,
+            c: 0.0,
+            d: 1.0,
+            e: 0.0,
+            f: -self.text_leading,
+        };
+        self.text_line_matrix = translate.multiply(&self.text_line_matrix);
+        self.text_matrix = self.text_line_matrix.clone();
     }
 }
 
@@ -284,6 +300,7 @@ pub fn parse_content_operations(content_bytes: &[u8]) -> crate::error::Result<Co
                 if op.operands.len() == 2 {
                     let tx = operand_to_f64(&op.operands[0])?;
                     let ty = operand_to_f64(&op.operands[1])?;
+                    ts.text_leading = -ty;
                     let translate = Matrix {
                         a: 1.0,
                         b: 0.0,
@@ -296,10 +313,14 @@ pub fn parse_content_operations(content_bytes: &[u8]) -> crate::error::Result<Co
                     ts.text_matrix = ts.text_line_matrix.clone();
                 }
             }
+            "TL" if in_text => {
+                if op.operands.len() == 1 {
+                    ts.text_leading = operand_to_f64(&op.operands[0])?;
+                }
+            }
             "T*" if in_text => {
-                // T* = 0 -TL Td (TLは未追跡のため0を使用)
-                // 簡易実装: text_line_matrixをそのままtext_matrixに
-                ts.text_matrix = ts.text_line_matrix.clone();
+                // T* = 0 -TL Td
+                ts.apply_t_star();
             }
             "Tc" if in_text => {
                 if op.operands.len() == 1 {
@@ -348,7 +369,7 @@ pub fn parse_content_operations(content_bytes: &[u8]) -> crate::error::Result<Co
             }
             "'" if in_text => {
                 // ' = T* string Tj
-                ts.text_matrix = ts.text_line_matrix.clone();
+                ts.apply_t_star();
                 if let Some(operand) = op.operands.first() {
                     let codes = extract_char_codes(operand);
                     let cmd = build_text_command(&ts, codes, None, &ctm_stack, &fill_color_stack);
@@ -364,7 +385,7 @@ pub fn parse_content_operations(content_bytes: &[u8]) -> crate::error::Result<Co
                     if let Ok(ac) = operand_to_f64(&op.operands[1]) {
                         ts.char_spacing = ac;
                     }
-                    ts.text_matrix = ts.text_line_matrix.clone();
+                    ts.apply_t_star();
                     let codes = extract_char_codes(&op.operands[2]);
                     let cmd = build_text_command(&ts, codes, None, &ctm_stack, &fill_color_stack);
                     text_commands.push(cmd);
