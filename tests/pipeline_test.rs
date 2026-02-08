@@ -1,6 +1,7 @@
 use std::path::{Path, PathBuf};
 
 use image::{DynamicImage, RgbaImage};
+use lopdf::dictionary;
 use pdf_masking::cache::hash::CacheSettings;
 use pdf_masking::cache::store::CacheStore;
 use pdf_masking::config::job::ColorMode;
@@ -35,6 +36,7 @@ fn test_process_page_cache_miss() {
         &cache_settings,
         None,
         Path::new("test.pdf"),
+        None,
     );
     assert!(
         result.is_ok(),
@@ -87,6 +89,7 @@ fn test_process_page_cache_hit() {
         &cache_settings,
         Some(&cache_store),
         Path::new("test.pdf"),
+        None,
     );
     assert!(result1.is_ok());
     let processed1 = result1.unwrap();
@@ -103,6 +106,7 @@ fn test_process_page_cache_hit() {
         &cache_settings,
         Some(&cache_store),
         Path::new("test.pdf"),
+        None,
     );
     assert!(result2.is_ok());
     let processed2 = result2.unwrap();
@@ -116,6 +120,115 @@ fn test_process_page_cache_hit() {
             assert_eq!(layers1.height, layers2.height);
         }
         _ => panic!("expected PageOutput::Mrc for both results"),
+    }
+}
+
+/// image_streams=Some (非空) の場合、TextMaskedモードに分岐することを検証
+#[test]
+#[ignore = "PR 7 RED: stub not yet implemented"]
+fn test_process_page_text_masked_with_image_streams() {
+    use std::collections::HashMap;
+
+    let img = DynamicImage::ImageRgba8(RgbaImage::new(100, 100));
+    let content_stream = b"BT /F1 12 Tf (Hello) Tj ET";
+    let mrc_config = MrcConfig {
+        bg_quality: 50,
+        fg_quality: 30,
+    };
+    let cache_settings = CacheSettings {
+        dpi: 300,
+        fg_dpi: 100,
+        bg_quality: 50,
+        fg_quality: 30,
+        preserve_images: true,
+        color_mode: ColorMode::Rgb,
+    };
+
+    // 画像XObjectを持つストリームマップ
+    let mut image_streams = HashMap::new();
+    let img_stream = lopdf::Stream::new(
+        dictionary! {
+            "Type" => "XObject",
+            "Subtype" => "Image",
+            "Width" => 50,
+            "Height" => 50,
+            "ColorSpace" => "DeviceRGB",
+            "BitsPerComponent" => 8,
+        },
+        vec![0u8; 4],
+    );
+    image_streams.insert("Im1".to_string(), img_stream);
+
+    let result = process_page(
+        0,
+        &img,
+        content_stream,
+        &mrc_config,
+        &cache_settings,
+        None,
+        Path::new("test.pdf"),
+        Some(&image_streams),
+    );
+    assert!(
+        result.is_ok(),
+        "process_page with image_streams should succeed: {:?}",
+        result.err()
+    );
+
+    let processed = result.unwrap();
+    match &processed.output {
+        PageOutput::TextMasked(data) => {
+            // BT...ETがすべて除去されたストリーム（元がBT...ETのみなので空になる）
+            assert_eq!(data.page_index, 0);
+            assert_eq!(data.color_mode, ColorMode::Rgb);
+        }
+        other => panic!(
+            "expected PageOutput::TextMasked, got {:?}",
+            std::mem::discriminant(other)
+        ),
+    }
+}
+
+/// image_streams=None の場合、preserve_images=true でもMRCフォールバックすることを検証
+#[test]
+fn test_process_page_mrc_fallback_without_image_streams() {
+    let img = DynamicImage::ImageRgba8(RgbaImage::new(100, 100));
+    let content_stream = b"q 100 0 0 100 0 0 cm /Im1 Do Q";
+    let mrc_config = MrcConfig {
+        bg_quality: 50,
+        fg_quality: 30,
+    };
+    let cache_settings = CacheSettings {
+        dpi: 300,
+        fg_dpi: 100,
+        bg_quality: 50,
+        fg_quality: 30,
+        preserve_images: true,
+        color_mode: ColorMode::Rgb,
+    };
+
+    let result = process_page(
+        0,
+        &img,
+        content_stream,
+        &mrc_config,
+        &cache_settings,
+        None,
+        Path::new("test.pdf"),
+        None, // image_streams=None → MRCフォールバック
+    );
+    assert!(result.is_ok());
+
+    let processed = result.unwrap();
+    match &processed.output {
+        PageOutput::Mrc(layers) => {
+            assert_eq!(layers.width, 100);
+            assert_eq!(layers.height, 100);
+        }
+        other => panic!(
+            "expected PageOutput::Mrc, got {:?}",
+            std::mem::discriminant(other)
+        ),
     }
 }
 

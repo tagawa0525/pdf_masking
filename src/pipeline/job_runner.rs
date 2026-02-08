@@ -37,6 +37,23 @@ pub struct JobResult {
     pub pages_processed: usize,
 }
 
+/// Intermediate data for a page after content stream analysis (Phase A).
+struct ContentStreamData {
+    page_idx: u32,
+    mode: ColorMode,
+    content: Vec<u8>,
+    image_streams: Option<std::collections::HashMap<String, lopdf::Stream>>,
+}
+
+/// Intermediate data for a page after rendering (Phase B).
+struct PageRenderData {
+    page_idx: u32,
+    mode: ColorMode,
+    bitmap: image::DynamicImage,
+    content: Vec<u8>,
+    image_streams: Option<std::collections::HashMap<String, lopdf::Stream>>,
+}
+
 /// Run a single PDF masking job through the 4-phase pipeline.
 ///
 /// Phase A: Content stream analysis (sequential, skip Skip pages)
@@ -77,18 +94,40 @@ pub fn run_job(config: &JobConfig) -> crate::error::Result<JobResult> {
         .copied()
         .collect();
 
-    let mut content_streams: Vec<(u32, ColorMode, Vec<u8>)> = Vec::new();
+    let mut content_streams: Vec<ContentStreamData> = Vec::new();
     for &(page_idx, mode) in &non_skip {
         let page_num = page_idx + 1;
         let content = reader.page_content_stream(page_num)?;
-        content_streams.push((page_idx, mode, content));
+        let image_streams =
+            if config.preserve_images && matches!(mode, ColorMode::Rgb | ColorMode::Grayscale) {
+                let streams = reader.page_image_streams(page_num)?;
+                if streams.is_empty() {
+                    None
+                } else {
+                    Some(streams)
+                }
+            } else {
+                None
+            };
+        content_streams.push(ContentStreamData {
+            page_idx,
+            mode,
+            content,
+            image_streams,
+        });
     }
 
     // --- Phase B: Page rendering (sequential) ---
-    let mut pages_data: Vec<(u32, ColorMode, image::DynamicImage, Vec<u8>)> = Vec::new();
-    for (page_idx, mode, content) in content_streams {
-        let bitmap = render_page(&config.input_path, page_idx, config.dpi)?;
-        pages_data.push((page_idx, mode, bitmap, content));
+    let mut pages_data: Vec<PageRenderData> = Vec::new();
+    for cs in content_streams {
+        let bitmap = render_page(&config.input_path, cs.page_idx, config.dpi)?;
+        pages_data.push(PageRenderData {
+            page_idx: cs.page_idx,
+            mode: cs.mode,
+            bitmap,
+            content: cs.content,
+            image_streams: cs.image_streams,
+        });
     }
 
     // --- Phase C: MRC processing (rayon parallel) ---
@@ -100,23 +139,24 @@ pub fn run_job(config: &JobConfig) -> crate::error::Result<JobResult> {
 
     let processed: Vec<crate::error::Result<ProcessedPage>> = pages_data
         .par_iter()
-        .map(|(page_idx, mode, bitmap, content_stream)| {
+        .map(|pd| {
             let cache_settings = CacheSettings {
                 dpi: config.dpi,
                 fg_dpi: config.dpi,
                 bg_quality: config.bg_quality,
                 fg_quality: config.fg_quality,
                 preserve_images: config.preserve_images,
-                color_mode: *mode,
+                color_mode: pd.mode,
             };
             process_page(
-                *page_idx,
-                bitmap,
-                content_stream,
+                pd.page_idx,
+                &pd.bitmap,
+                &pd.content,
                 &mrc_config,
                 &cache_settings,
                 cache_store.as_ref(),
                 &config.input_path,
+                pd.image_streams.as_ref(),
             )
         })
         .collect();
@@ -163,10 +203,8 @@ pub fn run_job(config: &JobConfig) -> crate::error::Result<JobResult> {
                 writer.copy_page_from(reader.document(), page_num)?;
                 // Skip pages are NOT added to masked_page_ids (no font optimization)
             }
-            PageOutput::TextMasked(_) => {
-                return Err(PdfMaskError::pdf_write(
-                    "TextMasked page writing not yet implemented",
-                ));
+            PageOutput::TextMasked(_data) => {
+                todo!("PR 7: implement TextMasked page writing in run_job")
             }
         }
     }

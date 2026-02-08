@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::path::Path;
 
 use lopdf::Document;
@@ -96,6 +97,18 @@ impl PdfReader {
         }
 
         Ok(names)
+    }
+
+    /// 指定ページ(1-indexed)のXObjectリソースから画像Streamオブジェクトを取得する。
+    ///
+    /// XObject名をキー、lopdf::Streamを値とするHashMapを返す。
+    /// compose_text_maskedに渡してリダクション処理に使用する。
+    pub fn page_image_streams(
+        &self,
+        _page_num: u32,
+    ) -> crate::error::Result<HashMap<String, lopdf::Stream>> {
+        // Stub: return empty HashMap (PR 7 GREEN will implement full logic)
+        Ok(HashMap::new())
     }
 
     /// ページ番号(1-indexed)からObjectIdを取得する。

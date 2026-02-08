@@ -1,5 +1,6 @@
 // Phase 10: ページ単位処理: キャッシュ確認 → MRC合成 → キャッシュ保存
 
+use std::collections::HashMap;
 use std::path::Path;
 
 use image::DynamicImage;
@@ -24,6 +25,7 @@ pub struct ProcessedPage {
 /// collisions across different PDFs.
 /// If cache hits and dimensions match the bitmap, return cached layers.
 /// Otherwise run MRC compose.
+#[allow(clippy::too_many_arguments)]
 pub fn process_page(
     page_index: u32,
     bitmap: &DynamicImage,
@@ -32,6 +34,7 @@ pub fn process_page(
     cache_settings: &CacheSettings,
     cache_store: Option<&CacheStore>,
     pdf_path: &Path,
+    image_streams: Option<&HashMap<String, lopdf::Stream>>,
 ) -> crate::error::Result<ProcessedPage> {
     let color_mode = cache_settings.color_mode;
 
@@ -88,8 +91,12 @@ pub fn process_page(
             PageOutput::BwMask(bw_layers)
         }
         mode @ (ColorMode::Rgb | ColorMode::Grayscale) => {
-            let mrc_layers = compose(&rgba_data, width, height, mrc_config, mode)?;
-            PageOutput::Mrc(mrc_layers)
+            if cache_settings.preserve_images && image_streams.is_some() {
+                todo!("PR 7: implement TextMasked routing in process_page")
+            } else {
+                let mrc_layers = compose(&rgba_data, width, height, mrc_config, mode)?;
+                PageOutput::Mrc(mrc_layers)
+            }
         }
         ColorMode::Skip => unreachable!("Skip handled above"),
     };

@@ -3,7 +3,9 @@
 use lopdf::{Document, Object, Stream, dictionary};
 
 use crate::config::job::ColorMode;
-use crate::mrc::{BwLayers, MrcLayers};
+#[allow(unused_imports)]
+use crate::error::PdfMaskError;
+use crate::mrc::{BwLayers, MrcLayers, TextMaskedData};
 
 /// PDF Name仕様 (PDF Reference 7.3.5) に従い、名前をエスケープする。
 ///
@@ -296,6 +298,20 @@ impl MrcPageWriter {
         self.append_page_to_kids(pages_id, page_id);
 
         Ok(page_id)
+    }
+
+    /// TextMaskedDataからPDFページを構築する。
+    ///
+    /// ソースPDFからページをdeep copyし、以下を変更する:
+    /// 1. コンテンツストリーム → テキスト除去済み + テキスト画像Doオペレータ
+    /// 2. Resources/XObject → テキスト領域XObject追加 + リダクション済み画像差替え
+    pub fn write_text_masked_page(
+        &mut self,
+        _source: &Document,
+        _page_num: u32,
+        _data: &TextMaskedData,
+    ) -> crate::error::Result<lopdf::ObjectId> {
+        todo!("PR 7: implement write_text_masked_page")
     }
 
     /// ソースPDFからページをコピーする（Skipモード用）。
