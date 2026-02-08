@@ -59,6 +59,7 @@ impl MrcPageWriter {
     }
 
     /// 画像XObjectを追加する共通ヘルパー。
+    #[allow(clippy::too_many_arguments)]
     fn add_image_xobject(
         &mut self,
         data: &[u8],
