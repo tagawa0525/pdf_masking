@@ -2,10 +2,17 @@
 
 use std::collections::HashMap;
 
-use super::{BwLayers, MrcLayers, TextMaskedData, jbig2, jpeg, segmenter};
+use super::{
+    BwLayers, ImageModification, MrcLayers, TextMaskedData, TextRegionCrop, jbig2, jpeg, segmenter,
+};
 use crate::config::job::ColorMode;
 use crate::error::PdfMaskError;
 use crate::mrc::segmenter::PixelBBox;
+use crate::pdf::content_stream::{
+    extract_white_fill_rects, extract_xobject_placements, pixel_to_page_coords,
+    strip_text_operators,
+};
+use crate::pdf::image_xobject::{bbox_overlaps, redact_image_regions};
 use image::{DynamicImage, RgbaImage};
 
 /// Configuration for MRC layer generation.
@@ -175,6 +182,82 @@ pub struct TextMaskedParams<'a> {
 /// 3. 画像XObject配置を取得
 /// 4. 白色矩形と重なる画像をリダクション
 /// 5. ビットマップからテキスト領域を抽出・JPEG化
-pub fn compose_text_masked(_params: &TextMaskedParams) -> crate::error::Result<TextMaskedData> {
-    todo!("GREEN phase: implement compose_text_masked")
+pub fn compose_text_masked(params: &TextMaskedParams) -> crate::error::Result<TextMaskedData> {
+    // 1. テキスト除去済みコンテンツストリーム
+    let stripped_content_stream = strip_text_operators(params.content_bytes)?;
+
+    // 2. 白色fill矩形を検出
+    let white_rects = extract_white_fill_rects(params.content_bytes)?;
+
+    // 3. 画像XObject配置を取得
+    let placements = extract_xobject_placements(params.content_bytes)?;
+
+    // 4. 白色矩形と重なる画像をリダクション
+    let mut modified_images: HashMap<String, ImageModification> = HashMap::new();
+    for placement in &placements {
+        if let Some(stream) = params.image_streams.get(&placement.name) {
+            let overlapping: Vec<_> = white_rects
+                .iter()
+                .filter(|wr| bbox_overlaps(wr, &placement.bbox))
+                .cloned()
+                .collect();
+
+            if !overlapping.is_empty()
+                && let Ok(Some(redacted)) =
+                    redact_image_regions(stream, &overlapping, &placement.bbox)
+            {
+                modified_images.insert(
+                    placement.name.clone(),
+                    ImageModification {
+                        data: redacted.data,
+                        filter: redacted.filter,
+                        color_space: redacted.color_space,
+                        bits_per_component: redacted.bits_per_component,
+                    },
+                );
+            }
+        }
+    }
+
+    // 5. ビットマップからテキスト領域を抽出・JPEG化
+    let text_mask =
+        segmenter::segment_text_mask(params.rgba_data, params.bitmap_width, params.bitmap_height)?;
+    let bboxes = segmenter::extract_text_bboxes(&text_mask, 5)?;
+
+    let bitmap = RgbaImage::from_raw(
+        params.bitmap_width,
+        params.bitmap_height,
+        params.rgba_data.to_vec(),
+    )
+    .ok_or_else(|| PdfMaskError::jpeg_encode("Failed to create bitmap from RGBA data"))?;
+    let dynamic = DynamicImage::ImageRgba8(bitmap);
+
+    let crops = crop_text_regions(&dynamic, &bboxes, params.quality, params.color_mode)?;
+
+    let text_regions: Vec<TextRegionCrop> = crops
+        .into_iter()
+        .map(|(jpeg_data, pixel_bbox)| {
+            let bbox_points = pixel_to_page_coords(
+                &pixel_bbox,
+                params.page_width_pts,
+                params.page_height_pts,
+                params.bitmap_width,
+                params.bitmap_height,
+            )?;
+            Ok(TextRegionCrop {
+                jpeg_data,
+                bbox_points,
+                pixel_width: pixel_bbox.width,
+                pixel_height: pixel_bbox.height,
+            })
+        })
+        .collect::<crate::error::Result<Vec<_>>>()?;
+
+    Ok(TextMaskedData {
+        stripped_content_stream,
+        text_regions,
+        modified_images,
+        page_index: params.page_index,
+        color_mode: params.color_mode,
+    })
 }
