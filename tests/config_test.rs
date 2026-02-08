@@ -1,10 +1,12 @@
 // Phase 1: 設定ファイル解析テスト (RED)
 
+use std::io::Write;
+use std::path::Path;
+
 use pdf_masking::config::job::{JobFile, parse_page_range};
 use pdf_masking::config::load_settings_for_job;
 use pdf_masking::config::merged::MergedConfig;
 use pdf_masking::config::settings::Settings;
-use std::io::Write;
 
 // ============================================================
 // 1. ページ範囲パーサ
@@ -68,7 +70,7 @@ linearize: false
     assert_eq!(settings.bg_quality, 80);
     assert_eq!(settings.fg_quality, 60);
     assert_eq!(settings.parallel_workers, 4);
-    assert_eq!(settings.cache_dir, "/tmp/cache");
+    assert_eq!(settings.cache_dir, Path::new("/tmp/cache"));
     assert!(!settings.preserve_images);
     assert!(!settings.linearize);
 }
@@ -82,7 +84,7 @@ fn test_settings_empty_yaml() {
     assert_eq!(settings.bg_quality, 50);
     assert_eq!(settings.fg_quality, 30);
     assert_eq!(settings.parallel_workers, 0);
-    assert_eq!(settings.cache_dir, ".cache");
+    assert_eq!(settings.cache_dir, Path::new(".cache"));
     assert!(settings.preserve_images);
     assert!(settings.linearize);
 }
@@ -99,7 +101,7 @@ dpi: 150
     assert_eq!(settings.bg_quality, 50);
     assert_eq!(settings.fg_quality, 30);
     assert_eq!(settings.parallel_workers, 0);
-    assert_eq!(settings.cache_dir, ".cache");
+    assert_eq!(settings.cache_dir, Path::new(".cache"));
     assert!(settings.preserve_images);
     assert!(settings.linearize);
 }
@@ -230,7 +232,7 @@ jobs:
     assert_eq!(merged.bg_quality, 50);
     assert_eq!(merged.fg_quality, 30);
     assert_eq!(merged.parallel_workers, 0);
-    assert_eq!(merged.cache_dir, ".cache");
+    assert_eq!(merged.cache_dir, Path::new(".cache"));
     assert!(merged.preserve_images);
     assert!(merged.linearize);
 }

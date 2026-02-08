@@ -1,3 +1,5 @@
+use std::path::Path;
+
 use lopdf::Document;
 
 pub struct PdfReader {
@@ -6,7 +8,7 @@ pub struct PdfReader {
 
 impl PdfReader {
     /// PDFファイルを開いてPdfReaderを作成する。
-    pub fn open(path: &str) -> crate::error::Result<Self> {
+    pub fn open(path: impl AsRef<Path>) -> crate::error::Result<Self> {
         let doc = Document::load(path)?;
         Ok(Self { doc })
     }

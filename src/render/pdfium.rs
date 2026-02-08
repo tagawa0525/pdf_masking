@@ -1,8 +1,9 @@
 // Phase 6: pdfium-render wrapper: page -> DynamicImage (in-memory only)
 
+use std::path::{Path, PathBuf};
+
 use image::DynamicImage;
 use pdfium_render::prelude::*;
-use std::path::PathBuf;
 
 /// Resolves the path to the pdfium shared library.
 ///
@@ -56,12 +57,13 @@ fn create_pdfium() -> crate::error::Result<Pdfium> {
 ///
 /// # Errors
 /// Returns `PdfMaskError::RenderError` if:
+/// - The path contains non-UTF-8 characters (pdfium requires UTF-8 paths)
 /// - The pdfium library cannot be initialized
 /// - The PDF file cannot be opened
 /// - The page index is out of range
 /// - Rendering fails
 pub fn render_page(
-    pdf_path: &str,
+    pdf_path: &Path,
     page_index: u32,
     dpi: u32,
 ) -> crate::error::Result<DynamicImage> {
@@ -73,7 +75,10 @@ pub fn render_page(
 
     let pdfium = create_pdfium()?;
 
-    let document = pdfium.load_pdf_from_file(pdf_path, None)?;
+    let pdf_path_str = pdf_path.to_str().ok_or_else(|| {
+        crate::error::PdfMaskError::render("PDF path contains non-UTF-8 characters")
+    })?;
+    let document = pdfium.load_pdf_from_file(pdf_path_str, None)?;
 
     let page_index_u16 = u16::try_from(page_index)
         .map_err(|_| crate::error::PdfMaskError::render("page index exceeds u16 range"))?;

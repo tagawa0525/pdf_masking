@@ -1,3 +1,5 @@
+use std::path::{Path, PathBuf};
+
 use image::{DynamicImage, RgbaImage};
 use pdf_masking::cache::hash::CacheSettings;
 use pdf_masking::cache::store::CacheStore;
@@ -29,7 +31,7 @@ fn test_process_page_cache_miss() {
         &mrc_config,
         &cache_settings,
         None,
-        "test.pdf",
+        Path::new("test.pdf"),
     );
     assert!(
         result.is_ok(),
@@ -75,7 +77,7 @@ fn test_process_page_cache_hit() {
         &mrc_config,
         &cache_settings,
         Some(&cache_store),
-        "test.pdf",
+        Path::new("test.pdf"),
     );
     assert!(result1.is_ok());
     let processed1 = result1.unwrap();
@@ -91,7 +93,7 @@ fn test_process_page_cache_hit() {
         &mrc_config,
         &cache_settings,
         Some(&cache_store),
-        "test.pdf",
+        Path::new("test.pdf"),
     );
     assert!(result2.is_ok());
     let processed2 = result2.unwrap();
@@ -106,24 +108,24 @@ fn test_process_page_cache_hit() {
 #[test]
 fn test_job_config_creation() {
     let config = JobConfig {
-        input_path: "input.pdf".to_string(),
-        output_path: "output.pdf".to_string(),
+        input_path: PathBuf::from("input.pdf"),
+        output_path: PathBuf::from("output.pdf"),
         pages: vec![0, 1, 2],
         dpi: 300,
         bg_quality: 50,
         fg_quality: 30,
         preserve_images: true,
-        cache_dir: Some(".cache".to_string()),
+        cache_dir: Some(PathBuf::from(".cache")),
     };
 
-    assert_eq!(config.input_path, "input.pdf");
-    assert_eq!(config.output_path, "output.pdf");
+    assert_eq!(config.input_path, Path::new("input.pdf"));
+    assert_eq!(config.output_path, Path::new("output.pdf"));
     assert_eq!(config.pages, vec![0, 1, 2]);
     assert_eq!(config.dpi, 300);
     assert_eq!(config.bg_quality, 50);
     assert_eq!(config.fg_quality, 30);
     assert!(config.preserve_images);
-    assert_eq!(config.cache_dir, Some(".cache".to_string()));
+    assert_eq!(config.cache_dir, Some(PathBuf::from(".cache")));
 }
 
 #[test]

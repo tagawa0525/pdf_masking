@@ -1,5 +1,7 @@
 // Phase 10: ページ単位処理: キャッシュ確認 → MRC合成 → キャッシュ保存
 
+use std::path::Path;
+
 use image::DynamicImage;
 
 use crate::cache::hash::{CacheSettings, compute_cache_key};
@@ -28,7 +30,7 @@ pub fn process_page(
     mrc_config: &MrcConfig,
     cache_settings: &CacheSettings,
     cache_store: Option<&CacheStore>,
-    pdf_path: &str,
+    pdf_path: &Path,
 ) -> crate::error::Result<ProcessedPage> {
     let cache_key = compute_cache_key(content_stream, cache_settings, pdf_path, page_index);
 

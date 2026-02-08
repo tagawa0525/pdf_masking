@@ -17,7 +17,7 @@ use lopdf::{Document, Object, Stream, dictionary};
 fn create_test_pdf(
     content_ops: Vec<Operation>,
     xobjects: Vec<(&str, Stream)>,
-) -> (tempfile::TempDir, String) {
+) -> (tempfile::TempDir, std::path::PathBuf) {
     let dir = tempfile::tempdir().expect("create temp dir");
     let path = dir.path().join("test.pdf");
 
@@ -69,8 +69,7 @@ fn create_test_pdf(
 
     doc.save(&path).expect("save PDF");
 
-    let path_str = path.to_string_lossy().to_string();
-    (dir, path_str)
+    (dir, path)
 }
 
 /// Image XObject用の最小ストリームを作成する

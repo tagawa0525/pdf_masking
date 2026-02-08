@@ -4,6 +4,7 @@
 // The key is a SHA-256 hash encoded as a lowercase hexadecimal string.
 
 use std::collections::BTreeMap;
+use std::path::Path;
 
 use sha2::{Digest, Sha256};
 
@@ -41,11 +42,11 @@ fn settings_to_canonical_json(settings: &CacheSettings) -> String {
 pub fn compute_cache_key(
     content_stream: &[u8],
     settings: &CacheSettings,
-    pdf_path: &str,
+    pdf_path: &Path,
     page_index: u32,
 ) -> String {
     let mut hasher = Sha256::new();
-    hasher.update(pdf_path.as_bytes());
+    hasher.update(pdf_path.as_os_str().as_encoded_bytes());
     hasher.update(page_index.to_le_bytes());
     hasher.update(content_stream);
 
