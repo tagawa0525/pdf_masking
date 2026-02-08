@@ -292,3 +292,20 @@ pub fn pixel_to_page_coords(
         y_max,
     })
 }
+
+/// コンテンツストリームから白色fill矩形の位置を抽出する。
+///
+/// 追跡するオペレータ:
+/// - 色設定: `rg`/`g`/`k`/`sc`/`scn` + `cs` (fill color)
+/// - パス構築: `re` (rectangle)
+/// - fill: `f`/`F`/`f*`
+/// - CTMスタック: `q`/`Q`/`cm`
+///
+/// # Arguments
+/// * `content_bytes` - コンテンツストリームのバイト列
+///
+/// # Returns
+/// CTM適用済みのページ座標BBoxリスト（白色fill矩形のみ）
+pub fn extract_white_fill_rects(_content_bytes: &[u8]) -> crate::error::Result<Vec<BBox>> {
+    todo!("PR 4: implement extract_white_fill_rects")
+}

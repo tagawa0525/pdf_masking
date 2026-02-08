@@ -2,7 +2,8 @@
 
 use pdf_masking::mrc::segmenter::PixelBBox;
 use pdf_masking::pdf::content_stream::{
-    Matrix, extract_xobject_placements, pixel_to_page_coords, strip_text_operators,
+    Matrix, extract_white_fill_rects, extract_xobject_placements, pixel_to_page_coords,
+    strip_text_operators,
 };
 use pdf_masking::pdf::reader::PdfReader;
 
@@ -695,6 +696,325 @@ fn test_pixel_to_page_coords_zero_bitmap_rejected() {
 
     let result = pixel_to_page_coords(&pixel_bbox, 100.0, 100.0, 1000, 0);
     assert!(result.is_err(), "Should reject zero bitmap height");
+}
+
+// ============================================================
+// 5. extract_white_fill_rects テスト
+// ============================================================
+
+#[test]
+fn test_white_fill_rects_empty_stream() {
+    let result = extract_white_fill_rects(b"").expect("parse empty");
+    assert!(result.is_empty(), "empty stream should yield no rects");
+}
+
+#[test]
+fn test_white_fill_rects_rgb_white() {
+    // 白色RGB(1,1,1)でfill矩形
+    let ops = vec![
+        Operation::new(
+            "rg",
+            vec![Object::Real(1.0), Object::Real(1.0), Object::Real(1.0)],
+        ),
+        Operation::new(
+            "re",
+            vec![
+                Object::Real(10.0),
+                Object::Real(20.0),
+                Object::Real(100.0),
+                Object::Real(50.0),
+            ],
+        ),
+        Operation::new("f", vec![]),
+    ];
+    let content = Content { operations: ops };
+    let bytes = content.encode().expect("encode");
+
+    let rects = extract_white_fill_rects(&bytes).expect("extract");
+    assert_eq!(rects.len(), 1);
+    assert_approx(rects[0].x_min, 10.0);
+    assert_approx(rects[0].y_min, 20.0);
+    assert_approx(rects[0].x_max, 110.0);
+    assert_approx(rects[0].y_max, 70.0);
+}
+
+#[test]
+fn test_white_fill_rects_gray_white() {
+    // 白色Gray(1)でfill矩形
+    let ops = vec![
+        Operation::new("g", vec![Object::Real(1.0)]),
+        Operation::new(
+            "re",
+            vec![
+                Object::Real(0.0),
+                Object::Real(0.0),
+                Object::Real(200.0),
+                Object::Real(300.0),
+            ],
+        ),
+        Operation::new("f*", vec![]),
+    ];
+    let content = Content { operations: ops };
+    let bytes = content.encode().expect("encode");
+
+    let rects = extract_white_fill_rects(&bytes).expect("extract");
+    assert_eq!(rects.len(), 1);
+    assert_approx(rects[0].x_min, 0.0);
+    assert_approx(rects[0].y_min, 0.0);
+    assert_approx(rects[0].x_max, 200.0);
+    assert_approx(rects[0].y_max, 300.0);
+}
+
+#[test]
+fn test_white_fill_rects_cmyk_white() {
+    // 白色CMYK(0,0,0,0)でfill矩形
+    let ops = vec![
+        Operation::new(
+            "k",
+            vec![
+                Object::Real(0.0),
+                Object::Real(0.0),
+                Object::Real(0.0),
+                Object::Real(0.0),
+            ],
+        ),
+        Operation::new(
+            "re",
+            vec![
+                Object::Real(50.0),
+                Object::Real(50.0),
+                Object::Real(100.0),
+                Object::Real(100.0),
+            ],
+        ),
+        Operation::new("F", vec![]),
+    ];
+    let content = Content { operations: ops };
+    let bytes = content.encode().expect("encode");
+
+    let rects = extract_white_fill_rects(&bytes).expect("extract");
+    assert_eq!(rects.len(), 1);
+    assert_approx(rects[0].x_min, 50.0);
+    assert_approx(rects[0].y_min, 50.0);
+    assert_approx(rects[0].x_max, 150.0);
+    assert_approx(rects[0].y_max, 150.0);
+}
+
+#[test]
+fn test_white_fill_rects_non_white_ignored() {
+    // 非白色（赤）はfillしても検出されない
+    let ops = vec![
+        Operation::new(
+            "rg",
+            vec![Object::Real(1.0), Object::Real(0.0), Object::Real(0.0)],
+        ),
+        Operation::new(
+            "re",
+            vec![
+                Object::Real(10.0),
+                Object::Real(20.0),
+                Object::Real(100.0),
+                Object::Real(50.0),
+            ],
+        ),
+        Operation::new("f", vec![]),
+    ];
+    let content = Content { operations: ops };
+    let bytes = content.encode().expect("encode");
+
+    let rects = extract_white_fill_rects(&bytes).expect("extract");
+    assert!(rects.is_empty(), "non-white fill should not be detected");
+}
+
+#[test]
+fn test_white_fill_rects_stroke_not_detected() {
+    // 白色設定 + re + S(stroke) → fill矩形としては検出されない
+    let ops = vec![
+        Operation::new(
+            "rg",
+            vec![Object::Real(1.0), Object::Real(1.0), Object::Real(1.0)],
+        ),
+        Operation::new(
+            "re",
+            vec![
+                Object::Real(10.0),
+                Object::Real(20.0),
+                Object::Real(100.0),
+                Object::Real(50.0),
+            ],
+        ),
+        Operation::new("S", vec![]),
+    ];
+    let content = Content { operations: ops };
+    let bytes = content.encode().expect("encode");
+
+    let rects = extract_white_fill_rects(&bytes).expect("extract");
+    assert!(
+        rects.is_empty(),
+        "stroke should not be detected as fill rect"
+    );
+}
+
+#[test]
+fn test_white_fill_rects_ctm_applied() {
+    // CTMでスケーリングされた白色fill矩形
+    let ops = vec![
+        Operation::new("q", vec![]),
+        Operation::new(
+            "cm",
+            vec![
+                Object::Real(2.0),
+                Object::Real(0.0),
+                Object::Real(0.0),
+                Object::Real(3.0),
+                Object::Real(100.0),
+                Object::Real(200.0),
+            ],
+        ),
+        Operation::new(
+            "rg",
+            vec![Object::Real(1.0), Object::Real(1.0), Object::Real(1.0)],
+        ),
+        Operation::new(
+            "re",
+            vec![
+                Object::Real(10.0),
+                Object::Real(20.0),
+                Object::Real(50.0),
+                Object::Real(30.0),
+            ],
+        ),
+        Operation::new("f", vec![]),
+        Operation::new("Q", vec![]),
+    ];
+    let content = Content { operations: ops };
+    let bytes = content.encode().expect("encode");
+
+    let rects = extract_white_fill_rects(&bytes).expect("extract");
+    assert_eq!(rects.len(), 1);
+    // CTM: (2,0,0,3,100,200)
+    // rect: (10,20,50,30) → corners: (10,20),(60,20),(10,50),(60,50)
+    // transformed: (2*10+100, 3*20+200) = (120, 260)
+    //              (2*60+100, 3*20+200) = (220, 260)
+    //              (2*10+100, 3*50+200) = (120, 350)
+    //              (2*60+100, 3*50+200) = (220, 350)
+    assert_approx(rects[0].x_min, 120.0);
+    assert_approx(rects[0].y_min, 260.0);
+    assert_approx(rects[0].x_max, 220.0);
+    assert_approx(rects[0].y_max, 350.0);
+}
+
+#[test]
+fn test_white_fill_rects_color_state_save_restore() {
+    // q → 白設定 → Q → re+f → デフォルト（黒）なので検出されない
+    let ops = vec![
+        Operation::new("q", vec![]),
+        Operation::new(
+            "rg",
+            vec![Object::Real(1.0), Object::Real(1.0), Object::Real(1.0)],
+        ),
+        Operation::new("Q", vec![]),
+        // Q後、fill colorはデフォルト（黒）に戻る
+        Operation::new(
+            "re",
+            vec![
+                Object::Real(10.0),
+                Object::Real(20.0),
+                Object::Real(100.0),
+                Object::Real(50.0),
+            ],
+        ),
+        Operation::new("f", vec![]),
+    ];
+    let content = Content { operations: ops };
+    let bytes = content.encode().expect("encode");
+
+    let rects = extract_white_fill_rects(&bytes).expect("extract");
+    assert!(
+        rects.is_empty(),
+        "fill color should be restored after Q, default is black"
+    );
+}
+
+#[test]
+fn test_white_fill_rects_multiple() {
+    // 複数の白色fill矩形
+    let ops = vec![
+        Operation::new(
+            "rg",
+            vec![Object::Real(1.0), Object::Real(1.0), Object::Real(1.0)],
+        ),
+        Operation::new(
+            "re",
+            vec![
+                Object::Real(10.0),
+                Object::Real(20.0),
+                Object::Real(100.0),
+                Object::Real(50.0),
+            ],
+        ),
+        Operation::new("f", vec![]),
+        Operation::new(
+            "re",
+            vec![
+                Object::Real(200.0),
+                Object::Real(300.0),
+                Object::Real(150.0),
+                Object::Real(80.0),
+            ],
+        ),
+        Operation::new("f", vec![]),
+    ];
+    let content = Content { operations: ops };
+    let bytes = content.encode().expect("encode");
+
+    let rects = extract_white_fill_rects(&bytes).expect("extract");
+    assert_eq!(rects.len(), 2);
+    assert_approx(rects[0].x_min, 10.0);
+    assert_approx(rects[1].x_min, 200.0);
+}
+
+#[test]
+fn test_white_fill_rects_sc_operator() {
+    // sc オペレータで白色設定
+    let ops = vec![
+        Operation::new(
+            "sc",
+            vec![Object::Real(1.0), Object::Real(1.0), Object::Real(1.0)],
+        ),
+        Operation::new(
+            "re",
+            vec![
+                Object::Real(0.0),
+                Object::Real(0.0),
+                Object::Real(50.0),
+                Object::Real(50.0),
+            ],
+        ),
+        Operation::new("f", vec![]),
+    ];
+    let content = Content { operations: ops };
+    let bytes = content.encode().expect("encode");
+
+    let rects = extract_white_fill_rects(&bytes).expect("extract");
+    assert_eq!(rects.len(), 1);
+}
+
+#[test]
+fn test_white_fill_rects_no_rect_before_fill() {
+    // re なしで f → 何も検出されない
+    let ops = vec![
+        Operation::new(
+            "rg",
+            vec![Object::Real(1.0), Object::Real(1.0), Object::Real(1.0)],
+        ),
+        Operation::new("f", vec![]),
+    ];
+    let content = Content { operations: ops };
+    let bytes = content.encode().expect("encode");
+
+    let rects = extract_white_fill_rects(&bytes).expect("extract");
+    assert!(rects.is_empty(), "no rect before fill should yield nothing");
 }
 
 // ============================================================
