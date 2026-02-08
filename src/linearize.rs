@@ -8,7 +8,6 @@ use std::process::Command;
 /// If input_path == output_path, uses qpdf's --replace-input mode.
 ///
 /// qpdf must be available in PATH (provided by nix develop environment).
-#[allow(dead_code)]
 pub fn linearize(input_path: &str, output_path: &str) -> crate::error::Result<()> {
     let output = if input_path == output_path {
         // In-place mode: qpdf --linearize --replace-input <path>
@@ -45,7 +44,6 @@ pub fn linearize(input_path: &str, output_path: &str) -> crate::error::Result<()
 }
 
 /// Linearize a PDF in-place (replaces the original file).
-#[allow(dead_code)]
 pub fn linearize_in_place(path: &str) -> crate::error::Result<()> {
     linearize(path, path)
 }
