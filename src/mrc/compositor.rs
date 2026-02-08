@@ -7,6 +7,7 @@ use super::{
 };
 use crate::config::job::ColorMode;
 use crate::error::PdfMaskError;
+use crate::ffi::leptonica::Pix;
 use crate::mrc::segmenter::PixelBBox;
 use crate::pdf::content_stream::{
     extract_white_fill_rects, extract_xobject_placements, pixel_to_page_coords,
@@ -82,25 +83,45 @@ pub fn compose(
     })
 }
 
-/// テキスト領域をビットマップからクロップし、JPEG化する。
+/// クロップ済みテキスト領域のエンコード結果。
+/// データ、フォーマット情報、元のピクセル領域を含む。
+pub struct CroppedRegion {
+    pub data: Vec<u8>,
+    pub bbox: PixelBBox,
+    pub filter: &'static str,
+    pub color_space: &'static str,
+    pub bits_per_component: u8,
+}
+
+/// クロップした画像をOtsu二値化してJBIG2エンコードする。
+/// 失敗時はNoneを返す（JPEGにフォールバック）。
+fn try_jbig2_encode(cropped: &DynamicImage) -> Option<Vec<u8>> {
+    let rgba = cropped.to_rgba8();
+    let (w, h) = (rgba.width(), rgba.height());
+    let pix = Pix::from_raw_rgba(w, h, rgba.as_raw()).ok()?;
+    let gray = pix.convert_to_gray().ok()?;
+    let tile_sx = w.clamp(16, 2000);
+    let tile_sy = h.clamp(16, 2000);
+    let mut binary = gray.otsu_adaptive_threshold(tile_sx, tile_sy).ok()?;
+    jbig2::encode_mask(&mut binary).ok()
+}
+
+/// テキスト領域をビットマップからクロップし、最適なフォーマットでエンコードする。
 ///
-/// 各 PixelBBox 領域をクロップして、指定のカラーモードとクオリティで
-/// JPEG エンコードする。
+/// 各領域についてJPEGとJBIG2の両方を試行し、小さい方を採用する。
+/// テキストは通常白黒なのでJBIG2（1bit）の方が効率的。
 ///
 /// # Arguments
 /// * `bitmap` - レンダリング済みのページビットマップ
 /// * `bboxes` - テキスト領域の矩形リスト（ピクセル座標）
 /// * `quality` - JPEG 品質 (1-100)
 /// * `color_mode` - RGB または Grayscale
-///
-/// # Returns
-/// `(jpeg_data, bbox)` のペアリスト
 pub fn crop_text_regions(
     bitmap: &DynamicImage,
     bboxes: &[PixelBBox],
     quality: u8,
     color_mode: ColorMode,
-) -> crate::error::Result<Vec<(Vec<u8>, PixelBBox)>> {
+) -> crate::error::Result<Vec<CroppedRegion>> {
     if !(1..=100).contains(&quality) {
         return Err(PdfMaskError::jpeg_encode(format!(
             "JPEG quality must be 1-100, got {}",
@@ -111,18 +132,17 @@ pub fn crop_text_regions(
     let mut results = Vec::with_capacity(bboxes.len());
 
     for bbox in bboxes {
-        // クロップ
         let cropped = bitmap.crop_imm(bbox.x, bbox.y, bbox.width, bbox.height);
 
-        // カラーモードに応じてエンコード
-        let jpeg_data = match color_mode {
+        // JPEG エンコード
+        let (jpeg_data, jpeg_cs) = match color_mode {
             ColorMode::Grayscale => {
                 let gray = cropped.to_luma8();
-                jpeg::encode_gray_to_jpeg(&gray, quality)?
+                (jpeg::encode_gray_to_jpeg(&gray, quality)?, "DeviceGray")
             }
             ColorMode::Rgb => {
                 let rgb = cropped.to_rgb8();
-                jpeg::encode_rgb_to_jpeg(&rgb, quality)?
+                (jpeg::encode_rgb_to_jpeg(&rgb, quality)?, "DeviceRGB")
             }
             ColorMode::Bw | ColorMode::Skip => {
                 return Err(PdfMaskError::jpeg_encode(format!(
@@ -132,7 +152,25 @@ pub fn crop_text_regions(
             }
         };
 
-        results.push((jpeg_data, bbox.clone()));
+        // JBIG2 エンコード試行: JPEGより小さければ採用
+        let region = match try_jbig2_encode(&cropped) {
+            Some(jbig2_data) if jbig2_data.len() < jpeg_data.len() => CroppedRegion {
+                data: jbig2_data,
+                bbox: bbox.clone(),
+                filter: "JBIG2Decode",
+                color_space: "DeviceGray",
+                bits_per_component: 1,
+            },
+            _ => CroppedRegion {
+                data: jpeg_data,
+                bbox: bbox.clone(),
+                filter: "DCTDecode",
+                color_space: jpeg_cs,
+                bits_per_component: 8,
+            },
+        };
+
+        results.push(region);
     }
 
     Ok(results)
@@ -247,29 +285,24 @@ pub fn compose_text_masked(params: &TextMaskedParams) -> crate::error::Result<Te
 
     let crops = crop_text_regions(&dynamic, &bboxes, params.quality, params.color_mode)?;
 
-    let color_space = match params.color_mode {
-        ColorMode::Grayscale => "DeviceGray",
-        _ => "DeviceRGB",
-    };
-
     let text_regions: Vec<TextRegionCrop> = crops
         .into_iter()
-        .map(|(jpeg_data, pixel_bbox)| {
+        .map(|cropped| {
             let bbox_points = pixel_to_page_coords(
-                &pixel_bbox,
+                &cropped.bbox,
                 params.page_width_pts,
                 params.page_height_pts,
                 params.bitmap_width,
                 params.bitmap_height,
             )?;
             Ok(TextRegionCrop {
-                data: jpeg_data,
+                data: cropped.data,
                 bbox_points,
-                pixel_width: pixel_bbox.width,
-                pixel_height: pixel_bbox.height,
-                filter: "DCTDecode".to_string(),
-                color_space: color_space.to_string(),
-                bits_per_component: 8,
+                pixel_width: cropped.bbox.width,
+                pixel_height: cropped.bbox.height,
+                filter: cropped.filter.to_string(),
+                color_space: cropped.color_space.to_string(),
+                bits_per_component: cropped.bits_per_component,
             })
         })
         .collect::<crate::error::Result<Vec<_>>>()?;

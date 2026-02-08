@@ -329,11 +329,8 @@ fn test_crop_text_regions_single() {
     let result =
         compositor::crop_text_regions(&dynamic, &bboxes, 75, ColorMode::Rgb).expect("crop");
     assert_eq!(result.len(), 1);
-    // JPEG data should be non-empty and start with FF D8
-    assert!(!result[0].0.is_empty());
-    assert!(result[0].0.starts_with(&[0xFF, 0xD8]));
-    // BBox should be preserved
-    assert_eq!(result[0].1, bboxes[0]);
+    assert!(!result[0].data.is_empty());
+    assert_eq!(result[0].bbox, bboxes[0]);
 }
 
 /// Test cropping multiple regions.
@@ -361,9 +358,8 @@ fn test_crop_text_regions_multiple() {
     let result =
         compositor::crop_text_regions(&dynamic, &bboxes, 50, ColorMode::Rgb).expect("crop");
     assert_eq!(result.len(), 2);
-    for (jpeg_data, _) in &result {
-        assert!(!jpeg_data.is_empty());
-        assert!(jpeg_data.starts_with(&[0xFF, 0xD8]));
+    for region in &result {
+        assert!(!region.data.is_empty());
     }
 }
 
@@ -384,8 +380,7 @@ fn test_crop_text_regions_grayscale() {
     let result =
         compositor::crop_text_regions(&dynamic, &bboxes, 75, ColorMode::Grayscale).expect("crop");
     assert_eq!(result.len(), 1);
-    assert!(!result[0].0.is_empty());
-    assert!(result[0].0.starts_with(&[0xFF, 0xD8]));
+    assert!(!result[0].data.is_empty());
 }
 
 /// Test cropping with empty bboxes returns empty.
@@ -588,38 +583,39 @@ fn test_compose_text_masked_valid_bboxes() {
     }
 }
 
-/// TextRegionCropにfilter/color_space/bits_per_componentフィールドがあり、
-/// 白黒テキスト画像ではJBIG2が選択されること。
+/// crop_text_regionsで白黒画像をクロップした場合、JBIG2が選択されること。
+/// segmenterをバイパスして直接crop_text_regionsをテストする。
 #[test]
-#[ignore] // RED: JBIG2最適エンコードが未実装（常にDCTDecode）
 fn test_text_region_prefers_jbig2_for_bw() {
-    // 白黒テキスト画像: JBIG2の方がJPEGより効率的なはず
+    use image::{DynamicImage, RgbaImage};
+
+    // 白黒テスト画像を作成（上半分黒、下半分白）
     let (data, width, height) = create_test_rgba_image();
-    let image_streams = std::collections::HashMap::new();
+    let bitmap = RgbaImage::from_raw(width, height, data).expect("create bitmap");
+    let dynamic = DynamicImage::ImageRgba8(bitmap);
 
-    let params = compositor::TextMaskedParams {
-        content_bytes: b"",
-        rgba_data: &data,
-        bitmap_width: width,
-        bitmap_height: height,
-        page_width_pts: 200.0,
-        page_height_pts: 200.0,
-        image_streams: &image_streams,
-        quality: 50,
-        color_mode: ColorMode::Rgb,
-        page_index: 0,
-    };
+    // テスト画像全体をカバーするbboxを明示的に指定
+    let bboxes = vec![segmenter::PixelBBox {
+        x: 0,
+        y: 0,
+        width,
+        height,
+    }];
 
-    let result = compositor::compose_text_masked(&params).expect("should succeed");
+    let results =
+        compositor::crop_text_regions(&dynamic, &bboxes, 50, ColorMode::Rgb).expect("crop");
 
-    // テスト画像は白黒（上半分黒、下半分白）なので、
-    // JBIG2エンコードがJPEGより小さくなるはず
-    let has_jbig2 = result
-        .text_regions
-        .iter()
-        .any(|r| r.filter == "JBIG2Decode");
-    assert!(
-        has_jbig2,
-        "black-and-white text regions should use JBIG2Decode"
+    assert_eq!(results.len(), 1, "should have one cropped region");
+
+    let region = &results[0];
+    // 白黒画像なのでJBIG2の方がJPEGより小さくなるはず
+    assert_eq!(
+        region.filter,
+        "JBIG2Decode",
+        "black-and-white image should use JBIG2Decode, got filter={} (data size={})",
+        region.filter,
+        region.data.len()
     );
+    assert_eq!(region.color_space, "DeviceGray");
+    assert_eq!(region.bits_per_component, 1);
 }
