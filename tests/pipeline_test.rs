@@ -123,12 +123,15 @@ fn test_process_page_cache_hit() {
 }
 
 #[test]
-#[ignore] // Phase 6: pages → page_modes 移行後に更新
 fn test_job_config_creation() {
     let config = JobConfig {
         input_path: PathBuf::from("input.pdf"),
         output_path: PathBuf::from("output.pdf"),
-        pages: vec![0, 1, 2],
+        page_modes: vec![
+            (0, ColorMode::Rgb),
+            (1, ColorMode::Bw),
+            (2, ColorMode::Skip),
+        ],
         dpi: 300,
         bg_quality: 50,
         fg_quality: 30,
@@ -138,7 +141,10 @@ fn test_job_config_creation() {
 
     assert_eq!(config.input_path, Path::new("input.pdf"));
     assert_eq!(config.output_path, Path::new("output.pdf"));
-    assert_eq!(config.pages, vec![0, 1, 2]);
+    assert_eq!(config.page_modes.len(), 3);
+    assert_eq!(config.page_modes[0], (0, ColorMode::Rgb));
+    assert_eq!(config.page_modes[1], (1, ColorMode::Bw));
+    assert_eq!(config.page_modes[2], (2, ColorMode::Skip));
     assert_eq!(config.dpi, 300);
     assert_eq!(config.bg_quality, 50);
     assert_eq!(config.fg_quality, 30);

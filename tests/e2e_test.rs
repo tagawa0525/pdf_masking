@@ -491,7 +491,6 @@ fn test_e2e_multiple_job_files() {
 
 /// Process a single page in BW mode. Output should have JBIG2 mask only (no BgImg/FgImg).
 #[test]
-#[ignore]
 fn test_e2e_bw_mode() {
     if !pdfium_available() {
         eprintln!("Skipping: PDFIUM_DYNAMIC_LIB_PATH not set (run inside `nix develop`)");
@@ -528,7 +527,7 @@ fn test_e2e_bw_mode() {
     let doc = Document::load(&output_path).expect("output PDF should be loadable");
     assert_eq!(doc.get_pages().len(), 1, "output PDF should have 1 page");
 
-    // BW page: should have MaskImg XObject but NO BgImg/FgImg
+    // BW page: should have BwImg XObject but NO BgImg/FgImg
     let pages = doc.get_pages();
     let first_page_id = pages.values().next().expect("should have a page");
     let page_dict = doc
@@ -551,8 +550,8 @@ fn test_e2e_bw_mode() {
         _ => panic!("XObject should be a dictionary or reference"),
     };
     assert!(
-        xobject_dict.has(b"MaskImg"),
-        "BW page should have MaskImg XObject"
+        xobject_dict.has(b"BwImg"),
+        "BW page should have BwImg XObject"
     );
     assert!(
         !xobject_dict.has(b"BgImg"),
@@ -570,7 +569,6 @@ fn test_e2e_bw_mode() {
 
 /// Process a single page in grayscale mode. Output should have DeviceGray XObjects.
 #[test]
-#[ignore]
 fn test_e2e_grayscale_mode() {
     if !pdfium_available() {
         eprintln!("Skipping: PDFIUM_DYNAMIC_LIB_PATH not set (run inside `nix develop`)");
@@ -658,7 +656,6 @@ fn test_e2e_grayscale_mode() {
 
 /// Process with skip_pages to copy a page as-is from source PDF.
 #[test]
-#[ignore]
 fn test_e2e_skip_mode() {
     if !pdfium_available() {
         eprintln!("Skipping: PDFIUM_DYNAMIC_LIB_PATH not set (run inside `nix develop`)");
@@ -707,7 +704,6 @@ fn test_e2e_skip_mode() {
 
 /// 3-page PDF with: page 1 = RGB (default), page 2 = BW, page 3 = skip.
 #[test]
-#[ignore]
 fn test_e2e_mixed_mode() {
     if !pdfium_available() {
         eprintln!("Skipping: PDFIUM_DYNAMIC_LIB_PATH not set (run inside `nix develop`)");
@@ -762,7 +758,7 @@ fn test_e2e_mixed_mode() {
     };
     assert!(xobj1_dict.has(b"BgImg"), "Page 1 (RGB) should have BgImg");
 
-    // Page 2 (BW): should have MaskImg but no BgImg
+    // Page 2 (BW): should have BwImg but no BgImg
     let page2_id = pages.get(&2).expect("page 2");
     let page2_dict = doc.get_dictionary(*page2_id).expect("page 2 dict");
     let res2 = page2_dict.get(b"Resources").expect("Resources");
@@ -777,10 +773,7 @@ fn test_e2e_mixed_mode() {
         Object::Dictionary(d) => d,
         _ => panic!("dict expected"),
     };
-    assert!(
-        xobj2_dict.has(b"MaskImg"),
-        "Page 2 (BW) should have MaskImg"
-    );
+    assert!(xobj2_dict.has(b"BwImg"), "Page 2 (BW) should have BwImg");
     assert!(
         !xobj2_dict.has(b"BgImg"),
         "Page 2 (BW) should NOT have BgImg"

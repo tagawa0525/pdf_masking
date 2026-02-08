@@ -13,6 +13,11 @@ impl PdfReader {
         Ok(Self { doc })
     }
 
+    /// 内部のlopdf Documentへの参照を返す。
+    pub fn document(&self) -> &Document {
+        &self.doc
+    }
+
     /// ページ数を返す。
     pub fn page_count(&self) -> u32 {
         self.doc.get_pages().len() as u32

@@ -111,7 +111,6 @@ dpi: 150
 // ============================================================
 
 #[test]
-#[ignore] // TODO: Phase 6 - pages フィールド削除に伴い一時無効化
 fn test_job_required_fields_only() {
     let yaml = r#"
 jobs:
@@ -132,7 +131,6 @@ jobs:
 }
 
 #[test]
-#[ignore] // TODO: Phase 6 - pages フィールド削除に伴い一時無効化
 fn test_job_with_optional_fields() {
     let yaml = r#"
 jobs:
@@ -162,7 +160,6 @@ jobs:
 }
 
 #[test]
-#[ignore] // TODO: Phase 6 - pages フィールド削除に伴い一時無効化
 fn test_job_multiple_jobs() {
     let yaml = r#"
 jobs:
@@ -259,26 +256,4 @@ fn test_auto_detect_settings_yaml_missing() {
         settings.dpi, 300,
         "should use default when settings.yaml absent"
     );
-}
-
-// ============================================================
-// 6. YAML配列形式のpagesフィールド
-// ============================================================
-
-#[test]
-#[ignore] // TODO: Phase 6 - pages フィールド削除に伴い一時無効化
-fn test_job_pages_yaml_sequence_integers() {
-    // pages フィールドは削除されたため、代わりに *_pages フィールドでテスト
-}
-
-#[test]
-#[ignore] // TODO: Phase 6 - pages フィールド削除に伴い一時無効化
-fn test_job_pages_yaml_sequence_with_ranges() {
-    // pages フィールドは削除されたため、代わりに *_pages フィールドでテスト
-}
-
-#[test]
-#[ignore] // TODO: Phase 6 - pages フィールド削除に伴い一時無効化
-fn test_job_pages_yaml_string_form() {
-    // pages フィールドは削除されたため、代わりに *_pages フィールドでテスト
 }
