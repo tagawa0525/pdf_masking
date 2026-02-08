@@ -137,8 +137,10 @@ fn write_jobs_yaml(dir: &Path, input: &str, output: &str, extra_yaml: &str) {
 }
 
 /// Write a settings.yaml file for testing.
-fn write_settings_yaml(dir: &Path, dpi: u32, bg_quality: u8) {
-    let yaml = format!("dpi: {dpi}\nbg_quality: {bg_quality}\nlinearize: false\n");
+fn write_settings_yaml(dir: &Path, dpi: u32, bg_quality: u8, preserve_images: bool) {
+    let yaml = format!(
+        "dpi: {dpi}\nbg_quality: {bg_quality}\nlinearize: false\npreserve_images: {preserve_images}\n"
+    );
     std::fs::write(dir.join("settings.yaml"), yaml).expect("failed to write settings.yaml");
 }
 
@@ -245,7 +247,10 @@ fn test_e2e_with_settings_yaml() {
     let output_path = dir.path().join("output.pdf");
 
     create_single_page_pdf(&input_path);
-    write_settings_yaml(dir.path(), 72, 30);
+    // settings.yaml sets preserve_images=false to force MRC mode.
+    // The default is preserve_images=true (TextMasked), so if settings.yaml
+    // is applied, we'll see MRC structure (BgImg/FgImg) instead.
+    write_settings_yaml(dir.path(), 72, 30, false);
     write_jobs_yaml(dir.path(), "input.pdf", "output.pdf", "");
 
     let jobs_yaml_path = dir.path().join("jobs.yaml");
@@ -267,16 +272,33 @@ fn test_e2e_with_settings_yaml() {
     let doc = Document::load(&output_path).expect("output PDF should be loadable by lopdf");
     assert_eq!(doc.get_pages().len(), 1, "output PDF should have 1 page");
 
-    // Verify settings.yaml was picked up by checking that the pipeline ran.
-    // The output PDF should differ from the input: with default preserve_images=true,
-    // TextMasked mode deep-copies the page and strips text operators.
-    // We verify the pipeline produced valid output (already checked above)
-    // and that the output file differs from the input.
-    let input_bytes = std::fs::read(&input_path).expect("read input");
-    let output_bytes = std::fs::read(&output_path).expect("read output");
-    assert_ne!(
-        input_bytes, output_bytes,
-        "output should differ from input (settings.yaml was applied)"
+    // Verify settings.yaml was picked up by checking MRC structure.
+    // settings.yaml sets preserve_images=false, overriding the default (true).
+    // If applied, the output uses MRC (BgImg/FgImg) instead of TextMasked.
+    let pages = doc.get_pages();
+    let first_page_id = pages.values().next().expect("should have a page");
+    let page_dict = doc
+        .get_dictionary(*first_page_id)
+        .expect("page should be a dictionary");
+    let resources = page_dict
+        .get(b"Resources")
+        .expect("page should have Resources");
+    let resources_dict = match resources {
+        Object::Reference(r) => doc.get_dictionary(*r).expect("resolve Resources ref"),
+        Object::Dictionary(d) => d,
+        _ => panic!("Resources should be a dictionary or reference"),
+    };
+    let xobject = resources_dict
+        .get(b"XObject")
+        .expect("Resources should have XObject when settings.yaml is applied");
+    let xobject_dict = match xobject {
+        Object::Reference(r) => doc.get_dictionary(*r).expect("resolve XObject ref"),
+        Object::Dictionary(d) => d,
+        _ => panic!("XObject should be a dictionary or reference"),
+    };
+    assert!(
+        xobject_dict.has(b"BgImg"),
+        "XObject should contain BgImg (settings.yaml preserve_images=false was applied)"
     );
 }
 
