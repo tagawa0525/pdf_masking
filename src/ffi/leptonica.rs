@@ -1,7 +1,8 @@
 // Phase 3: 安全ラッパー（Pix型、RAII Drop）
 
 use super::leptonica_sys::{
-    PIX, pixClone, pixConvertRGBToGray, pixCreate, pixDestroy, pixGetData, pixGetDepth,
+    BOX, BOXA, L_CLONE, PIX, boxDestroy, boxGetGeometry, boxaDestroy, boxaGetBox, boxaGetCount,
+    pixClone, pixConnCompBB, pixConvertRGBToGray, pixCreate, pixDestroy, pixGetData, pixGetDepth,
     pixGetHeight, pixGetRegionsBinary, pixGetWidth, pixGetWpl, pixOtsuAdaptiveThreshold, pixSetAll,
 };
 use crate::error::{PdfMaskError, Result};
@@ -238,6 +239,69 @@ impl Pix {
                 textline,
                 block,
             })
+        }
+    }
+
+    /// Extract bounding boxes of connected components from a 1-bit image.
+    ///
+    /// Wraps leptonica's `pixConnCompBB`. Returns a list of `(x, y, w, h)`
+    /// rectangles, one per connected component.
+    ///
+    /// # Arguments
+    /// * `connectivity` - 4 or 8 (4-connected or 8-connected)
+    ///
+    /// # Errors
+    /// Returns an error if the image is not 1 bpp or if leptonica fails.
+    pub fn connected_component_bboxes(
+        &self,
+        connectivity: i32,
+    ) -> Result<Vec<(u32, u32, u32, u32)>> {
+        if self.get_depth() != 1 {
+            return Err(PdfMaskError::segmentation(format!(
+                "connected_component_bboxes requires 1-bit image, got {}-bit",
+                self.get_depth()
+            )));
+        }
+
+        unsafe {
+            let boxa: *mut BOXA = pixConnCompBB(self.ptr, connectivity);
+            if boxa.is_null() {
+                return Err(PdfMaskError::segmentation("pixConnCompBB returned null"));
+            }
+
+            let count = boxaGetCount(boxa);
+            let mut result = Vec::with_capacity(count as usize);
+
+            for i in 0..count {
+                let box_ptr: *mut BOX = boxaGetBox(boxa, i, L_CLONE as i32);
+                if box_ptr.is_null() {
+                    boxaDestroy(&mut (boxa as *mut BOXA));
+                    return Err(PdfMaskError::segmentation(format!(
+                        "boxaGetBox returned null for index {}",
+                        i
+                    )));
+                }
+
+                let mut x: i32 = 0;
+                let mut y: i32 = 0;
+                let mut w: i32 = 0;
+                let mut h: i32 = 0;
+                let ret = boxGetGeometry(box_ptr, &mut x, &mut y, &mut w, &mut h);
+                boxDestroy(&mut (box_ptr as *mut BOX));
+
+                if ret != 0 {
+                    boxaDestroy(&mut (boxa as *mut BOXA));
+                    return Err(PdfMaskError::segmentation(format!(
+                        "boxGetGeometry failed for index {}",
+                        i
+                    )));
+                }
+
+                result.push((x as u32, y as u32, w as u32, h as u32));
+            }
+
+            boxaDestroy(&mut (boxa as *mut BOXA));
+            Ok(result)
         }
     }
 
