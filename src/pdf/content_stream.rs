@@ -41,7 +41,7 @@ impl Matrix {
 }
 
 /// 矩形領域を表すバウンディングボックス。
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct BBox {
     pub x_min: f64,
     pub y_min: f64,

@@ -54,32 +54,21 @@ pub fn process_page(
     let bitmap_width = bitmap.width();
     let bitmap_height = bitmap.height();
 
-    // Check cache first
+    // Check cache first (retrieve checks bitmap dimensions internally)
     if let Some(store) = cache_store
-        && let Some(cached) = store.retrieve(&cache_key, color_mode)?
+        && let Some(cached) =
+            store.retrieve(&cache_key, color_mode, Some((bitmap_width, bitmap_height)))?
     {
         match &cached {
-            PageOutput::Mrc(layers) => {
-                if layers.width == bitmap_width && layers.height == bitmap_height {
-                    return Ok(ProcessedPage {
-                        page_index,
-                        output: cached,
-                        cache_key,
-                    });
-                }
+            PageOutput::Skip(_) => {}
+            _ => {
+                return Ok(ProcessedPage {
+                    page_index,
+                    output: cached,
+                    cache_key,
+                });
             }
-            PageOutput::BwMask(layers) => {
-                if layers.width == bitmap_width && layers.height == bitmap_height {
-                    return Ok(ProcessedPage {
-                        page_index,
-                        output: cached,
-                        cache_key,
-                    });
-                }
-            }
-            PageOutput::Skip(_) | PageOutput::TextMasked(_) => {}
         }
-        // Dimension mismatch: treat as cache miss and recompose
     }
 
     // Cache miss: run MRC composition
@@ -125,7 +114,7 @@ pub fn process_page(
 
     // Store in cache if available
     if let Some(store) = cache_store {
-        store.store(&cache_key, &output)?;
+        store.store(&cache_key, &output, Some((bitmap_width, bitmap_height)))?;
     }
 
     Ok(ProcessedPage {
