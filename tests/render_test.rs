@@ -3,11 +3,13 @@
 // Tests for rendering PDF pages to DynamicImage using pdfium-render.
 // Test PDFs are dynamically generated with lopdf to avoid fixture files.
 
+use std::path::PathBuf;
+
 use pdf_masking::render::pdfium::render_page;
 
 /// Create a minimal 1-page PDF (Letter size: 612x792 points) using lopdf.
 /// Returns the path to a temporary file containing the PDF.
-fn create_test_pdf(dir: &tempfile::TempDir) -> String {
+fn create_test_pdf(dir: &tempfile::TempDir) -> PathBuf {
     use lopdf::{Document, Object, Stream, dictionary};
 
     let mut doc = Document::with_version("1.4");
@@ -54,7 +56,7 @@ fn create_test_pdf(dir: &tempfile::TempDir) -> String {
     let path = dir.path().join("test.pdf");
     doc.save(&path).expect("failed to save test PDF");
 
-    path.to_string_lossy().to_string()
+    path
 }
 
 // ---- Test 1: Basic rendering ----
@@ -123,7 +125,7 @@ fn test_render_page_at_different_dpi() {
 fn test_render_nonexistent_file() {
     let dir = tempfile::tempdir().expect("failed to create temp dir");
     let nonexistent = dir.path().join("nonexistent_file.pdf");
-    let result = render_page(nonexistent.to_str().unwrap(), 0, 72);
+    let result = render_page(&nonexistent, 0, 72);
     assert!(
         result.is_err(),
         "render_page should fail for a nonexistent file"

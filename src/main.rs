@@ -1,4 +1,4 @@
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use pdf_masking::config::job::JobFile;
@@ -100,7 +100,7 @@ fn main() -> ExitCode {
                 bg_quality: merged.bg_quality,
                 fg_quality: merged.fg_quality,
                 preserve_images: merged.preserve_images,
-                cache_dir: Some(merged.cache_dir.clone()),
+                cache_dir: Some(merged.cache_dir),
             });
 
             linearize_flags.push(merged.linearize);
@@ -117,13 +117,18 @@ fn main() -> ExitCode {
             Ok(job_result) => {
                 eprintln!(
                     "OK: {} -> {} ({} pages)",
-                    job_result.input_path, job_result.output_path, job_result.pages_processed
+                    job_result.input_path.display(),
+                    job_result.output_path.display(),
+                    job_result.pages_processed
                 );
 
                 // Linearize output if configured.
                 if linearize_flags[i] {
                     if let Err(e) = linearize::linearize_in_place(&job_result.output_path) {
-                        eprintln!("ERROR: Failed to linearize {}: {e}", job_result.output_path);
+                        eprintln!(
+                            "ERROR: Failed to linearize {}: {e}",
+                            job_result.output_path.display()
+                        );
                         has_error = true;
                     }
                 }
@@ -131,7 +136,8 @@ fn main() -> ExitCode {
             Err(e) => {
                 eprintln!(
                     "ERROR: {} -> {}: {e}",
-                    job_configs[i].input_path, job_configs[i].output_path
+                    job_configs[i].input_path.display(),
+                    job_configs[i].output_path.display()
                 );
                 has_error = true;
             }
@@ -147,11 +153,11 @@ fn main() -> ExitCode {
 
 /// Resolve a potentially relative path against a base directory.
 /// If the path is already absolute, return it as-is.
-fn resolve_path(base_dir: &Path, path: &str) -> String {
+fn resolve_path(base_dir: &Path, path: &str) -> PathBuf {
     let p = Path::new(path);
     if p.is_absolute() {
-        path.to_string()
+        p.to_path_buf()
     } else {
-        base_dir.join(p).to_string_lossy().to_string()
+        base_dir.join(p)
     }
 }

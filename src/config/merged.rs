@@ -1,3 +1,5 @@
+use std::path::PathBuf;
+
 use super::job::Job;
 use super::settings::Settings;
 
@@ -8,7 +10,7 @@ pub struct MergedConfig {
     pub bg_quality: u8,
     pub fg_quality: u8,
     pub parallel_workers: usize,
-    pub cache_dir: String,
+    pub cache_dir: PathBuf,
     pub preserve_images: bool,
     pub linearize: bool,
 }

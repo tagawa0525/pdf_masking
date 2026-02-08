@@ -17,7 +17,7 @@ fn qpdf_available() -> bool {
 }
 
 /// Create a minimal valid PDF for testing.
-fn create_test_pdf(path: &str) {
+fn create_test_pdf(path: &std::path::Path) {
     let mut doc = Document::with_version("1.5");
     let pages_id = doc.new_object_id();
 
@@ -62,10 +62,9 @@ fn test_linearize_creates_output() {
     let input_path = dir.path().join("input.pdf");
     let output_path = dir.path().join("output.pdf");
 
-    create_test_pdf(input_path.to_str().unwrap());
+    create_test_pdf(&input_path);
 
-    linearize(input_path.to_str().unwrap(), output_path.to_str().unwrap())
-        .expect("linearize should succeed");
+    linearize(&input_path, &output_path).expect("linearize should succeed");
 
     assert!(output_path.exists(), "output file should exist");
     assert!(
@@ -84,9 +83,9 @@ fn test_linearize_in_place() {
     let dir = tempdir().expect("create temp dir");
     let pdf_path = dir.path().join("inplace.pdf");
 
-    create_test_pdf(pdf_path.to_str().unwrap());
+    create_test_pdf(&pdf_path);
 
-    linearize_in_place(pdf_path.to_str().unwrap()).expect("linearize in-place should succeed");
+    linearize_in_place(&pdf_path).expect("linearize in-place should succeed");
 
     assert!(
         pdf_path.exists(),
@@ -97,8 +96,8 @@ fn test_linearize_in_place() {
         "file should not be empty after linearization"
     );
     // Verify the output is a loadable, valid 1-page PDF
-    let doc = Document::load(pdf_path.to_str().unwrap())
-        .expect("in-place linearized PDF should be loadable by lopdf");
+    let doc =
+        Document::load(&pdf_path).expect("in-place linearized PDF should be loadable by lopdf");
     assert_eq!(
         doc.get_pages().len(),
         1,
@@ -117,7 +116,7 @@ fn test_linearize_nonexistent_input() {
     let input_path = dir.path().join("nonexistent.pdf");
     let output_path = dir.path().join("output.pdf");
 
-    let result = linearize(input_path.to_str().unwrap(), output_path.to_str().unwrap());
+    let result = linearize(&input_path, &output_path);
 
     assert!(
         result.is_err(),
@@ -140,13 +139,11 @@ fn test_linearize_output_is_valid_pdf() {
     let input_path = dir.path().join("input.pdf");
     let output_path = dir.path().join("linearized.pdf");
 
-    create_test_pdf(input_path.to_str().unwrap());
+    create_test_pdf(&input_path);
 
-    linearize(input_path.to_str().unwrap(), output_path.to_str().unwrap())
-        .expect("linearize should succeed");
+    linearize(&input_path, &output_path).expect("linearize should succeed");
 
-    let doc = Document::load(output_path.to_str().unwrap())
-        .expect("linearized PDF should be loadable by lopdf");
+    let doc = Document::load(&output_path).expect("linearized PDF should be loadable by lopdf");
 
     // A linearized PDF should still have at least one page
     let page_count = doc.get_pages().len();

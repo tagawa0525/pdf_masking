@@ -1,5 +1,6 @@
+use std::path::{Path, PathBuf};
+
 use serde::Deserialize;
-use std::path::Path;
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(default)]
@@ -9,7 +10,7 @@ pub struct Settings {
     pub bg_quality: u8,
     pub fg_quality: u8,
     pub parallel_workers: usize,
-    pub cache_dir: String,
+    pub cache_dir: PathBuf,
     pub preserve_images: bool,
     pub linearize: bool,
 }
@@ -22,7 +23,7 @@ impl Default for Settings {
             bg_quality: 50,
             fg_quality: 30,
             parallel_workers: 0,
-            cache_dir: ".cache".to_string(),
+            cache_dir: PathBuf::from(".cache"),
             preserve_images: true,
             linearize: true,
         }

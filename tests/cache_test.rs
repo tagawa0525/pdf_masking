@@ -3,6 +3,8 @@
 // Tests for cache key computation (hash.rs) and file-system cache store (store.rs).
 // Each test verifies a specific aspect of the caching layer.
 
+use std::path::Path;
+
 use pdf_masking::cache::hash::{CacheSettings, compute_cache_key};
 use pdf_masking::cache::store::CacheStore;
 use pdf_masking::mrc::MrcLayers;
@@ -22,7 +24,7 @@ fn test_compute_cache_key() {
         preserve_images: false,
     };
 
-    let key = compute_cache_key(content, &settings, "test.pdf", 0);
+    let key = compute_cache_key(content, &settings, Path::new("test.pdf"), 0);
 
     // SHA-256 produces a 64-character hex string
     assert_eq!(key.len(), 64, "Cache key should be 64 hex characters");
@@ -44,8 +46,8 @@ fn test_cache_key_deterministic() {
         preserve_images: false,
     };
 
-    let key1 = compute_cache_key(content, &settings, "test.pdf", 0);
-    let key2 = compute_cache_key(content, &settings, "test.pdf", 0);
+    let key1 = compute_cache_key(content, &settings, Path::new("test.pdf"), 0);
+    let key2 = compute_cache_key(content, &settings, Path::new("test.pdf"), 0);
 
     assert_eq!(key1, key2, "Same inputs should produce the same cache key");
 }
@@ -61,8 +63,8 @@ fn test_cache_key_differs_with_different_content() {
         preserve_images: false,
     };
 
-    let key_a = compute_cache_key(b"content A", &settings, "test.pdf", 0);
-    let key_b = compute_cache_key(b"content B", &settings, "test.pdf", 0);
+    let key_a = compute_cache_key(b"content A", &settings, Path::new("test.pdf"), 0);
+    let key_b = compute_cache_key(b"content B", &settings, Path::new("test.pdf"), 0);
 
     assert_ne!(
         key_a, key_b,
@@ -90,8 +92,8 @@ fn test_cache_key_differs_with_different_settings() {
         preserve_images: true,
     };
 
-    let key_a = compute_cache_key(content, &settings_a, "test.pdf", 0);
-    let key_b = compute_cache_key(content, &settings_b, "test.pdf", 0);
+    let key_a = compute_cache_key(content, &settings_a, Path::new("test.pdf"), 0);
+    let key_b = compute_cache_key(content, &settings_b, Path::new("test.pdf"), 0);
 
     assert_ne!(
         key_a, key_b,
@@ -111,8 +113,8 @@ fn test_cache_key_differs_with_different_pdf_path() {
         preserve_images: false,
     };
 
-    let key_a = compute_cache_key(content, &settings, "file_a.pdf", 0);
-    let key_b = compute_cache_key(content, &settings, "file_b.pdf", 0);
+    let key_a = compute_cache_key(content, &settings, Path::new("file_a.pdf"), 0);
+    let key_b = compute_cache_key(content, &settings, Path::new("file_b.pdf"), 0);
 
     assert_ne!(
         key_a, key_b,
@@ -132,8 +134,8 @@ fn test_cache_key_differs_with_different_page_index() {
         preserve_images: false,
     };
 
-    let key_a = compute_cache_key(content, &settings, "test.pdf", 0);
-    let key_b = compute_cache_key(content, &settings, "test.pdf", 1);
+    let key_a = compute_cache_key(content, &settings, Path::new("test.pdf"), 0);
+    let key_b = compute_cache_key(content, &settings, Path::new("test.pdf"), 1);
 
     assert_ne!(
         key_a, key_b,

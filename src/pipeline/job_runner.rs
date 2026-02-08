@@ -1,5 +1,7 @@
 // Phase 10: ジョブ単位: PDF読込 -> 並列ページ処理 -> 出力PDF組立
 
+use std::path::PathBuf;
+
 use rayon::prelude::*;
 
 use crate::cache::hash::CacheSettings;
@@ -13,20 +15,20 @@ use crate::render::pdfium::render_page;
 
 /// Configuration for a single job.
 pub struct JobConfig {
-    pub input_path: String,
-    pub output_path: String,
+    pub input_path: PathBuf,
+    pub output_path: PathBuf,
     pub pages: Vec<u32>,
     pub dpi: u32,
     pub bg_quality: u8,
     pub fg_quality: u8,
     pub preserve_images: bool,
-    pub cache_dir: Option<String>,
+    pub cache_dir: Option<PathBuf>,
 }
 
 /// Result of processing a single job.
 pub struct JobResult {
-    pub input_path: String,
-    pub output_path: String,
+    pub input_path: PathBuf,
+    pub output_path: PathBuf,
     pub pages_processed: usize,
 }
 
@@ -75,10 +77,7 @@ pub fn run_job(config: &JobConfig) -> crate::error::Result<JobResult> {
         fg_quality: config.fg_quality,
         preserve_images: config.preserve_images,
     };
-    let cache_store = config
-        .cache_dir
-        .as_ref()
-        .map(|dir| CacheStore::new(dir.as_str()));
+    let cache_store = config.cache_dir.as_ref().map(CacheStore::new);
 
     let processed: Vec<crate::error::Result<ProcessedPage>> = pages_data
         .par_iter()
