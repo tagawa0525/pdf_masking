@@ -4,6 +4,7 @@ use super::leptonica_sys::{
     BOX, BOXA, L_CLONE, PIX, boxDestroy, boxGetGeometry, boxaDestroy, boxaGetBox, boxaGetCount,
     pixClone, pixConnCompBB, pixConvertRGBToGray, pixCreate, pixDestroy, pixGetData, pixGetDepth,
     pixGetHeight, pixGetRegionsBinary, pixGetWidth, pixGetWpl, pixOtsuAdaptiveThreshold, pixSetAll,
+    pixSetPixel,
 };
 use crate::error::{PdfMaskError, Result};
 use std::ptr;
@@ -242,6 +243,34 @@ impl Pix {
         }
     }
 
+    /// Set a single pixel value at the given coordinates.
+    ///
+    /// # Arguments
+    /// * `x` - X coordinate
+    /// * `y` - Y coordinate
+    /// * `val` - Pixel value (for 1-bit images: 0 or 1)
+    pub fn set_pixel(&mut self, x: u32, y: u32, val: u32) -> Result<()> {
+        if x >= self.get_width() || y >= self.get_height() {
+            return Err(PdfMaskError::segmentation(format!(
+                "pixel ({}, {}) out of bounds for {}x{} image",
+                x,
+                y,
+                self.get_width(),
+                self.get_height()
+            )));
+        }
+        unsafe {
+            let ret = pixSetPixel(self.ptr, x as i32, y as i32, val);
+            if ret != 0 {
+                return Err(PdfMaskError::segmentation(format!(
+                    "pixSetPixel failed at ({}, {})",
+                    x, y
+                )));
+            }
+        }
+        Ok(())
+    }
+
     /// Extract bounding boxes of connected components from a 1-bit image.
     ///
     /// Wraps leptonica's `pixConnCompBB`. Returns a list of `(x, y, w, h)`
@@ -260,6 +289,13 @@ impl Pix {
             return Err(PdfMaskError::segmentation(format!(
                 "connected_component_bboxes requires 1-bit image, got {}-bit",
                 self.get_depth()
+            )));
+        }
+
+        if connectivity != 4 && connectivity != 8 {
+            return Err(PdfMaskError::segmentation(format!(
+                "connectivity must be 4 or 8, got {}",
+                connectivity
             )));
         }
 
