@@ -29,6 +29,10 @@ fn main() {
         .file("csrc/jbig2enc_shim.cpp")
         .include(&jbig2enc_include)
         .include(&leptonica_include)
+        // Nixのg++ラッパーが-D_FORTIFY_SOURCE=3を注入するが、
+        // デバッグビルド（-O なし）では機能しないためglibcが#warningを出す。
+        // ラッパー側のフラグは制御できないため、#warningディレクティブを抑制する。
+        .flag_if_supported("-Wno-cpp")
         .compile("jbig2enc_shim");
 
     // Link against jbig2enc shared library
