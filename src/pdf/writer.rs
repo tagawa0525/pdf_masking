@@ -3,7 +3,8 @@
 use lopdf::{Document, Object, Stream, dictionary};
 
 use crate::config::job::ColorMode;
-use crate::mrc::{BwLayers, MrcLayers};
+use crate::error::PdfMaskError;
+use crate::mrc::{BwLayers, MrcLayers, TextMaskedData};
 
 /// PDF Name仕様 (PDF Reference 7.3.5) に従い、名前をエスケープする。
 ///
@@ -296,6 +297,204 @@ impl MrcPageWriter {
         self.append_page_to_kids(pages_id, page_id);
 
         Ok(page_id)
+    }
+
+    /// TextMaskedDataからPDFページを構築する。
+    ///
+    /// ソースPDFからページをdeep copyし、以下を変更する:
+    /// 1. コンテンツストリーム → テキスト除去済み + テキスト画像Doオペレータ
+    /// 2. Resources/XObject → テキスト領域XObject追加 + リダクション済み画像差替え
+    pub fn write_text_masked_page(
+        &mut self,
+        source: &Document,
+        page_num: u32,
+        data: &TextMaskedData,
+    ) -> crate::error::Result<lopdf::ObjectId> {
+        let pages = source.get_pages();
+        let source_page_id = pages.get(&page_num).ok_or_else(|| {
+            PdfMaskError::pdf_read(format!("page {} not found in source document", page_num))
+        })?;
+
+        let pages_id = self.ensure_pages_id();
+        let mut id_map = std::collections::HashMap::new();
+        let new_page_id = self.deep_copy_object(source, *source_page_id, &mut id_map)?;
+
+        // Parentを出力PDFのPagesに差し替え
+        if let Some(Object::Dictionary(dict)) = self.doc.objects.get_mut(&new_page_id) {
+            dict.set("Parent", Object::Reference(pages_id));
+        }
+
+        let color_space = match data.color_mode {
+            ColorMode::Grayscale => "DeviceGray",
+            _ => "DeviceRGB",
+        };
+
+        // テキスト領域XObjectを作成
+        let mut text_xobjects: Vec<(String, lopdf::ObjectId)> = Vec::new();
+        for (i, region) in data.text_regions.iter().enumerate() {
+            let name = format!("TxtRgn{}", i);
+            let xobj_id = self.add_image_xobject(
+                &region.jpeg_data,
+                region.pixel_width,
+                region.pixel_height,
+                color_space,
+                8,
+                "DCTDecode",
+                None,
+            );
+            text_xobjects.push((name, xobj_id));
+        }
+
+        // 新しいコンテンツストリームを構築（テキスト除去済み + テキスト画像Do）
+        let mut content = data.stripped_content_stream.clone();
+        for (i, (name, _)) in text_xobjects.iter().enumerate() {
+            let region = &data.text_regions[i];
+            let w = region.bbox_points.x_max - region.bbox_points.x_min;
+            let h = region.bbox_points.y_max - region.bbox_points.y_min;
+            let x = region.bbox_points.x_min;
+            let y = region.bbox_points.y_min;
+            let escaped = escape_pdf_name(name);
+            content.extend_from_slice(
+                format!("\nq {w} 0 0 {h} {x} {y} cm /{escaped} Do Q").as_bytes(),
+            );
+        }
+
+        // コンテンツストリームを差し替え
+        let content_stream = Stream::new(dictionary! {}, content);
+        let content_id = self.doc.add_object(Object::Stream(content_stream));
+        if let Some(Object::Dictionary(page_dict)) = self.doc.objects.get_mut(&new_page_id) {
+            page_dict.set("Contents", Object::Reference(content_id));
+        }
+
+        // Resources/XObjectを更新
+        let resources_obj_id = self.ensure_resources_as_object(new_page_id)?;
+        let xobj_dict_id = self.ensure_xobject_dict_as_object(resources_obj_id)?;
+
+        // テキスト領域XObjectをResources/XObjectに追加
+        for (name, xobj_id) in &text_xobjects {
+            if let Some(Object::Dictionary(dict)) = self.doc.objects.get_mut(&xobj_dict_id) {
+                dict.set(name.as_bytes(), Object::Reference(*xobj_id));
+            }
+        }
+
+        // リダクション済み画像のストリームデータを差し替え
+        for (name, modification) in &data.modified_images {
+            let img_obj_id = {
+                if let Some(Object::Dictionary(dict)) = self.doc.objects.get(&xobj_dict_id) {
+                    dict.get(name.as_bytes())
+                        .ok()
+                        .and_then(|obj| obj.as_reference().ok())
+                } else {
+                    None
+                }
+            };
+
+            if let Some(img_id) = img_obj_id
+                && let Some(Object::Stream(stream)) = self.doc.objects.get_mut(&img_id)
+            {
+                stream.content = modification.data.clone();
+                if modification.filter.is_empty() {
+                    stream.dict.remove(b"Filter");
+                    stream.dict.remove(b"DecodeParms");
+                } else {
+                    stream.dict.set(
+                        "Filter",
+                        Object::Name(modification.filter.as_bytes().to_vec()),
+                    );
+                }
+                stream.dict.set(
+                    "ColorSpace",
+                    Object::Name(modification.color_space.as_bytes().to_vec()),
+                );
+                stream.dict.set(
+                    "BitsPerComponent",
+                    Object::Integer(modification.bits_per_component as i64),
+                );
+                stream.dict.remove(b"Length");
+            }
+        }
+
+        self.append_page_to_kids(pages_id, new_page_id);
+        Ok(new_page_id)
+    }
+
+    /// ページのResourcesをインライン辞書から独立オブジェクトに昇格させる。
+    /// 既に参照の場合はそのIDを返す。
+    fn ensure_resources_as_object(
+        &mut self,
+        page_id: lopdf::ObjectId,
+    ) -> crate::error::Result<lopdf::ObjectId> {
+        // まず現在の状態を確認
+        let is_reference = {
+            let page_dict = self
+                .doc
+                .get_dictionary(page_id)
+                .map_err(|e| PdfMaskError::pdf_write(e.to_string()))?;
+            matches!(page_dict.get(b"Resources"), Ok(Object::Reference(_)))
+        };
+
+        if is_reference {
+            let page_dict = self
+                .doc
+                .get_dictionary(page_id)
+                .map_err(|e| PdfMaskError::pdf_write(e.to_string()))?;
+            Ok(page_dict.get(b"Resources").unwrap().as_reference().unwrap())
+        } else {
+            // インライン辞書を抽出して独立オブジェクトにする
+            let resources_dict = {
+                let page_dict = self
+                    .doc
+                    .get_dictionary(page_id)
+                    .map_err(|e| PdfMaskError::pdf_write(e.to_string()))?;
+                match page_dict.get(b"Resources") {
+                    Ok(Object::Dictionary(d)) => d.clone(),
+                    _ => lopdf::Dictionary::new(),
+                }
+            };
+            let id = self.doc.add_object(Object::Dictionary(resources_dict));
+            if let Some(Object::Dictionary(page_dict)) = self.doc.objects.get_mut(&page_id) {
+                page_dict.set("Resources", Object::Reference(id));
+            }
+            Ok(id)
+        }
+    }
+
+    /// Resources内のXObject辞書をインラインから独立オブジェクトに昇格させる。
+    fn ensure_xobject_dict_as_object(
+        &mut self,
+        resources_id: lopdf::ObjectId,
+    ) -> crate::error::Result<lopdf::ObjectId> {
+        let is_reference = {
+            let res_dict = self
+                .doc
+                .get_dictionary(resources_id)
+                .map_err(|e| PdfMaskError::pdf_write(e.to_string()))?;
+            matches!(res_dict.get(b"XObject"), Ok(Object::Reference(_)))
+        };
+
+        if is_reference {
+            let res_dict = self
+                .doc
+                .get_dictionary(resources_id)
+                .map_err(|e| PdfMaskError::pdf_write(e.to_string()))?;
+            Ok(res_dict.get(b"XObject").unwrap().as_reference().unwrap())
+        } else {
+            let xobj_dict = {
+                let res_dict = self
+                    .doc
+                    .get_dictionary(resources_id)
+                    .map_err(|e| PdfMaskError::pdf_write(e.to_string()))?;
+                match res_dict.get(b"XObject") {
+                    Ok(Object::Dictionary(d)) => d.clone(),
+                    _ => lopdf::Dictionary::new(),
+                }
+            };
+            let id = self.doc.add_object(Object::Dictionary(xobj_dict));
+            if let Some(Object::Dictionary(res_dict)) = self.doc.objects.get_mut(&resources_id) {
+                res_dict.set("XObject", Object::Reference(id));
+            }
+            Ok(id)
+        }
     }
 
     /// ソースPDFからページをコピーする（Skipモード用）。

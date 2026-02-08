@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::path::Path;
 
 use lopdf::Document;
@@ -96,6 +97,70 @@ impl PdfReader {
         }
 
         Ok(names)
+    }
+
+    /// 指定ページ(1-indexed)のXObjectリソースから画像Streamオブジェクトを取得する。
+    ///
+    /// XObject名をキー、lopdf::Streamを値とするHashMapを返す。
+    /// compose_text_maskedに渡してリダクション処理に使用する。
+    pub fn page_image_streams(
+        &self,
+        page_num: u32,
+    ) -> crate::error::Result<HashMap<String, lopdf::Stream>> {
+        let page_id = self.get_page_id(page_num)?;
+        let (resource_dict, resource_ids) = self.doc.get_page_resources(page_id)?;
+
+        let mut streams = HashMap::new();
+
+        if let Some(dict) = resource_dict {
+            self.collect_image_streams_from_dict(dict, &mut streams)?;
+        }
+        for res_id in resource_ids {
+            let dict = self.doc.get_dictionary(res_id)?;
+            self.collect_image_streams_from_dict(dict, &mut streams)?;
+        }
+
+        Ok(streams)
+    }
+
+    /// リソース辞書からXObject/ImageのStreamオブジェクトを収集する。
+    fn collect_image_streams_from_dict(
+        &self,
+        dict: &lopdf::Dictionary,
+        streams: &mut HashMap<String, lopdf::Stream>,
+    ) -> crate::error::Result<()> {
+        let xobject_entry = match dict.get(b"XObject") {
+            Ok(entry) => entry,
+            Err(_) => return Ok(()),
+        };
+
+        let xobject_dict = match xobject_entry {
+            lopdf::Object::Dictionary(d) => d,
+            lopdf::Object::Reference(id) => {
+                self.doc.get_object(*id).and_then(lopdf::Object::as_dict)?
+            }
+            _ => return Ok(()),
+        };
+
+        for (name_bytes, value) in xobject_dict.iter() {
+            let stream = match value {
+                lopdf::Object::Reference(id) => self
+                    .doc
+                    .get_object(*id)
+                    .and_then(lopdf::Object::as_stream)?,
+                lopdf::Object::Stream(s) => s,
+                _ => continue,
+            };
+
+            if let Ok(subtype) = stream.dict.get(b"Subtype").and_then(lopdf::Object::as_name)
+                && subtype == b"Image"
+            {
+                let name = String::from_utf8_lossy(name_bytes).into_owned();
+                streams.insert(name, stream.clone());
+            }
+        }
+
+        Ok(())
     }
 
     /// ページ番号(1-indexed)からObjectIdを取得する。

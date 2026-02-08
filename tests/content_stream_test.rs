@@ -150,6 +150,49 @@ fn test_page_resources_xobjects() {
 }
 
 #[test]
+fn test_page_image_streams_returns_image_xobjects() {
+    // Image XObjectを持つPDFからストリームを取得できることを検証
+    let (_dir, path) = create_test_pdf(
+        vec![],
+        vec![
+            ("Im1", make_image_xobject()),
+            ("Im2", make_image_xobject()),
+            ("Fm1", make_form_xobject()),
+        ],
+    );
+    let reader = PdfReader::open(&path).expect("open PDF");
+    let streams = reader.page_image_streams(1).expect("get image streams");
+
+    // Image XObjectのみが返される（Form XObjectは除外）
+    assert_eq!(streams.len(), 2, "should contain exactly 2 image streams");
+    assert!(streams.contains_key("Im1"), "should contain Im1");
+    assert!(streams.contains_key("Im2"), "should contain Im2");
+    assert!(
+        !streams.contains_key("Fm1"),
+        "should not contain Form XObject Fm1"
+    );
+
+    // 各ストリームにSubtype=Imageが含まれている
+    for (name, stream) in &streams {
+        let subtype = stream
+            .dict
+            .get(b"Subtype")
+            .and_then(lopdf::Object::as_name)
+            .expect("stream should have Subtype");
+        assert_eq!(subtype, b"Image", "{name} should be Image subtype");
+    }
+}
+
+#[test]
+fn test_page_image_streams_empty_when_no_images() {
+    // XObjectがないPDFでは空のHashMapが返る
+    let (_dir, path) = create_test_pdf(vec![], vec![]);
+    let reader = PdfReader::open(&path).expect("open PDF");
+    let streams = reader.page_image_streams(1).expect("get image streams");
+    assert!(streams.is_empty(), "should return empty map when no images");
+}
+
+#[test]
 fn test_open_nonexistent_file() {
     let result = PdfReader::open("/nonexistent/path/to/file.pdf");
     assert!(result.is_err(), "should fail for nonexistent file");
