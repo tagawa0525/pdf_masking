@@ -176,7 +176,7 @@ fn test_compress_streams() {
     });
     doc.trailer.set("Root", catalog_id);
 
-    pdf_masking::pdf::optimizer::compress_streams(&mut doc);
+    pdf_masking::pdf::optimizer::compress_streams(&mut doc).unwrap();
 
     // Verify the stream now has a FlateDecode filter
     let obj = doc.get_object(stream_id).unwrap();
@@ -226,7 +226,7 @@ fn test_compress_streams_skips_already_compressed() {
     });
     doc.trailer.set("Root", catalog_id);
 
-    pdf_masking::pdf::optimizer::compress_streams(&mut doc);
+    pdf_masking::pdf::optimizer::compress_streams(&mut doc).unwrap();
 
     // Verify the stream still has original filter, not double-compressed
     let obj = doc.get_object(stream_id).unwrap();
@@ -336,7 +336,7 @@ fn test_optimize_full() {
     let object_count_before = doc.objects.len();
 
     // Run full optimization
-    pdf_masking::pdf::optimizer::optimize(&mut doc, &[page_id]);
+    pdf_masking::pdf::optimizer::optimize(&mut doc, &[page_id]).unwrap();
 
     // 1. Font should be removed from the masked page
     let page_dict = doc.get_dictionary(page_id).unwrap();
@@ -358,5 +358,94 @@ fn test_optimize_full() {
     assert!(
         doc.objects.len() < object_count_before,
         "Orphaned objects should be removed by optimize"
+    );
+}
+
+#[test]
+fn test_remove_fonts_shared_resources() {
+    let mut doc = Document::with_version("1.5");
+
+    let pages_id = doc.new_object_id();
+
+    // Create a single shared Resources dictionary with Font and XObject
+    let shared_res_id = doc.add_object(Object::Dictionary(dictionary! {
+        "Font" => dictionary! {
+            "F1" => dictionary! {
+                "Type" => "Font",
+                "Subtype" => "Type1",
+                "BaseFont" => "Helvetica",
+            },
+        },
+        "XObject" => dictionary! {
+            "Im0" => Object::Integer(999),
+        },
+    }));
+
+    // Create two pages that both reference the same Resources object
+    let page1_id = doc.add_object(dictionary! {
+        "Type" => "Page",
+        "Parent" => pages_id,
+        "MediaBox" => vec![0.into(), 0.into(), 612.into(), 792.into()],
+        "Resources" => Object::Reference(shared_res_id),
+    });
+
+    let page2_id = doc.add_object(dictionary! {
+        "Type" => "Page",
+        "Parent" => pages_id,
+        "MediaBox" => vec![0.into(), 0.into(), 612.into(), 792.into()],
+        "Resources" => Object::Reference(shared_res_id),
+    });
+
+    let pages = dictionary! {
+        "Type" => "Pages",
+        "Kids" => vec![page1_id.into(), page2_id.into()],
+        "Count" => 2,
+    };
+    doc.objects.insert(pages_id, Object::Dictionary(pages));
+
+    let catalog_id = doc.add_object(dictionary! {
+        "Type" => "Catalog",
+        "Pages" => pages_id,
+    });
+    doc.trailer.set("Root", catalog_id);
+
+    // Only mask page 1
+    pdf_masking::pdf::optimizer::remove_fonts_from_pages(&mut doc, &[page1_id]);
+
+    // Page 1 should have no Font in its Resources
+    let page1_dict = doc.get_dictionary(page1_id).unwrap();
+    let page1_res_ref = page1_dict
+        .get(b"Resources")
+        .unwrap()
+        .as_reference()
+        .unwrap();
+    let page1_res = doc.get_dictionary(page1_res_ref).unwrap();
+    assert!(
+        page1_res.get(b"Font").is_err(),
+        "Masked page should have Font removed"
+    );
+    // XObject should still be present in the masked page's cloned Resources
+    assert!(
+        page1_res.get(b"XObject").is_ok(),
+        "Masked page should still have XObject"
+    );
+
+    // Page 2 (unmasked) should still reference the original Resources with Font intact
+    let page2_dict = doc.get_dictionary(page2_id).unwrap();
+    let page2_res_ref = page2_dict
+        .get(b"Resources")
+        .unwrap()
+        .as_reference()
+        .unwrap();
+    let page2_res = doc.get_dictionary(page2_res_ref).unwrap();
+    assert!(
+        page2_res.get(b"Font").is_ok(),
+        "Unmasked page should still have Font"
+    );
+
+    // Verify that page 1 and page 2 now point to different Resources objects
+    assert_ne!(
+        page1_res_ref, page2_res_ref,
+        "Masked and unmasked pages should reference different Resources objects"
     );
 }

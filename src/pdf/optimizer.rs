@@ -1,20 +1,41 @@
 // Phase 9: FlateDecode圧縮、孤立オブジェクト除去、フォント削除
 
+use std::collections::HashSet;
 use std::io::Write;
 
 use flate2::Compression;
 use flate2::write::ZlibEncoder;
 use lopdf::{Document, Object, ObjectId};
 
+use crate::error::PdfMaskError;
+
 /// 指定ページの `/Resources` 辞書から `/Font` エントリを除去する。
 ///
 /// MRC変換されたページでは元のフォントは不要になるため、
 /// ファイルサイズ削減のために削除する。
 /// inline Resources と indirect (参照) Resources の両方に対応する。
+///
+/// 共有された indirect Resources を安全に扱う:
+/// 他のページと共有されている場合はクローンして新しいオブジェクトとして追加し、
+/// 対象ページだけが変更後の Resources を参照するようにする。
 #[allow(dead_code)]
 pub fn remove_fonts_from_pages(doc: &mut Document, page_ids: &[ObjectId]) {
+    let masked_set: HashSet<ObjectId> = page_ids.iter().copied().collect();
+
+    // Collect all page IDs and their indirect Resources references
+    let all_page_ids: Vec<ObjectId> = doc.get_pages().into_values().collect();
+
+    let mut all_res_refs: Vec<(ObjectId, Option<ObjectId>)> = Vec::new();
+    for &pid in &all_page_ids {
+        let res_ref = doc
+            .get_dictionary(pid)
+            .ok()
+            .and_then(|d| d.get(b"Resources").ok())
+            .and_then(|obj| obj.as_reference().ok());
+        all_res_refs.push((pid, res_ref));
+    }
+
     for &page_id in page_ids {
-        // Get the page dictionary to find the Resources entry
         let resources_ref = {
             let Ok(page_dict) = doc.get_dictionary(page_id) else {
                 continue;
@@ -22,14 +43,31 @@ pub fn remove_fonts_from_pages(doc: &mut Document, page_ids: &[ObjectId]) {
             let Ok(resources_obj) = page_dict.get(b"Resources") else {
                 continue;
             };
-            // Check if Resources is a reference (indirect) or inline
             resources_obj.as_reference().ok()
         };
 
         if let Some(res_id) = resources_ref {
-            // Indirect Resources: modify the referenced dictionary
-            if let Ok(res_dict) = doc.get_dictionary_mut(res_id) {
-                res_dict.remove(b"Font");
+            // Check if any non-masked page shares this same Resources reference
+            let is_shared = all_res_refs
+                .iter()
+                .any(|&(pid, ref_opt)| !masked_set.contains(&pid) && ref_opt == Some(res_id));
+
+            if is_shared {
+                // Clone the Resources dictionary and add as a new object
+                let cloned_dict = doc.get_dictionary(res_id).ok().cloned();
+                if let Some(mut new_dict) = cloned_dict {
+                    new_dict.remove(b"Font");
+                    let new_res_id = doc.add_object(Object::Dictionary(new_dict));
+                    // Update the page to point to the new Resources object
+                    if let Ok(page_dict) = doc.get_dictionary_mut(page_id) {
+                        page_dict.set("Resources", Object::Reference(new_res_id));
+                    }
+                }
+            } else {
+                // Not shared: modify in place
+                if let Ok(res_dict) = doc.get_dictionary_mut(res_id) {
+                    res_dict.remove(b"Font");
+                }
             }
         } else if let Ok(page_dict) = doc.get_dictionary_mut(page_id)
             && let Ok(resources_obj) = page_dict.get_mut(b"Resources")
@@ -45,7 +83,7 @@ pub fn remove_fonts_from_pages(doc: &mut Document, page_ids: &[ObjectId]) {
 ///
 /// 既にフィルターが設定されているストリームはスキップする（二重圧縮防止）。
 #[allow(dead_code)]
-pub fn compress_streams(doc: &mut Document) {
+pub fn compress_streams(doc: &mut Document) -> crate::error::Result<()> {
     let ids: Vec<ObjectId> = doc.objects.keys().copied().collect();
 
     for id in ids {
@@ -63,17 +101,19 @@ pub fn compress_streams(doc: &mut Document) {
             };
 
             let mut encoder = ZlibEncoder::new(Vec::new(), Compression::default());
-            if encoder.write_all(&stream.content).is_err() {
-                continue;
-            }
-            let Ok(compressed) = encoder.finish() else {
-                continue;
-            };
+            encoder.write_all(&stream.content).map_err(|e| {
+                PdfMaskError::pdf_write(format!("stream compression write failed: {e}"))
+            })?;
+            let compressed = encoder.finish().map_err(|e| {
+                PdfMaskError::pdf_write(format!("stream compression finish failed: {e}"))
+            })?;
 
             stream.dict.set("Filter", "FlateDecode");
             stream.set_content(compressed);
         }
     }
+
+    Ok(())
 }
 
 /// 孤立オブジェクト（どこからも参照されていないオブジェクト）を除去する。
@@ -88,8 +128,9 @@ pub fn delete_unused_objects(doc: &mut Document) {
 /// 2. 未圧縮ストリームを圧縮
 /// 3. 孤立オブジェクトを除去
 #[allow(dead_code)]
-pub fn optimize(doc: &mut Document, masked_page_ids: &[ObjectId]) {
+pub fn optimize(doc: &mut Document, masked_page_ids: &[ObjectId]) -> crate::error::Result<()> {
     remove_fonts_from_pages(doc, masked_page_ids);
-    compress_streams(doc);
+    compress_streams(doc)?;
     delete_unused_objects(doc);
+    Ok(())
 }
