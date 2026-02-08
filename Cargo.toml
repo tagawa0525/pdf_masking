@@ -16,7 +16,7 @@ lopdf = "0.39.0"
 # pdfium-render = { version = "0.8", features = ["static"] }
 
 # Image processing (Phase 5+)
-# image = "0.25.9"
+image = "0.25.9"
 
 # Leptonica (Phase 3+, via system library)
 leptonica-sys = "0.4.9"
