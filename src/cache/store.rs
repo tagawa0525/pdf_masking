@@ -38,11 +38,11 @@ struct CacheMetadata {
 /// 有効なキーは正確に64文字の小文字16進数([0-9a-f])である必要がある。
 /// パストラバーサルや不正なディレクトリアクセスを防止する。
 fn validate_cache_key(key: &str) -> crate::error::Result<()> {
-    if key.len() == 64 && key.bytes().all(|b| b.is_ascii_hexdigit()) {
+    if key.len() == 64 && key.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f')) {
         Ok(())
     } else {
         Err(PdfMaskError::cache(format!(
-            "invalid cache key: expected 64-character hex string, got '{}'",
+            "invalid cache key: expected 64-character lowercase hex string, got '{}'",
             key
         )))
     }
