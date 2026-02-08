@@ -1,6 +1,5 @@
 use thiserror::Error;
 
-#[allow(dead_code)]
 #[derive(Debug, Error)]
 pub enum PdfMaskError {
     #[error("Configuration error: {0}")]
@@ -40,7 +39,6 @@ pub enum PdfMaskError {
     IoError(#[from] std::io::Error),
 }
 
-#[allow(dead_code)]
 impl PdfMaskError {
     pub fn config(msg: impl Into<String>) -> Self {
         Self::ConfigError(msg.into())

@@ -18,7 +18,6 @@ use crate::error::PdfMaskError;
 /// 共有された indirect Resources を安全に扱う:
 /// 他のページと共有されている場合はクローンして新しいオブジェクトとして追加し、
 /// 対象ページだけが変更後の Resources を参照するようにする。
-#[allow(dead_code)]
 pub fn remove_fonts_from_pages(doc: &mut Document, page_ids: &[ObjectId]) {
     let masked_set: HashSet<ObjectId> = page_ids.iter().copied().collect();
 
@@ -82,7 +81,6 @@ pub fn remove_fonts_from_pages(doc: &mut Document, page_ids: &[ObjectId]) {
 /// ドキュメント内の未圧縮ストリームにFlateDecode圧縮を適用する。
 ///
 /// 既にフィルターが設定されているストリームはスキップする（二重圧縮防止）。
-#[allow(dead_code)]
 pub fn compress_streams(doc: &mut Document) -> crate::error::Result<()> {
     let ids: Vec<ObjectId> = doc.objects.keys().copied().collect();
 
@@ -117,7 +115,6 @@ pub fn compress_streams(doc: &mut Document) -> crate::error::Result<()> {
 }
 
 /// 孤立オブジェクト（どこからも参照されていないオブジェクト）を除去する。
-#[allow(dead_code)]
 pub fn delete_unused_objects(doc: &mut Document) {
     doc.prune_objects();
 }
@@ -127,7 +124,6 @@ pub fn delete_unused_objects(doc: &mut Document) {
 /// 1. 指定ページからフォントを除去
 /// 2. 未圧縮ストリームを圧縮
 /// 3. 孤立オブジェクトを除去
-#[allow(dead_code)]
 pub fn optimize(doc: &mut Document, masked_page_ids: &[ObjectId]) -> crate::error::Result<()> {
     remove_fonts_from_pages(doc, masked_page_ids);
     compress_streams(doc)?;

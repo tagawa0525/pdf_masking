@@ -21,7 +21,6 @@ const CACHE_ENTRY_FILES: &[&str] = &[
 /// ファイルシステムベースのキャッシュストア。
 ///
 /// `<cache_dir>/<hex_hash>/` 以下に MRC レイヤーファイルを格納する。
-#[allow(dead_code)]
 pub struct CacheStore {
     cache_dir: PathBuf,
 }
@@ -49,7 +48,6 @@ fn validate_cache_key(key: &str) -> crate::error::Result<()> {
     }
 }
 
-#[allow(dead_code)]
 impl CacheStore {
     /// 指定されたディレクトリをキャッシュルートとして新しい CacheStore を作成する。
     pub fn new(cache_dir: impl AsRef<Path>) -> Self {

@@ -9,7 +9,6 @@ use sha2::{Digest, Sha256};
 ///
 /// キャッシュキー計算時にハッシュに含める設定値のみを保持する。
 /// dpi, fg_dpi, bg_quality, fg_quality, preserve_images がMRC出力に影響する。
-#[allow(dead_code)]
 pub struct CacheSettings {
     pub dpi: u32,
     pub fg_dpi: u32,
@@ -35,7 +34,6 @@ fn settings_to_canonical_json(settings: &CacheSettings) -> String {
 /// ハッシュ入力: `pdf_path || page_index || content_stream || settings_canonical_json`
 /// PDFパスとページインデックスを含めることで、異なるPDF間のキー衝突を防止する。
 /// 設定は正規化されたJSON形式（キーのアルファベット順）で結合される。
-#[allow(dead_code)]
 pub fn compute_cache_key(
     content_stream: &[u8],
     settings: &CacheSettings,
