@@ -3,6 +3,7 @@ pub mod jbig2;
 pub mod jpeg;
 pub mod segmenter;
 
+#[derive(Debug)]
 pub struct MrcLayers {
     pub mask_jbig2: Vec<u8>,
     pub foreground_jpeg: Vec<u8>,
