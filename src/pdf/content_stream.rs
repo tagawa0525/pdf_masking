@@ -309,7 +309,7 @@ impl FillColor {
 /// コンテンツストリームから白色fill矩形の位置を抽出する。
 ///
 /// 追跡するオペレータ:
-/// - 色設定: `rg`/`g`/`k`/`sc`/`scn` + `cs` (fill color)
+/// - 色設定: `rg`/`g`/`k`/`sc`/`scn` (fill color)
 /// - パス構築: `re` (rectangle)
 /// - fill: `f`/`F`/`f*`
 /// - CTMスタック: `q`/`Q`/`cm`
@@ -331,8 +331,8 @@ pub fn extract_white_fill_rects(content_bytes: &[u8]) -> crate::error::Result<Ve
     let mut fill_color_stack: Vec<FillColor> = vec![FillColor::default_black()];
     let mut results: Vec<BBox> = Vec::new();
 
-    // 現在のパス上の矩形（reオペレータで設定）
-    let mut current_rect: Option<(f64, f64, f64, f64)> = None;
+    // 現在のパス上の矩形（reオペレータで蓄積、fillで一括処理）
+    let mut current_rects: Vec<(f64, f64, f64, f64)> = Vec::new();
 
     for op in &content.operations {
         match op.operator.as_str() {
@@ -454,27 +454,31 @@ pub fn extract_white_fill_rects(content_bytes: &[u8]) -> crate::error::Result<Ve
                         operand_to_f64(&op.operands[3]),
                     )
                 {
-                    current_rect = Some((x, y, w, h));
+                    current_rects.push((x, y, w, h));
                 }
+            }
+            // Non-rectangle path construction: path is no longer just rectangles
+            "m" | "l" | "c" | "v" | "y" | "h" => {
+                current_rects.clear();
             }
             // Fill operators
             "f" | "F" | "f*" => {
-                if let Some((x, y, w, h)) = current_rect {
-                    let is_white = fill_color_stack
-                        .last()
-                        .map(|fc| fc.is_white)
-                        .unwrap_or(false);
-                    if is_white {
-                        let ctm = ctm_stack.last().cloned().unwrap_or_else(Matrix::identity);
-                        let bbox = rect_to_bbox(&ctm, x, y, w, h);
+                let is_white = fill_color_stack
+                    .last()
+                    .map(|fc| fc.is_white)
+                    .unwrap_or(false);
+                if is_white {
+                    let ctm = ctm_stack.last().cloned().unwrap_or_else(Matrix::identity);
+                    for (x, y, w, h) in &current_rects {
+                        let bbox = rect_to_bbox(&ctm, *x, *y, *w, *h);
                         results.push(bbox);
                     }
                 }
-                current_rect = None;
+                current_rects.clear();
             }
             // Path end without fill
-            "S" | "s" | "B" | "B*" | "b" | "b*" | "n" => {
-                current_rect = None;
+            "S" | "s" | "B" | "B*" | "b" | "b*" | "n" | "W" | "W*" => {
+                current_rects.clear();
             }
             _ => {}
         }

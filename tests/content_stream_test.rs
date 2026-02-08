@@ -975,13 +975,10 @@ fn test_white_fill_rects_multiple() {
 }
 
 #[test]
-fn test_white_fill_rects_sc_operator() {
-    // sc オペレータで白色設定
+fn test_white_fill_rects_scn_gray_operator() {
+    // scn オペレータでGray白色設定（1値 = DeviceGrayデフォルト）
     let ops = vec![
-        Operation::new(
-            "sc",
-            vec![Object::Real(1.0), Object::Real(1.0), Object::Real(1.0)],
-        ),
+        Operation::new("scn", vec![Object::Real(1.0)]),
         Operation::new(
             "re",
             vec![
@@ -1015,6 +1012,75 @@ fn test_white_fill_rects_no_rect_before_fill() {
 
     let rects = extract_white_fill_rects(&bytes).expect("extract");
     assert!(rects.is_empty(), "no rect before fill should yield nothing");
+}
+
+#[test]
+fn test_white_fill_rects_multiple_re_single_fill() {
+    // 複数のreオペレータ → 1つのf → 全矩形が検出される
+    let ops = vec![
+        Operation::new(
+            "rg",
+            vec![Object::Real(1.0), Object::Real(1.0), Object::Real(1.0)],
+        ),
+        Operation::new(
+            "re",
+            vec![
+                Object::Real(10.0),
+                Object::Real(20.0),
+                Object::Real(100.0),
+                Object::Real(50.0),
+            ],
+        ),
+        Operation::new(
+            "re",
+            vec![
+                Object::Real(200.0),
+                Object::Real(300.0),
+                Object::Real(80.0),
+                Object::Real(40.0),
+            ],
+        ),
+        Operation::new("f", vec![]),
+    ];
+    let content = Content { operations: ops };
+    let bytes = content.encode().expect("encode");
+
+    let rects = extract_white_fill_rects(&bytes).expect("extract");
+    assert_eq!(rects.len(), 2);
+    assert_approx(rects[0].x_min, 10.0);
+    assert_approx(rects[0].x_max, 110.0);
+    assert_approx(rects[1].x_min, 200.0);
+    assert_approx(rects[1].x_max, 280.0);
+}
+
+#[test]
+fn test_white_fill_rects_path_op_after_re_clears() {
+    // re → m（lineTo）→ f → 矩形は検出されない（パスが純粋な矩形でなくなる）
+    let ops = vec![
+        Operation::new(
+            "rg",
+            vec![Object::Real(1.0), Object::Real(1.0), Object::Real(1.0)],
+        ),
+        Operation::new(
+            "re",
+            vec![
+                Object::Real(10.0),
+                Object::Real(20.0),
+                Object::Real(100.0),
+                Object::Real(50.0),
+            ],
+        ),
+        Operation::new("m", vec![Object::Real(0.0), Object::Real(0.0)]),
+        Operation::new("f", vec![]),
+    ];
+    let content = Content { operations: ops };
+    let bytes = content.encode().expect("encode");
+
+    let rects = extract_white_fill_rects(&bytes).expect("extract");
+    assert!(
+        rects.is_empty(),
+        "path with non-rect ops after re should not be detected"
+    );
 }
 
 // ============================================================
