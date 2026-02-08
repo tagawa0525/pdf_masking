@@ -79,8 +79,15 @@ fn test_main_version_flag() {
 
 #[test]
 fn test_main_nonexistent_job_file() {
+    let unique_path = std::env::temp_dir().join(format!(
+        "nonexistent_job_file_{}.yaml",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("system clock error")
+            .as_nanos()
+    ));
     let output = cargo_bin()
-        .arg("/tmp/nonexistent_job_file_12345.yaml")
+        .arg(unique_path.as_os_str())
         .output()
         .expect("failed to execute binary");
 
