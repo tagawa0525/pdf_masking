@@ -57,6 +57,7 @@ fn create_pdfium() -> crate::error::Result<Pdfium> {
 ///
 /// # Errors
 /// Returns `PdfMaskError::RenderError` if:
+/// - The path contains non-UTF-8 characters (pdfium requires UTF-8 paths)
 /// - The pdfium library cannot be initialized
 /// - The PDF file cannot be opened
 /// - The page index is out of range

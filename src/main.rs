@@ -92,6 +92,8 @@ fn main() -> ExitCode {
                 }
             };
 
+            linearize_flags.push(merged.linearize);
+
             job_configs.push(JobConfig {
                 input_path,
                 output_path,
@@ -102,8 +104,6 @@ fn main() -> ExitCode {
                 preserve_images: merged.preserve_images,
                 cache_dir: Some(merged.cache_dir),
             });
-
-            linearize_flags.push(merged.linearize);
         }
     }
 
