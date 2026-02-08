@@ -20,7 +20,8 @@
 2. **画像内リダクション：** 白色矩形で覆われた画像XObject領域のピクセルデータを白で上書きし、データレベルで永続化
 
 **処理の流れ（変更後）：**
-```
+
+```text
 元PDF
  ├─ コンテンツストリーム解析
  │   ├─ BT...ETブロックを除去 → テキスト除去済みストリーム
@@ -123,6 +124,7 @@ pub fn extract_white_fill_rects(content_bytes: &[u8]) -> Result<Vec<BBox>>
 - CTM適用済みのページ座標BBoxを返す
 
 既存の再利用:
+
 - `Matrix`, `BBox`, `ctm_to_bbox`, `operand_to_f64` — 全て `content_stream.rs` に既存
 
 ---
@@ -131,7 +133,8 @@ pub fn extract_white_fill_rects(content_bytes: &[u8]) -> Result<Vec<BBox>>
 
 **ファイル:** `src/pdf/image_xobject.rs`（既存プレースホルダを実装に置換）
 
-**5a: リダクション**
+#### 5a: リダクション
+
 ```rust
 /// 画像XObjectをデコードし、指定領域を白で塗りつぶして再エンコードする。
 pub fn redact_image_regions(
@@ -142,6 +145,7 @@ pub fn redact_image_regions(
 ```
 
 処理:
+
 1. `image_stream.dict` から Filter と ColorSpace を取得
 2. Filter に応じたデコード（DCTDecode→JPEG, FlateDecode→PNG, etc.）
 3. ページ座標の `redact_bboxes` を画像ピクセル座標に変換
@@ -150,8 +154,9 @@ pub fn redact_image_regions(
 6. 重なりがなければ `None` を返す（画像データの変更不要）
 
 対応する Filter とエンコード方式:
+
 | 元の Filter | デコード | 再エンコード | 備考 |
-|---|---|---|---|
+| --- | --- | --- | --- |
 | DCTDecode | `image` crate JPEG | `jpeg::encode_*_to_jpeg()` | 最頻出 |
 | FlateDecode | `flate2` 解凍 + raw pixel解釈 | `flate2` 圧縮（ロスレス） | Predictorに注意 |
 | JBIG2Decode | leptonica Pix | `jbig2::encode_mask()` | B&W専用 |
@@ -162,12 +167,15 @@ pub fn redact_image_regions(
 | (なし/非圧縮) | raw pixel | FlateDecode で圧縮 | まれ |
 
 JPXDecode対応に必要な追加:
+
 - `Cargo.toml`: `jpeg2k` crate 追加
 - `flake.nix`: `pkgs.openjpeg` を buildInputs + LD_LIBRARY_PATH に追加
 
-フィルタ連鎖（例: FlateDecode + ASCII85Decode）は順次デコード後、最も効率的な単一フィルタで再エンコード。
+フィルタ連鎖（例: FlateDecode + ASCII85Decode）は順次デコード後、最も効率的な単一フィルタで
+再エンコード。
 
-**5b: 画像最適圧縮（最小サイズ選択）**
+#### 5b: 画像最適圧縮（最小サイズ選択）
+
 ```rust
 /// 画像XObjectを複数形式でエンコードし、最小サイズの結果を返す。
 /// リダクション後の画像、またはリダクション不要だが最適化対象の画像に適用。
@@ -186,6 +194,7 @@ pub struct OptimizedImage {
 ```
 
 処理:
+
 1. デコード済み画像から以下の候補を生成:
    - **候補A: B&W JBIG2** — Otsu閾値で二値化 → JBIG2エンコード（1bit DeviceGray）
    - **候補B: グレースケールJPEG** — RGB→Gray変換 → JPEG（8bit DeviceGray）
@@ -197,6 +206,7 @@ pub struct OptimizedImage {
 **BitsPerComponent=1の画像:** 既にB&Wなので候補Aのみ試行（JBIG2再圧縮のみ）
 
 既存の再利用:
+
 - `bbox_overlaps()` — `image_xobject.rs` に既存
 - `jpeg::encode_rgb_to_jpeg()` — `src/mrc/jpeg.rs` に既存
 - `jbig2::encode_mask()` — `src/mrc/jbig2.rs` に既存
@@ -255,6 +265,7 @@ pub enum PageOutput {
 **ファイル:** `src/pdf/writer.rs`, `src/pipeline/page_processor.rs`, `src/pipeline/job_runner.rs`
 
 **Writer:**
+
 ```rust
 pub fn write_text_masked_page(
     &mut self, source: &Document, page_num: u32,
@@ -268,7 +279,9 @@ pub fn write_text_masked_page(
 4. `redacted_images` のあるXObjectはdeep copy後にストリームデータを差し替え
 
 **Pipeline:**
-- `process_page`: `preserve_images=true` かつ RGB/Grayscale → `compose_text_masked` 分岐
+
+- `process_page`: `preserve_images=true` かつ RGB/Grayscale →
+  `compose_text_masked` 分岐
 - `run_job` Phase D: `PageOutput::TextMasked` → `write_text_masked_page`
 - ページ寸法（pts）はビットマップサイズから逆算: `bitmap_px * 72.0 / dpi`
 - 既存 `preserve_images` 設定（デフォルトtrue）で分岐制御
@@ -281,7 +294,7 @@ pub fn write_text_masked_page(
 
 **ファイル:** `src/cache/store.rs`
 
-```
+```text
 <hash>/
   metadata.json          # type="text_masked", regions, redacted_images
   stripped_content.bin
