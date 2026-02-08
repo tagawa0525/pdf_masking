@@ -3,6 +3,8 @@ use std::path::{Path, PathBuf};
 use image::{DynamicImage, RgbaImage};
 use pdf_masking::cache::hash::CacheSettings;
 use pdf_masking::cache::store::CacheStore;
+use pdf_masking::config::job::ColorMode;
+use pdf_masking::mrc::PageOutput;
 use pdf_masking::mrc::compositor::MrcConfig;
 use pdf_masking::pipeline::job_runner::JobConfig;
 use pdf_masking::pipeline::orchestrator::run_all_jobs;
@@ -22,6 +24,7 @@ fn test_process_page_cache_miss() {
         bg_quality: 50,
         fg_quality: 30,
         preserve_images: true,
+        color_mode: ColorMode::Rgb,
     };
 
     let result = process_page(
@@ -32,6 +35,7 @@ fn test_process_page_cache_miss() {
         &cache_settings,
         None,
         Path::new("test.pdf"),
+        ColorMode::Rgb,
     );
     assert!(
         result.is_ok(),
@@ -43,11 +47,16 @@ fn test_process_page_cache_miss() {
     assert_eq!(processed.page_index, 0);
     assert!(!processed.cache_key.is_empty());
     assert_eq!(processed.cache_key.len(), 64); // SHA-256 hex
-    assert!(!processed.mrc_layers.mask_jbig2.is_empty());
-    assert!(!processed.mrc_layers.background_jpeg.is_empty());
-    assert!(!processed.mrc_layers.foreground_jpeg.is_empty());
-    assert_eq!(processed.mrc_layers.width, 100);
-    assert_eq!(processed.mrc_layers.height, 100);
+    match &processed.output {
+        PageOutput::Mrc(layers) => {
+            assert!(!layers.mask_jbig2.is_empty());
+            assert!(!layers.background_jpeg.is_empty());
+            assert!(!layers.foreground_jpeg.is_empty());
+            assert_eq!(layers.width, 100);
+            assert_eq!(layers.height, 100);
+        }
+        _ => panic!("expected PageOutput::Mrc"),
+    }
 }
 
 #[test]
@@ -67,6 +76,7 @@ fn test_process_page_cache_hit() {
         bg_quality: 50,
         fg_quality: 30,
         preserve_images: true,
+        color_mode: ColorMode::Rgb,
     };
 
     // First call: cache miss, should compose and store
@@ -78,6 +88,7 @@ fn test_process_page_cache_hit() {
         &cache_settings,
         Some(&cache_store),
         Path::new("test.pdf"),
+        ColorMode::Rgb,
     );
     assert!(result1.is_ok());
     let processed1 = result1.unwrap();
@@ -94,6 +105,7 @@ fn test_process_page_cache_hit() {
         &cache_settings,
         Some(&cache_store),
         Path::new("test.pdf"),
+        ColorMode::Rgb,
     );
     assert!(result2.is_ok());
     let processed2 = result2.unwrap();
@@ -101,8 +113,13 @@ fn test_process_page_cache_hit() {
     // Same cache key
     assert_eq!(processed1.cache_key, processed2.cache_key);
     // Same layer dimensions
-    assert_eq!(processed1.mrc_layers.width, processed2.mrc_layers.width);
-    assert_eq!(processed1.mrc_layers.height, processed2.mrc_layers.height);
+    match (&processed1.output, &processed2.output) {
+        (PageOutput::Mrc(layers1), PageOutput::Mrc(layers2)) => {
+            assert_eq!(layers1.width, layers2.width);
+            assert_eq!(layers1.height, layers2.height);
+        }
+        _ => panic!("expected PageOutput::Mrc for both results"),
+    }
 }
 
 #[test]

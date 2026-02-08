@@ -6,6 +6,7 @@ use rayon::prelude::*;
 
 use crate::cache::hash::CacheSettings;
 use crate::cache::store::CacheStore;
+use crate::config::job::ColorMode;
 use crate::error::PdfMaskError;
 use crate::mrc::compositor::MrcConfig;
 use crate::pdf::reader::PdfReader;
@@ -76,6 +77,7 @@ pub fn run_job(config: &JobConfig) -> crate::error::Result<JobResult> {
         bg_quality: config.bg_quality,
         fg_quality: config.fg_quality,
         preserve_images: config.preserve_images,
+        color_mode: ColorMode::Rgb,
     };
     let cache_store = config.cache_dir.as_ref().map(CacheStore::new);
 
@@ -90,6 +92,7 @@ pub fn run_job(config: &JobConfig) -> crate::error::Result<JobResult> {
                 &cache_settings,
                 cache_store.as_ref(),
                 &config.input_path,
+                ColorMode::Rgb,
             )
         })
         .collect();
@@ -109,8 +112,24 @@ pub fn run_job(config: &JobConfig) -> crate::error::Result<JobResult> {
     let mut writer = MrcPageWriter::new();
     let mut masked_page_ids: Vec<lopdf::ObjectId> = Vec::new();
     for page in &successful_pages {
-        let page_id = writer.write_mrc_page(&page.mrc_layers)?;
-        masked_page_ids.push(page_id);
+        match &page.output {
+            crate::mrc::PageOutput::Mrc(layers) => {
+                let page_id = writer.write_mrc_page(layers)?;
+                masked_page_ids.push(page_id);
+            }
+            crate::mrc::PageOutput::BwMask(_) => {
+                // TODO: Phase 6 - handle BW pages
+                return Err(PdfMaskError::pdf_write(
+                    "BW mode not yet supported in job runner",
+                ));
+            }
+            crate::mrc::PageOutput::Skip(_) => {
+                // TODO: Phase 5 - handle skip pages
+                return Err(PdfMaskError::pdf_write(
+                    "Skip mode not yet supported in job runner",
+                ));
+            }
+        }
     }
 
     // Run optimization on the assembled document

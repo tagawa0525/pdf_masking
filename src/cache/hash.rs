@@ -8,22 +8,31 @@ use std::path::Path;
 
 use sha2::{Digest, Sha256};
 
+use crate::config::job::ColorMode;
+
 /// MRC処理に影響する設定パラメータ。
 ///
 /// キャッシュキー計算時にハッシュに含める設定値のみを保持する。
-/// dpi, fg_dpi, bg_quality, fg_quality, preserve_images がMRC出力に影響する。
 pub struct CacheSettings {
     pub dpi: u32,
     pub fg_dpi: u32,
     pub bg_quality: u8,
     pub fg_quality: u8,
     pub preserve_images: bool,
+    pub color_mode: ColorMode,
 }
 
 /// 設定を正規化JSON形式に変換する（キーはアルファベット順で固定）。
 fn settings_to_canonical_json(settings: &CacheSettings) -> String {
     let mut map = BTreeMap::new();
     map.insert("bg_quality", serde_json::json!(settings.bg_quality));
+    let color_mode_str = match settings.color_mode {
+        ColorMode::Rgb => "rgb",
+        ColorMode::Grayscale => "grayscale",
+        ColorMode::Bw => "bw",
+        ColorMode::Skip => "skip",
+    };
+    map.insert("color_mode", serde_json::json!(color_mode_str));
     map.insert("dpi", serde_json::json!(settings.dpi));
     map.insert("fg_dpi", serde_json::json!(settings.fg_dpi));
     map.insert("fg_quality", serde_json::json!(settings.fg_quality));
@@ -69,6 +78,7 @@ mod tests {
             bg_quality: 50,
             fg_quality: 30,
             preserve_images: false,
+            color_mode: ColorMode::Rgb,
         };
 
         let json = settings_to_canonical_json(&settings);
@@ -76,7 +86,7 @@ mod tests {
         // Verify the exact JSON output
         assert_eq!(
             json,
-            "{\"bg_quality\":50,\"dpi\":300,\"fg_dpi\":150,\"fg_quality\":30,\"preserve_images\":false}"
+            "{\"bg_quality\":50,\"color_mode\":\"rgb\",\"dpi\":300,\"fg_dpi\":150,\"fg_quality\":30,\"preserve_images\":false}"
         );
 
         // Verify keys are in alphabetical order by extracting them
@@ -102,13 +112,14 @@ mod tests {
             bg_quality: 80,
             fg_quality: 60,
             preserve_images: true,
+            color_mode: ColorMode::Rgb,
         };
 
         let json = settings_to_canonical_json(&settings);
 
         assert_eq!(
             json,
-            "{\"bg_quality\":80,\"dpi\":600,\"fg_dpi\":300,\"fg_quality\":60,\"preserve_images\":true}"
+            "{\"bg_quality\":80,\"color_mode\":\"rgb\",\"dpi\":600,\"fg_dpi\":300,\"fg_quality\":60,\"preserve_images\":true}"
         );
     }
 }

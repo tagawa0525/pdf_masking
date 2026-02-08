@@ -1,22 +1,26 @@
 // Phase 8: ファイルシステムキャッシュ: hash → MRC層バイト列
 //
-// Stores and retrieves MrcLayers on disk, keyed by SHA-256 hash.
-// Each cache entry is a directory containing mask.jbig2, foreground.jpg,
-// background.jpg, and metadata.json.
+// Stores and retrieves PageOutput on disk, keyed by SHA-256 hash.
+// MRC entries: mask.jbig2, foreground.jpg, background.jpg, metadata.json
+// BW entries: mask.jbig2, metadata.json
 
+use crate::config::job::ColorMode;
 use crate::error::PdfMaskError;
-use crate::mrc::MrcLayers;
+use crate::mrc::{BwLayers, MrcLayers, PageOutput};
 use serde_json;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-/// Expected files in a complete cache entry.
-const CACHE_ENTRY_FILES: &[&str] = &[
+/// MRC用キャッシュエントリの必須ファイル。
+const MRC_CACHE_FILES: &[&str] = &[
     "mask.jbig2",
     "foreground.jpg",
     "background.jpg",
     "metadata.json",
 ];
+
+/// BW用キャッシュエントリの必須ファイル。
+const BW_CACHE_FILES: &[&str] = &["mask.jbig2", "metadata.json"];
 
 /// ファイルシステムベースのキャッシュストア。
 ///
@@ -31,6 +35,12 @@ struct CacheMetadata {
     cache_key: String,
     width: u32,
     height: u32,
+    #[serde(default = "default_color_mode")]
+    color_mode: String,
+}
+
+fn default_color_mode() -> String {
+    "rgb".to_string()
 }
 
 /// キャッシュキーが有効な SHA-256 hex 文字列であることを検証する。
@@ -48,6 +58,15 @@ fn validate_cache_key(key: &str) -> crate::error::Result<()> {
     }
 }
 
+fn color_mode_to_str(mode: ColorMode) -> &'static str {
+    match mode {
+        ColorMode::Rgb => "rgb",
+        ColorMode::Grayscale => "grayscale",
+        ColorMode::Bw => "bw",
+        ColorMode::Skip => "skip",
+    }
+}
+
 impl CacheStore {
     /// 指定されたディレクトリをキャッシュルートとして新しい CacheStore を作成する。
     pub fn new(cache_dir: impl AsRef<Path>) -> Self {
@@ -62,63 +81,81 @@ impl CacheStore {
         Ok(self.cache_dir.join(key))
     }
 
-    /// MrcLayers をキャッシュに保存する。
+    /// PageOutput をキャッシュに保存する。
     ///
     /// キャッシュディレクトリが存在しない場合は自動的に作成する。
     /// 書き込みはアトミック: 一時ディレクトリにファイルを書き込み、
-    /// 最後にrenameで最終パスに移動する。これにより、並列アクセス時に
-    /// 部分的なエントリが見えることを防止する。
-    pub fn store(&self, key: &str, layers: &MrcLayers) -> crate::error::Result<()> {
+    /// 最後にrenameで最終パスに移動する。
+    pub fn store(&self, key: &str, output: &PageOutput) -> crate::error::Result<()> {
+        let (mask_jbig2, fg, bg, width, height, mode) = match output {
+            PageOutput::Mrc(layers) => (
+                &layers.mask_jbig2,
+                Some(&layers.foreground_jpeg),
+                Some(&layers.background_jpeg),
+                layers.width,
+                layers.height,
+                layers.color_mode,
+            ),
+            PageOutput::BwMask(layers) => (
+                &layers.mask_jbig2,
+                None,
+                None,
+                layers.width,
+                layers.height,
+                ColorMode::Bw,
+            ),
+            PageOutput::Skip(_) => return Ok(()), // Skipはキャッシュ不要
+        };
+
         let dir = self.key_dir(key)?;
         let tmp_dir = dir.with_extension("tmp");
 
-        // 一時ディレクトリに書き込む
-        // 既存のtmpディレクトリがあれば削除（前回の失敗したstore等）
         if tmp_dir.exists() {
             let _ = fs::remove_dir_all(&tmp_dir);
         }
         fs::create_dir_all(&tmp_dir).map_err(|e| PdfMaskError::cache(e.to_string()))?;
 
-        fs::write(tmp_dir.join("mask.jbig2"), &layers.mask_jbig2)
+        fs::write(tmp_dir.join("mask.jbig2"), mask_jbig2)
             .map_err(|e| PdfMaskError::cache(e.to_string()))?;
-        fs::write(tmp_dir.join("foreground.jpg"), &layers.foreground_jpeg)
-            .map_err(|e| PdfMaskError::cache(e.to_string()))?;
-        fs::write(tmp_dir.join("background.jpg"), &layers.background_jpeg)
-            .map_err(|e| PdfMaskError::cache(e.to_string()))?;
+
+        if let Some(fg_data) = fg {
+            fs::write(tmp_dir.join("foreground.jpg"), fg_data)
+                .map_err(|e| PdfMaskError::cache(e.to_string()))?;
+        }
+        if let Some(bg_data) = bg {
+            fs::write(tmp_dir.join("background.jpg"), bg_data)
+                .map_err(|e| PdfMaskError::cache(e.to_string()))?;
+        }
 
         let metadata = CacheMetadata {
             cache_key: key.to_string(),
-            width: layers.width,
-            height: layers.height,
+            width,
+            height,
+            color_mode: color_mode_to_str(mode).to_string(),
         };
         let metadata_json = serde_json::to_string(&metadata)?;
         fs::write(tmp_dir.join("metadata.json"), metadata_json.as_bytes())
             .map_err(|e| PdfMaskError::cache(e.to_string()))?;
 
-        // 既存のキャッシュエントリがあれば削除
         if dir.exists() {
             let _ = fs::remove_dir_all(&dir);
         }
 
-        // アトミックにrename（同一ファイルシステム上）
         fs::rename(&tmp_dir, &dir).map_err(|e| PdfMaskError::cache(e.to_string()))?;
 
         Ok(())
     }
 
-    /// キャッシュから MrcLayers を取得する。キャッシュミスの場合は None を返す。
-    pub fn retrieve(&self, key: &str) -> crate::error::Result<Option<MrcLayers>> {
+    /// キャッシュから PageOutput を取得する。キャッシュミスの場合は None を返す。
+    pub fn retrieve(
+        &self,
+        key: &str,
+        expected_mode: ColorMode,
+    ) -> crate::error::Result<Option<PageOutput>> {
         let dir = self.key_dir(key)?;
         if !dir.exists() {
             return Ok(None);
         }
-
-        let mask_jbig2 =
-            fs::read(dir.join("mask.jbig2")).map_err(|e| PdfMaskError::cache(e.to_string()))?;
-        let foreground_jpeg =
-            fs::read(dir.join("foreground.jpg")).map_err(|e| PdfMaskError::cache(e.to_string()))?;
-        let background_jpeg =
-            fs::read(dir.join("background.jpg")).map_err(|e| PdfMaskError::cache(e.to_string()))?;
 
         let metadata_str = fs::read_to_string(dir.join("metadata.json"))
             .map_err(|e| PdfMaskError::cache(e.to_string()))?;
@@ -131,25 +168,67 @@ impl CacheStore {
             )));
         }
 
-        Ok(Some(MrcLayers {
-            mask_jbig2,
-            foreground_jpeg,
-            background_jpeg,
-            width: metadata.width,
-            height: metadata.height,
-        }))
+        // カラーモードが一致しない場合はキャッシュミス
+        if metadata.color_mode != color_mode_to_str(expected_mode) {
+            return Ok(None);
+        }
+
+        let mask_jbig2 =
+            fs::read(dir.join("mask.jbig2")).map_err(|e| PdfMaskError::cache(e.to_string()))?;
+
+        match expected_mode {
+            ColorMode::Bw => Ok(Some(PageOutput::BwMask(BwLayers {
+                mask_jbig2,
+                width: metadata.width,
+                height: metadata.height,
+            }))),
+            mode => {
+                let foreground_jpeg = fs::read(dir.join("foreground.jpg"))
+                    .map_err(|e| PdfMaskError::cache(e.to_string()))?;
+                let background_jpeg = fs::read(dir.join("background.jpg"))
+                    .map_err(|e| PdfMaskError::cache(e.to_string()))?;
+
+                Ok(Some(PageOutput::Mrc(MrcLayers {
+                    mask_jbig2,
+                    foreground_jpeg,
+                    background_jpeg,
+                    width: metadata.width,
+                    height: metadata.height,
+                    color_mode: mode,
+                })))
+            }
+        }
     }
 
     /// キャッシュキーが存在するか確認する。
-    ///
-    /// 無効なキーの場合は false を返す。
-    /// ディレクトリだけでなく、すべての必要なファイルが存在するかを確認する。
     pub fn contains(&self, key: &str) -> bool {
         let dir = match self.key_dir(key) {
             Ok(d) => d,
             Err(_) => return false,
         };
-        CACHE_ENTRY_FILES.iter().all(|f| dir.join(f).exists())
+
+        // メタデータがあれば、そのモードに応じたファイル群をチェック
+        let metadata_path = dir.join("metadata.json");
+        if !metadata_path.exists() {
+            return false;
+        }
+
+        let metadata_str = match fs::read_to_string(&metadata_path) {
+            Ok(s) => s,
+            Err(_) => return false,
+        };
+        let metadata: CacheMetadata = match serde_json::from_str(&metadata_str) {
+            Ok(m) => m,
+            Err(_) => return false,
+        };
+
+        let required_files = if metadata.color_mode == "bw" {
+            BW_CACHE_FILES
+        } else {
+            MRC_CACHE_FILES
+        };
+
+        required_files.iter().all(|f| dir.join(f).exists())
     }
 }
 
@@ -159,7 +238,6 @@ mod tests {
 
     #[test]
     fn test_validate_cache_key_rejects_uppercase_hex() {
-        // 64-char hex but with uppercase A-F digits
         let uppercase_key = "a".repeat(58) + "ABCDEF";
         assert_eq!(uppercase_key.len(), 64);
         assert!(validate_cache_key(&uppercase_key).is_err());
@@ -167,7 +245,6 @@ mod tests {
 
     #[test]
     fn test_validate_cache_key_accepts_lowercase_hex() {
-        // Valid lowercase hex
         let lowercase_key = "a".repeat(64);
         assert!(validate_cache_key(&lowercase_key).is_ok());
     }

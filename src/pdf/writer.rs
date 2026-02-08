@@ -270,6 +270,7 @@ impl MrcPageWriter {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::job::ColorMode;
     use lopdf::Document;
 
     #[test]
@@ -346,6 +347,7 @@ mod tests {
             mask_jbig2: vec![0x97, 0x4A, 0x42, 0x32],
             width: 640,
             height: 480,
+            color_mode: ColorMode::Rgb,
         };
         let mut writer = MrcPageWriter::new();
         writer.write_mrc_page(&layers).expect("write MRC page");
@@ -362,6 +364,7 @@ mod tests {
             mask_jbig2: vec![0x97, 0x4A, 0x42, 0x32],
             width: 640,
             height: 480,
+            color_mode: ColorMode::Rgb,
         };
         let layers2 = crate::mrc::MrcLayers {
             background_jpeg: vec![0xFF, 0xD8, 0xFF, 0xE0, 0x01],
@@ -369,6 +372,7 @@ mod tests {
             mask_jbig2: vec![0x97, 0x4A, 0x42, 0x32, 0x01],
             width: 800,
             height: 600,
+            color_mode: ColorMode::Rgb,
         };
         let layers3 = crate::mrc::MrcLayers {
             background_jpeg: vec![0xFF, 0xD8, 0xFF, 0xE0, 0x02],
@@ -376,6 +380,7 @@ mod tests {
             mask_jbig2: vec![0x97, 0x4A, 0x42, 0x32, 0x02],
             width: 1024,
             height: 768,
+            color_mode: ColorMode::Rgb,
         };
 
         let mut writer = MrcPageWriter::new();

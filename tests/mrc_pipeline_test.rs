@@ -3,6 +3,7 @@
 // Tests for the MRC pipeline: segmenter, jbig2, jpeg, compositor.
 // Each test verifies a specific component of the MRC layer generation pipeline.
 
+use pdf_masking::config::job::ColorMode;
 use pdf_masking::ffi::leptonica::Pix;
 use pdf_masking::mrc::{compositor, jbig2, jpeg, segmenter};
 
@@ -190,7 +191,7 @@ fn test_compose_mrc_layers() {
         fg_quality: 30,
     };
 
-    let result = compositor::compose(&data, width, height, &config);
+    let result = compositor::compose(&data, width, height, &config, ColorMode::Rgb);
     assert!(result.is_ok(), "compose failed: {:?}", result.err());
 
     let layers = result.unwrap();
@@ -207,8 +208,8 @@ fn test_mrc_layers_has_all_components() {
         fg_quality: 30,
     };
 
-    let layers =
-        compositor::compose(&data, width, height, &config).expect("compose should succeed");
+    let layers = compositor::compose(&data, width, height, &config, ColorMode::Rgb)
+        .expect("compose should succeed");
 
     assert!(
         !layers.mask_jbig2.is_empty(),
