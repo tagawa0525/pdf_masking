@@ -1135,6 +1135,7 @@ name = "pdf_masking"
 version = "0.1.0"
 dependencies = [
  "cc",
+ "flate2",
  "hex",
  "image",
  "leptonica-sys",
