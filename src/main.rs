@@ -114,14 +114,14 @@ fn main() -> ExitCode {
                 );
 
                 // Linearize output if configured.
-                if linearize_flags[i] {
-                    if let Err(e) = linearize::linearize_in_place(&job_result.output_path) {
-                        eprintln!(
-                            "ERROR: Failed to linearize {}: {e}",
-                            job_result.output_path.display()
-                        );
-                        has_error = true;
-                    }
+                if linearize_flags[i]
+                    && let Err(e) = linearize::linearize_in_place(&job_result.output_path)
+                {
+                    eprintln!(
+                        "ERROR: Failed to linearize {}: {e}",
+                        job_result.output_path.display()
+                    );
+                    has_error = true;
                 }
             }
             Err(e) => {

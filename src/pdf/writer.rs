@@ -170,15 +170,15 @@ impl MrcPageWriter {
     /// ページをPages Kidsに追加する。初回呼び出しでPages+Catalogを作成。
     fn append_page_to_kids(&mut self, pages_id: lopdf::ObjectId, page_id: lopdf::ObjectId) {
         if let Some(Object::Dictionary(pages_dict)) = self.doc.objects.get_mut(&pages_id) {
-            if let Ok(kids) = pages_dict.get_mut(b"Kids") {
-                if let Ok(kids_array) = kids.as_array_mut() {
-                    kids_array.push(page_id.into());
-                }
+            if let Ok(kids) = pages_dict.get_mut(b"Kids")
+                && let Ok(kids_array) = kids.as_array_mut()
+            {
+                kids_array.push(page_id.into());
             }
-            if let Ok(count_obj) = pages_dict.get_mut(b"Count") {
-                if let Ok(count) = count_obj.as_i64() {
-                    *count_obj = Object::Integer(count + 1);
-                }
+            if let Ok(count_obj) = pages_dict.get_mut(b"Count")
+                && let Ok(count) = count_obj.as_i64()
+            {
+                *count_obj = Object::Integer(count + 1);
             }
         } else {
             let pages = dictionary! {

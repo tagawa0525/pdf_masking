@@ -35,7 +35,6 @@ fn test_process_page_cache_miss() {
         &cache_settings,
         None,
         Path::new("test.pdf"),
-        ColorMode::Rgb,
     );
     assert!(
         result.is_ok(),
@@ -88,7 +87,6 @@ fn test_process_page_cache_hit() {
         &cache_settings,
         Some(&cache_store),
         Path::new("test.pdf"),
-        ColorMode::Rgb,
     );
     assert!(result1.is_ok());
     let processed1 = result1.unwrap();
@@ -105,7 +103,6 @@ fn test_process_page_cache_hit() {
         &cache_settings,
         Some(&cache_store),
         Path::new("test.pdf"),
-        ColorMode::Rgb,
     );
     assert!(result2.is_ok());
     let processed2 = result2.unwrap();

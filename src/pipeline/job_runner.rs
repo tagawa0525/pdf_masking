@@ -117,7 +117,6 @@ pub fn run_job(config: &JobConfig) -> crate::error::Result<JobResult> {
                 &cache_settings,
                 cache_store.as_ref(),
                 &config.input_path,
-                *mode,
             )
         })
         .collect();
