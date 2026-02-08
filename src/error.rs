@@ -85,4 +85,34 @@ impl PdfMaskError {
     }
 }
 
+impl From<lopdf::Error> for PdfMaskError {
+    fn from(e: lopdf::Error) -> Self {
+        Self::PdfReadError(e.to_string())
+    }
+}
+
+impl From<serde_json::Error> for PdfMaskError {
+    fn from(e: serde_json::Error) -> Self {
+        Self::CacheError(e.to_string())
+    }
+}
+
+impl From<serde_yml::Error> for PdfMaskError {
+    fn from(e: serde_yml::Error) -> Self {
+        Self::ConfigError(e.to_string())
+    }
+}
+
+impl From<pdfium_render::prelude::PdfiumError> for PdfMaskError {
+    fn from(e: pdfium_render::prelude::PdfiumError) -> Self {
+        Self::RenderError(e.to_string())
+    }
+}
+
+impl From<image::ImageError> for PdfMaskError {
+    fn from(e: image::ImageError) -> Self {
+        Self::JpegEncodeError(e.to_string())
+    }
+}
+
 pub type Result<T> = std::result::Result<T, PdfMaskError>;
