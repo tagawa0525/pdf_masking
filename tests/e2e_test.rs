@@ -137,8 +137,10 @@ fn write_jobs_yaml(dir: &Path, input: &str, output: &str, extra_yaml: &str) {
 }
 
 /// Write a settings.yaml file for testing.
-fn write_settings_yaml(dir: &Path, dpi: u32, bg_quality: u8) {
-    let yaml = format!("dpi: {dpi}\nbg_quality: {bg_quality}\nlinearize: false\n");
+fn write_settings_yaml(dir: &Path, dpi: u32, bg_quality: u8, preserve_images: bool) {
+    let yaml = format!(
+        "dpi: {dpi}\nbg_quality: {bg_quality}\nlinearize: false\npreserve_images: {preserve_images}\n"
+    );
     std::fs::write(dir.join("settings.yaml"), yaml).expect("failed to write settings.yaml");
 }
 
@@ -245,7 +247,10 @@ fn test_e2e_with_settings_yaml() {
     let output_path = dir.path().join("output.pdf");
 
     create_single_page_pdf(&input_path);
-    write_settings_yaml(dir.path(), 72, 30);
+    // settings.yaml sets preserve_images=false to force MRC mode.
+    // The default is preserve_images=true (TextMasked), so if settings.yaml
+    // is applied, we'll see MRC structure (BgImg/FgImg) instead.
+    write_settings_yaml(dir.path(), 72, 30, false);
     write_jobs_yaml(dir.path(), "input.pdf", "output.pdf", "");
 
     let jobs_yaml_path = dir.path().join("jobs.yaml");
@@ -267,11 +272,9 @@ fn test_e2e_with_settings_yaml() {
     let doc = Document::load(&output_path).expect("output PDF should be loadable by lopdf");
     assert_eq!(doc.get_pages().len(), 1, "output PDF should have 1 page");
 
-    // Verify settings.yaml was picked up by checking MRC structure exists.
-    // The configured DPI (72) and bg_quality (30) affect image encoding, but
-    // verifying exact pixel dimensions requires decoding XObject streams.
-    // As a structural check, confirm BgImg/FgImg XObjects are present, which
-    // proves the pipeline ran with the settings rather than being a no-op.
+    // Verify settings.yaml was picked up by checking MRC structure.
+    // settings.yaml sets preserve_images=false, overriding the default (true).
+    // If applied, the output uses MRC (BgImg/FgImg) instead of TextMasked.
     let pages = doc.get_pages();
     let first_page_id = pages.values().next().expect("should have a page");
     let page_dict = doc
@@ -295,11 +298,7 @@ fn test_e2e_with_settings_yaml() {
     };
     assert!(
         xobject_dict.has(b"BgImg"),
-        "XObject should contain BgImg (settings.yaml was applied)"
-    );
-    assert!(
-        xobject_dict.has(b"FgImg"),
-        "XObject should contain FgImg (settings.yaml was applied)"
+        "XObject should contain BgImg (settings.yaml preserve_images=false was applied)"
     );
 }
 
@@ -307,8 +306,8 @@ fn test_e2e_with_settings_yaml() {
 // 4. E2E test: output has MRC structure
 // ============================================================
 
-/// Run pipeline, verify output PDF has XObject resources (BgImg, FgImg)
-/// on processed pages.
+/// Run pipeline with preserve_images=false (MRC mode), verify output PDF has
+/// XObject resources (BgImg, FgImg) on processed pages.
 #[test]
 fn test_e2e_output_has_mrc_structure() {
     if !pdfium_available() {
@@ -321,7 +320,12 @@ fn test_e2e_output_has_mrc_structure() {
     let output_path = dir.path().join("output.pdf");
 
     create_single_page_pdf(&input_path);
-    write_jobs_yaml(dir.path(), "input.pdf", "output.pdf", "");
+    write_jobs_yaml(
+        dir.path(),
+        "input.pdf",
+        "output.pdf",
+        "    preserve_images: false\n",
+    );
 
     let jobs_yaml_path = dir.path().join("jobs.yaml");
 
@@ -567,7 +571,8 @@ fn test_e2e_bw_mode() {
 // 8. E2E test: Grayscale mode
 // ============================================================
 
-/// Process a single page in grayscale mode. Output should have DeviceGray XObjects.
+/// Process a single page in grayscale mode with preserve_images=false (MRC).
+/// Output should have DeviceGray XObjects.
 #[test]
 fn test_e2e_grayscale_mode() {
     if !pdfium_available() {
@@ -584,7 +589,7 @@ fn test_e2e_grayscale_mode() {
         dir.path(),
         "input.pdf",
         "output.pdf",
-        "    color_mode: grayscale\n",
+        "    color_mode: grayscale\n    preserve_images: false\n",
     );
 
     let jobs_yaml_path = dir.path().join("jobs.yaml");
@@ -702,7 +707,7 @@ fn test_e2e_skip_mode() {
 // 10. E2E test: Mixed mode (per-page overrides)
 // ============================================================
 
-/// 3-page PDF with: page 1 = RGB (default), page 2 = BW, page 3 = skip.
+/// 3-page PDF with: page 1 = RGB (MRC, preserve_images=false), page 2 = BW, page 3 = skip.
 #[test]
 fn test_e2e_mixed_mode() {
     if !pdfium_available() {
@@ -719,7 +724,7 @@ fn test_e2e_mixed_mode() {
         dir.path(),
         "input.pdf",
         "output.pdf",
-        "    bw_pages: [2]\n    skip_pages: [3]\n",
+        "    preserve_images: false\n    bw_pages: [2]\n    skip_pages: [3]\n",
     );
 
     let jobs_yaml_path = dir.path().join("jobs.yaml");

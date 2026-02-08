@@ -337,10 +337,10 @@ impl CacheStore {
         }
 
         // ビットマップ寸法の一致チェック（指定された場合）
-        if let Some((bw, bh)) = bitmap_dims {
-            if metadata.width != bw || metadata.height != bh {
-                return Ok(None);
-            }
+        if let Some((bw, bh)) = bitmap_dims
+            && (metadata.width != bw || metadata.height != bh)
+        {
+            return Ok(None);
         }
 
         // TextMasked エントリの場合

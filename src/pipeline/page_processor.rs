@@ -83,27 +83,24 @@ pub fn process_page(
         }
         mode @ (ColorMode::Rgb | ColorMode::Grayscale) => {
             if cache_settings.preserve_images {
-                if let Some(streams) = image_streams {
-                    let page_width_pts = width as f64 * 72.0 / cache_settings.dpi as f64;
-                    let page_height_pts = height as f64 * 72.0 / cache_settings.dpi as f64;
-                    let params = TextMaskedParams {
-                        content_bytes: content_stream,
-                        rgba_data: &rgba_data,
-                        bitmap_width: width,
-                        bitmap_height: height,
-                        page_width_pts,
-                        page_height_pts,
-                        image_streams: streams,
-                        quality: mrc_config.fg_quality,
-                        color_mode: mode,
-                        page_index,
-                    };
-                    let text_masked = compose_text_masked(&params)?;
-                    PageOutput::TextMasked(text_masked)
-                } else {
-                    let mrc_layers = compose(&rgba_data, width, height, mrc_config, mode)?;
-                    PageOutput::Mrc(mrc_layers)
-                }
+                let empty_streams = HashMap::new();
+                let streams = image_streams.unwrap_or(&empty_streams);
+                let page_width_pts = width as f64 * 72.0 / cache_settings.dpi as f64;
+                let page_height_pts = height as f64 * 72.0 / cache_settings.dpi as f64;
+                let params = TextMaskedParams {
+                    content_bytes: content_stream,
+                    rgba_data: &rgba_data,
+                    bitmap_width: width,
+                    bitmap_height: height,
+                    page_width_pts,
+                    page_height_pts,
+                    image_streams: streams,
+                    quality: mrc_config.fg_quality,
+                    color_mode: mode,
+                    page_index,
+                };
+                let text_masked = compose_text_masked(&params)?;
+                PageOutput::TextMasked(text_masked)
             } else {
                 let mrc_layers = compose(&rgba_data, width, height, mrc_config, mode)?;
                 PageOutput::Mrc(mrc_layers)
