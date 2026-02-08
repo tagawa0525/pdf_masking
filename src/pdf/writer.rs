@@ -393,10 +393,15 @@ impl MrcPageWriter {
                 && let Some(Object::Stream(stream)) = self.doc.objects.get_mut(&img_id)
             {
                 stream.content = modification.data.clone();
-                stream.dict.set(
-                    "Filter",
-                    Object::Name(modification.filter.as_bytes().to_vec()),
-                );
+                if modification.filter.is_empty() {
+                    stream.dict.remove(b"Filter");
+                    stream.dict.remove(b"DecodeParms");
+                } else {
+                    stream.dict.set(
+                        "Filter",
+                        Object::Name(modification.filter.as_bytes().to_vec()),
+                    );
+                }
                 stream.dict.set(
                     "ColorSpace",
                     Object::Name(modification.color_space.as_bytes().to_vec()),
