@@ -55,7 +55,7 @@ cargo build --release
 3. [pdfium](https://pdfium.nicehash.com/) のプリビルドバイナリをダウンロード
 4. 必要な環境変数を設定する `scripts/env-windows.ps1` を生成
 
-qpdf は別途インストールが必要です（`winget install qpdf.qpdf`）。ジョブ設定で `linearize: true` の場合のみ使用されます。
+qpdf はデフォルト設定では必須です（`winget install qpdf.qpdf`）。ジョブ設定で線形化を無効にする場合は `linearize: false` を指定してください。
 
 **前提条件**: Visual Studio 2019以降（C++ワークロード）、CMake 3.20以上、Git、Rust（rustup経由）
 

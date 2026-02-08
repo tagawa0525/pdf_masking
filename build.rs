@@ -9,7 +9,8 @@ fn require_env(name: &str) -> String {
             println!(
                 "cargo:warning={name} is not set. \
                  Linux/macOS: build inside `nix develop`. \
-                 Windows: run scripts/setup-windows.ps1 then source scripts/env-windows.ps1. \
+                 Windows: run scripts/setup-windows.ps1 then dot-source scripts/env-windows.ps1 \
+                 (`. .\\scripts\\env-windows.ps1`). \
                  See README for details."
             );
             panic!("{name} is not set");

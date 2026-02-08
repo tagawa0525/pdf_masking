@@ -57,7 +57,8 @@ The script performs the following:
 4. Generates `scripts/env-windows.ps1` with all required environment variables
 
 qpdf must be installed separately (`winget install qpdf.qpdf`) and is
-only required when `linearize: true` is set in the job config.
+required by default, since linearization is enabled unless you explicitly set
+`linearize: false` in the job/settings config.
 
 **Prerequisites**: Visual Studio 2019+ with C++ workload, CMake 3.20+, Git,
 Rust (via rustup).

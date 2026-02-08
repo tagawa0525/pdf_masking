@@ -94,8 +94,9 @@ $VcpkgExe = Join-Path $VcpkgDir "vcpkg.exe"
 
 if (-not (Test-Path $VcpkgExe)) {
     if (-not (Test-Path $VcpkgDir)) {
-        Write-Host "Cloning vcpkg..."
+        Write-Host "Cloning vcpkg (pinned to 2025.04.09)..."
         git clone https://github.com/microsoft/vcpkg.git $VcpkgDir
+        git -C $VcpkgDir checkout 2025.04.09
     }
     Write-Host "Bootstrapping vcpkg..."
     & (Join-Path $VcpkgDir "bootstrap-vcpkg.bat") -disableMetrics
@@ -114,7 +115,6 @@ Write-Step "leptonica (via vcpkg, triplet=$Triplet)"
 if ($LASTEXITCODE -ne 0) { throw "vcpkg install leptonica failed" }
 
 $LeptonicaInclude = Join-Path $VcpkgInstalled "include"
-$LeptonicaLib = Join-Path $VcpkgInstalled "lib"
 Write-Host "leptonica installed: $VcpkgInstalled" -ForegroundColor Green
 
 # ============================================================
@@ -137,8 +137,19 @@ Copy-Item (Join-Path $PSScriptRoot "jbig2enc-CMakeLists.txt") `
           (Join-Path $Jbig2SrcDir "CMakeLists.txt") -Force
 
 # ビルド
+# Visual Studio ジェネレータ使用時にアーキテクチャを明示しないと Win32 (x86) になることがあるため、
+# vcpkg トリプレットや VS 開発者コマンドプロンプトの設定からアーキテクチャを推測して指定する。
+$CmakeJbig2ArchArgs = @()
+if ($Env:VSCMD_ARG_TGT_ARCH) {
+    $CmakeJbig2ArchArgs += '-A'
+    $CmakeJbig2ArchArgs += $Env:VSCMD_ARG_TGT_ARCH
+} elseif ($Triplet -like 'x64-*') {
+    $CmakeJbig2ArchArgs += '-A'
+    $CmakeJbig2ArchArgs += 'x64'
+}
+
 Write-Host "Configuring jbig2enc..."
-cmake -S $Jbig2SrcDir -B $Jbig2BuildDir `
+cmake @CmakeJbig2ArchArgs -S $Jbig2SrcDir -B $Jbig2BuildDir `
     -DCMAKE_PREFIX_PATH="$VcpkgInstalled" `
     -DLEPTONICA_INCLUDE_DIR="$LeptonicaInclude"
 if ($LASTEXITCODE -ne 0) { throw "jbig2enc cmake configure failed" }
@@ -195,6 +206,23 @@ if (-not (Test-Path $PdfiumDir) -or -not (Get-ChildItem $PdfiumDir -Filter "*.dl
         Write-Host "Downloading $($asset.name) (${sizeMB}MB)..."
         Invoke-WebRequest -Uri $asset.browser_download_url -OutFile $archivePath -Headers $headers
 
+        $expectedSha256 = $env:PDFIUM_EXPECTED_SHA256
+        if ($expectedSha256) {
+            Write-Host "Verifying SHA-256 hash of downloaded pdfium archive..."
+            $fileHash = (Get-FileHash -Path $archivePath -Algorithm SHA256).Hash.ToLowerInvariant()
+            $normalizedExpected = $expectedSha256.Trim().ToLowerInvariant()
+            if ($fileHash -ne $normalizedExpected) {
+                Write-Host "SHA-256 mismatch for downloaded pdfium archive!" -ForegroundColor Red
+                Write-Host "Expected: $normalizedExpected" -ForegroundColor Red
+                Write-Host "Actual  : $fileHash" -ForegroundColor Red
+                Remove-Item $archivePath -Force -ErrorAction SilentlyContinue
+                throw "Aborting pdfium setup due to failed integrity check."
+            }
+            Write-Host "SHA-256 verification succeeded." -ForegroundColor Green
+        } else {
+            Write-Host "WARNING: PDFIUM_EXPECTED_SHA256 is not set; skipping integrity verification." -ForegroundColor Yellow
+        }
+
         Write-Host "Extracting..."
         tar -xzf $archivePath -C $PdfiumDir
         Remove-Item $archivePath -Force
@@ -225,7 +253,7 @@ if (Get-Command qpdf -ErrorAction SilentlyContinue) {
     Write-Host "qpdf not found. Install with:" -ForegroundColor Yellow
     Write-Host "  winget install qpdf.qpdf" -ForegroundColor Yellow
     Write-Host "  scoop install qpdf" -ForegroundColor Yellow
-    Write-Host "Note: qpdf is only needed if linearize=true in job config." -ForegroundColor Yellow
+    Write-Host "Note: qpdf is required for the default settings (linearize: true). You can omit it only if you set linearize=false in your job config." -ForegroundColor Yellow
 }
 
 # ============================================================
