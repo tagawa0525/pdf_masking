@@ -8,8 +8,9 @@ fn require_env(name: &str) -> String {
         Err(_) => {
             println!(
                 "cargo:warning={name} is not set. \
-                 Build inside `nix develop` or set the variable manually. \
-                 See flake.nix for details."
+                 Linux/macOS: build inside `nix develop`. \
+                 Windows: run scripts/setup-windows.ps1 then source scripts/env-windows.ps1. \
+                 See README for details."
             );
             panic!("{name} is not set");
         }

@@ -1,5 +1,6 @@
 {
-  "MD013": {
-    "line_length": 160
-  }
+  "MD003": { "style": "consistent" },
+  "MD013": { "line_length": 160 },
+  "MD024": false,
+  "MD060": false
 }
