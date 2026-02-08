@@ -255,6 +255,18 @@ impl MrcPageWriter {
 
         let mask_id = self.add_mask_xobject(&layers.mask_jbig2, width, height);
 
+        // BWページとしてマスクをそのまま画像として描画する場合、
+        // 現在のビット定義は text=1, non-text=0 であり、
+        // DeviceGray + BitsPerComponent=1 の既定デコード (0=黒, 1=白) のままだと
+        // テキストが白・背景が黒に反転してしまう。
+        // そのため、このBW用XObjectに対してのみ Decode 配列で極性を反転させる。
+        if let Some(Object::Stream(stream)) = self.doc.objects.get_mut(&mask_id) {
+            stream.dict.set(
+                "Decode",
+                Object::Array(vec![Object::Integer(1), Object::Integer(0)]),
+            );
+        }
+
         let pages_id = self.ensure_pages_id();
 
         let mut xobject_dict = lopdf::Dictionary::new();
