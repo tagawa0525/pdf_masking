@@ -18,6 +18,18 @@ pub struct CacheSettings {
     pub preserve_images: bool,
 }
 
+/// 設定を正規化JSON形式に変換する（キーはアルファベット順で固定）。
+fn settings_to_canonical_json(settings: &CacheSettings) -> String {
+    format!(
+        "{{\"bg_quality\":{},\"dpi\":{},\"fg_dpi\":{},\"fg_quality\":{},\"preserve_images\":{}}}",
+        settings.bg_quality,
+        settings.dpi,
+        settings.fg_dpi,
+        settings.fg_quality,
+        settings.preserve_images
+    )
+}
+
 /// コンテンツストリームと設定からキャッシュキー（SHA-256ハッシュ）を計算する。
 ///
 /// ハッシュ入力: `content_stream || settings_canonical_json`
@@ -28,14 +40,7 @@ pub fn compute_cache_key(content_stream: &[u8], settings: &CacheSettings) -> Str
     hasher.update(content_stream);
 
     // 設定を正規化JSON形式で追加（キーはアルファベット順で固定）
-    let settings_json = format!(
-        "{{\"bg_quality\":{},\"dpi\":{},\"fg_dpi\":{},\"fg_quality\":{},\"preserve_images\":{}}}",
-        settings.bg_quality,
-        settings.dpi,
-        settings.fg_dpi,
-        settings.fg_quality,
-        settings.preserve_images
-    );
+    let settings_json = settings_to_canonical_json(settings);
     hasher.update(settings_json.as_bytes());
 
     hex::encode(hasher.finalize())
@@ -47,7 +52,6 @@ mod tests {
 
     #[test]
     fn test_settings_json_is_sorted_by_key() {
-        // Verify the canonical JSON format has keys in alphabetical order
         let settings = CacheSettings {
             dpi: 300,
             fg_dpi: 150,
@@ -56,8 +60,44 @@ mod tests {
             preserve_images: false,
         };
 
-        let key = compute_cache_key(b"", &settings);
-        // Key should be deterministic (not empty)
-        assert_eq!(key.len(), 64);
+        let json = settings_to_canonical_json(&settings);
+
+        // Verify the exact JSON output
+        assert_eq!(
+            json,
+            "{\"bg_quality\":50,\"dpi\":300,\"fg_dpi\":150,\"fg_quality\":30,\"preserve_images\":false}"
+        );
+
+        // Verify keys are in alphabetical order by extracting them
+        let keys: Vec<&str> = json
+            .trim_matches(|c| c == '{' || c == '}')
+            .split(',')
+            .map(|pair| {
+                let key = pair.split(':').next().unwrap();
+                key.trim_matches('"')
+            })
+            .collect();
+
+        let mut sorted_keys = keys.clone();
+        sorted_keys.sort();
+        assert_eq!(keys, sorted_keys, "JSON keys must be in alphabetical order");
+    }
+
+    #[test]
+    fn test_settings_json_with_different_values() {
+        let settings = CacheSettings {
+            dpi: 600,
+            fg_dpi: 300,
+            bg_quality: 80,
+            fg_quality: 60,
+            preserve_images: true,
+        };
+
+        let json = settings_to_canonical_json(&settings);
+
+        assert_eq!(
+            json,
+            "{\"bg_quality\":80,\"dpi\":600,\"fg_dpi\":300,\"fg_quality\":60,\"preserve_images\":true}"
+        );
     }
 }

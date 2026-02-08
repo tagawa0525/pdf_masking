@@ -8,7 +8,15 @@ use crate::error::PdfMaskError;
 use crate::mrc::MrcLayers;
 use serde_json;
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+
+/// Expected files in a complete cache entry.
+const CACHE_ENTRY_FILES: &[&str] = &[
+    "mask.jbig2",
+    "foreground.jpg",
+    "background.jpg",
+    "metadata.json",
+];
 
 /// ファイルシステムベースのキャッシュストア。
 ///
@@ -21,29 +29,46 @@ pub struct CacheStore {
 /// metadata.json に保存する画像のメタデータ。
 #[derive(serde::Serialize, serde::Deserialize)]
 struct CacheMetadata {
+    cache_key: String,
     width: u32,
     height: u32,
+}
+
+/// キャッシュキーが有効な SHA-256 hex 文字列であることを検証する。
+///
+/// 有効なキーは正確に64文字の小文字16進数([0-9a-f])である必要がある。
+/// パストラバーサルや不正なディレクトリアクセスを防止する。
+fn validate_cache_key(key: &str) -> crate::error::Result<()> {
+    if key.len() == 64 && key.bytes().all(|b| b.is_ascii_hexdigit()) {
+        Ok(())
+    } else {
+        Err(PdfMaskError::cache(format!(
+            "invalid cache key: expected 64-character hex string, got '{}'",
+            key
+        )))
+    }
 }
 
 #[allow(dead_code)]
 impl CacheStore {
     /// 指定されたディレクトリをキャッシュルートとして新しい CacheStore を作成する。
-    pub fn new(cache_dir: &str) -> Self {
+    pub fn new(cache_dir: impl AsRef<Path>) -> Self {
         Self {
-            cache_dir: PathBuf::from(cache_dir),
+            cache_dir: cache_dir.as_ref().to_path_buf(),
         }
     }
 
     /// キャッシュキーからディレクトリパスを計算する。
-    fn key_dir(&self, key: &str) -> PathBuf {
-        self.cache_dir.join(key)
+    fn key_dir(&self, key: &str) -> crate::error::Result<PathBuf> {
+        validate_cache_key(key)?;
+        Ok(self.cache_dir.join(key))
     }
 
     /// MrcLayers をキャッシュに保存する。
     ///
     /// キャッシュディレクトリが存在しない場合は自動的に作成する。
     pub fn store(&self, key: &str, layers: &MrcLayers) -> crate::error::Result<()> {
-        let dir = self.key_dir(key);
+        let dir = self.key_dir(key)?;
         fs::create_dir_all(&dir).map_err(|e| PdfMaskError::cache(e.to_string()))?;
 
         fs::write(dir.join("mask.jbig2"), &layers.mask_jbig2)
@@ -54,6 +79,7 @@ impl CacheStore {
             .map_err(|e| PdfMaskError::cache(e.to_string()))?;
 
         let metadata = CacheMetadata {
+            cache_key: key.to_string(),
             width: layers.width,
             height: layers.height,
         };
@@ -67,7 +93,7 @@ impl CacheStore {
 
     /// キャッシュから MrcLayers を取得する。キャッシュミスの場合は None を返す。
     pub fn retrieve(&self, key: &str) -> crate::error::Result<Option<MrcLayers>> {
-        let dir = self.key_dir(key);
+        let dir = self.key_dir(key)?;
         if !dir.exists() {
             return Ok(None);
         }
@@ -84,6 +110,13 @@ impl CacheStore {
         let metadata: CacheMetadata =
             serde_json::from_str(&metadata_str).map_err(|e| PdfMaskError::cache(e.to_string()))?;
 
+        if metadata.cache_key != key {
+            return Err(PdfMaskError::cache(format!(
+                "cache key mismatch: expected '{}', found '{}'",
+                key, metadata.cache_key
+            )));
+        }
+
         Ok(Some(MrcLayers {
             mask_jbig2,
             foreground_jpeg,
@@ -94,7 +127,14 @@ impl CacheStore {
     }
 
     /// キャッシュキーが存在するか確認する。
+    ///
+    /// 無効なキーの場合は false を返す。
+    /// ディレクトリだけでなく、すべての必要なファイルが存在するかを確認する。
     pub fn contains(&self, key: &str) -> bool {
-        self.key_dir(key).exists()
+        let dir = match self.key_dir(key) {
+            Ok(d) => d,
+            Err(_) => return false,
+        };
+        CACHE_ENTRY_FILES.iter().all(|f| dir.join(f).exists())
     }
 }
