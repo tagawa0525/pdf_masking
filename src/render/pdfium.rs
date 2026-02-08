@@ -25,14 +25,22 @@ fn resolve_pdfium_lib_path() -> crate::error::Result<PathBuf> {
 }
 
 /// Creates a new Pdfium instance by dynamically loading the shared library.
+///
+/// If `PDFIUM_DYNAMIC_LIB_PATH` points to a directory, the platform-specific
+/// library name is resolved within that directory. If it points to a file, the
+/// file path is used directly.
 fn create_pdfium() -> crate::error::Result<Pdfium> {
     let lib_path = resolve_pdfium_lib_path()?;
     let lib_path_str = lib_path.to_str().ok_or_else(|| {
         crate::error::PdfMaskError::render("pdfium library path contains non-UTF-8 characters")
     })?;
-    let bindings =
-        Pdfium::bind_to_library(Pdfium::pdfium_platform_library_name_at_path(lib_path_str))
-            .map_err(|e| crate::error::PdfMaskError::render(e.to_string()))?;
+    let lib_name = if lib_path.is_dir() {
+        Pdfium::pdfium_platform_library_name_at_path(lib_path_str)
+    } else {
+        PathBuf::from(lib_path_str)
+    };
+    let bindings = Pdfium::bind_to_library(lib_name)
+        .map_err(|e| crate::error::PdfMaskError::render(e.to_string()))?;
     Ok(Pdfium::new(bindings))
 }
 
@@ -58,6 +66,12 @@ pub fn render_page(
     page_index: u32,
     dpi: u32,
 ) -> crate::error::Result<DynamicImage> {
+    if dpi == 0 {
+        return Err(crate::error::PdfMaskError::render(
+            "dpi must be greater than 0",
+        ));
+    }
+
     let pdfium = create_pdfium()?;
 
     let document = pdfium

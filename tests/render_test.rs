@@ -26,6 +26,7 @@ fn create_test_pdf(dir: &tempfile::TempDir) -> String {
             Object::Integer(792),
         ],
         "Contents" => content_id,
+        "Resources" => dictionary! {},
     };
     let page_id = doc.add_object(page);
 
@@ -120,14 +121,28 @@ fn test_render_page_at_different_dpi() {
 /// Rendering a nonexistent file should return an error.
 #[test]
 fn test_render_nonexistent_file() {
-    let result = render_page("/tmp/nonexistent_file_12345.pdf", 0, 72);
+    let dir = tempfile::tempdir().expect("failed to create temp dir");
+    let nonexistent = dir.path().join("nonexistent_file.pdf");
+    let result = render_page(nonexistent.to_str().unwrap(), 0, 72);
     assert!(
         result.is_err(),
         "render_page should fail for a nonexistent file"
     );
 }
 
-// ---- Test 5: Invalid page index ----
+// ---- Test 5: Zero DPI ----
+
+/// Rendering with dpi=0 should return an error.
+#[test]
+fn test_render_zero_dpi() {
+    let dir = tempfile::tempdir().expect("failed to create temp dir");
+    let pdf_path = create_test_pdf(&dir);
+
+    let result = render_page(&pdf_path, 0, 0);
+    assert!(result.is_err(), "render_page should fail when dpi is 0");
+}
+
+// ---- Test 6: Invalid page index ----
 
 /// Rendering a page index beyond the document's page count should return an error.
 #[test]
