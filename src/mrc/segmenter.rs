@@ -19,7 +19,11 @@ pub fn segment_text_mask(rgba_data: &[u8], width: u32, height: u32) -> crate::er
     let gray = pix.convert_to_gray()?;
 
     // 3. Otsu adaptive threshold -> 1-bit binary image
-    let binary = gray.otsu_adaptive_threshold(2000, 2000)?;
+    //    Tile size is capped at the image dimension (min 16px to avoid
+    //    degenerate tiles) so it adapts to both small and large images.
+    let tile_sx = width.clamp(16, 2000);
+    let tile_sy = height.clamp(16, 2000);
+    let binary = gray.otsu_adaptive_threshold(tile_sx, tile_sy)?;
 
     // 4. Extract region masks from the binary image
     let masks = binary.get_region_masks()?;

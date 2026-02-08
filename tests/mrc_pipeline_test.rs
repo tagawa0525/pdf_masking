@@ -104,9 +104,8 @@ fn test_encode_background_jpeg() {
     let jpeg_data = result.unwrap();
     assert!(!jpeg_data.is_empty(), "JPEG data should not be empty");
     // JPEG files start with FF D8
-    assert_eq!(
-        &jpeg_data[..2],
-        &[0xFF, 0xD8],
+    assert!(
+        jpeg_data.starts_with(&[0xFF, 0xD8]),
         "JPEG data should start with FF D8 marker"
     );
 }

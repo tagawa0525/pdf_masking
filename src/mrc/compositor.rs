@@ -1,6 +1,8 @@
 // Phase 5: pipeline integration: bitmap + config -> MrcLayers
 
 use super::{jbig2, jpeg, segmenter, MrcLayers};
+use crate::error::PdfMaskError;
+use image::{DynamicImage, RgbaImage};
 
 /// Configuration for MRC layer generation.
 pub struct MrcConfig {
@@ -15,8 +17,9 @@ pub struct MrcConfig {
 /// Pipeline:
 /// 1. Segment text regions into a 1-bit mask
 /// 2. Encode the mask as JBIG2
-/// 3. Encode the background as JPEG
-/// 4. Encode the foreground as JPEG
+/// 3. Convert RGBA to RGB once
+/// 4. Encode the background as JPEG (reusing the RGB image)
+/// 5. Encode the foreground as JPEG (reusing the RGB image)
 ///
 /// In v1, the background and foreground layers use the original image
 /// without text-aware inpainting or masking.
@@ -38,13 +41,18 @@ pub fn compose(
     // 2. Mask layer: JBIG2-encode the 1-bit mask
     let mask_jbig2 = jbig2::encode_mask(&mut text_mask)?;
 
-    // 3. Background layer: encode original image as JPEG
-    //    (v1: no inpainting; text regions are left as-is)
-    let background_jpeg = jpeg::encode_rgba_to_jpeg(rgba_data, width, height, config.bg_quality)?;
+    // 3. Convert RGBA -> RGB once (shared by bg and fg JPEG encoding)
+    let img = RgbaImage::from_raw(width, height, rgba_data.to_vec())
+        .ok_or_else(|| PdfMaskError::jpeg_encode("Failed to create image from RGBA data"))?;
+    let rgb = DynamicImage::ImageRgba8(img).to_rgb8();
 
-    // 4. Foreground layer: encode original image as JPEG
+    // 4. Background layer: encode RGB image as JPEG
+    //    (v1: no inpainting; text regions are left as-is)
+    let background_jpeg = jpeg::encode_rgb_to_jpeg(&rgb, config.bg_quality)?;
+
+    // 5. Foreground layer: encode RGB image as JPEG
     //    (v1: no text-only extraction; full image at fg_quality)
-    let foreground_jpeg = jpeg::encode_rgba_to_jpeg(rgba_data, width, height, config.fg_quality)?;
+    let foreground_jpeg = jpeg::encode_rgb_to_jpeg(&rgb, config.fg_quality)?;
 
     Ok(MrcLayers {
         mask_jbig2,

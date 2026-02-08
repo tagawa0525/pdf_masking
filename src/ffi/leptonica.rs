@@ -312,9 +312,19 @@ impl Pix {
     /// Uses default luminance weights (0.3 R, 0.59 G, 0.11 B) when all
     /// weight parameters are zero.
     ///
+    /// # Errors
+    /// Returns an error if the input image is not 32 bpp or if the
+    /// underlying leptonica conversion fails.
+    ///
     /// # Returns
     /// `Ok(Pix)` containing the 8-bit grayscale image, `Err` on failure
     pub fn convert_to_gray(&self) -> Result<Pix> {
+        if self.get_depth() != 32 {
+            return Err(PdfMaskError::segmentation(format!(
+                "convert_to_gray requires 32-bit input, got {}-bit",
+                self.get_depth()
+            )));
+        }
         unsafe {
             let ptr = pixConvertRGBToGray(self.ptr, 0.0, 0.0, 0.0);
             if ptr.is_null() {
