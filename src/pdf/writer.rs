@@ -4,9 +4,39 @@ use lopdf::{Document, Object, Stream, dictionary};
 
 use crate::mrc::MrcLayers;
 
+/// PDF Name仕様 (PDF Reference 7.3.5) に従い、名前をエスケープする。
+///
+/// 空白・デリミタ・非印字文字(ASCII 33〜126の範囲外)を`#XX`形式に変換する。
+/// `#`自体もエスケープする。
+fn escape_pdf_name(name: &str) -> String {
+    let mut escaped = String::with_capacity(name.len());
+    for b in name.bytes() {
+        match b {
+            // PDF delimiters: ( ) < > [ ] { } / %
+            // Plus: space (0x20), #(0x23), and non-printable (outside 0x21..=0x7E)
+            b'(' | b')' | b'<' | b'>' | b'[' | b']' | b'{' | b'}' | b'/' | b'%' | b'#' | b' ' => {
+                escaped.push_str(&format!("#{:02X}", b));
+            }
+            0x21..=0x7E => {
+                escaped.push(b as char);
+            }
+            _ => {
+                escaped.push_str(&format!("#{:02X}", b));
+            }
+        }
+    }
+    escaped
+}
+
 /// MrcLayersからPDF XObjectを作成し、ページに追加する。
 pub struct MrcPageWriter {
     doc: Document,
+}
+
+impl Default for MrcPageWriter {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl MrcPageWriter {
@@ -19,7 +49,7 @@ impl MrcPageWriter {
     /// 背景JPEG XObjectを追加する。
     ///
     /// 戻り値はXObjectのオブジェクトID。
-    pub fn add_background_xobject(
+    pub(crate) fn add_background_xobject(
         &mut self,
         jpeg_data: &[u8],
         width: u32,
@@ -41,7 +71,7 @@ impl MrcPageWriter {
     /// マスクJBIG2 XObjectを追加する。
     ///
     /// 戻り値はXObjectのオブジェクトID。
-    pub fn add_mask_xobject(
+    pub(crate) fn add_mask_xobject(
         &mut self,
         jbig2_data: &[u8],
         width: u32,
@@ -63,7 +93,7 @@ impl MrcPageWriter {
     /// 前景JPEG XObjectを追加する（SMaskとしてmask_idを参照）。
     ///
     /// 戻り値はXObjectのオブジェクトID。
-    pub fn add_foreground_xobject(
+    pub(crate) fn add_foreground_xobject(
         &mut self,
         jpeg_data: &[u8],
         width: u32,
@@ -94,10 +124,10 @@ impl MrcPageWriter {
         width: u32,
         height: u32,
     ) -> Vec<u8> {
-        format!(
-            "q {width} 0 0 {height} 0 0 cm /{bg_name} Do Q q {width} 0 0 {height} 0 0 cm /{fg_name} Do Q"
-        )
-        .into_bytes()
+        let bg = escape_pdf_name(bg_name);
+        let fg = escape_pdf_name(fg_name);
+        format!("q {width} 0 0 {height} 0 0 cm /{bg} Do Q q {width} 0 0 {height} 0 0 cm /{fg} Do Q")
+            .into_bytes()
     }
 
     /// MrcLayersからPDFページを構築する。
@@ -161,13 +191,122 @@ impl MrcPageWriter {
     }
 
     /// PDFドキュメントをバイト列として出力する。
-    pub fn save_to_bytes(&self) -> crate::error::Result<Vec<u8>> {
-        let mut buf = Vec::new();
-        // clone to avoid borrowing issues with save_to (takes &mut self in lopdf)
+    ///
+    /// Catalog及びPagesが存在しない場合はエラーを返す。
+    pub fn save_to_bytes(&mut self) -> crate::error::Result<Vec<u8>> {
+        // Catalog/Pagesの存在を検証する
+        let root_ref = self.doc.trailer.get(b"Root").map_err(|_| {
+            crate::error::PdfMaskError::pdf_write("missing Catalog (Root) in trailer")
+        })?;
+        let catalog_id = root_ref
+            .as_reference()
+            .map_err(|_| crate::error::PdfMaskError::pdf_write("Root is not a reference"))?;
+        let catalog = self
+            .doc
+            .get_dictionary(catalog_id)
+            .map_err(|_| crate::error::PdfMaskError::pdf_write("Catalog object not found"))?;
+        let pages_ref = catalog
+            .get(b"Pages")
+            .map_err(|_| crate::error::PdfMaskError::pdf_write("missing Pages in Catalog"))?;
+        let pages_id = pages_ref
+            .as_reference()
+            .map_err(|_| crate::error::PdfMaskError::pdf_write("Pages is not a reference"))?;
         self.doc
-            .clone()
+            .get_dictionary(pages_id)
+            .map_err(|_| crate::error::PdfMaskError::pdf_write("Pages object not found"))?;
+
+        let mut buf = Vec::new();
+        self.doc
             .save_to(&mut buf)
             .map_err(|e| crate::error::PdfMaskError::pdf_write(e.to_string()))?;
         Ok(buf)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use lopdf::Document;
+
+    #[test]
+    fn test_escape_pdf_name_simple() {
+        assert_eq!(escape_pdf_name("BgImg"), "BgImg");
+    }
+
+    #[test]
+    fn test_escape_pdf_name_with_space() {
+        assert_eq!(escape_pdf_name("Bg Img"), "Bg#20Img");
+    }
+
+    #[test]
+    fn test_escape_pdf_name_with_delimiters() {
+        assert_eq!(escape_pdf_name("A(B)"), "A#28B#29");
+        assert_eq!(escape_pdf_name("A/B"), "A#2FB");
+        assert_eq!(escape_pdf_name("A#B"), "A#23B");
+    }
+
+    #[test]
+    fn test_escape_pdf_name_non_printable() {
+        assert_eq!(escape_pdf_name("A\x00B"), "A#00B");
+        assert_eq!(escape_pdf_name("A\x7FB"), "A#7FB");
+    }
+
+    #[test]
+    fn test_create_background_xobject() {
+        let jpeg_data: Vec<u8> = vec![0xFF, 0xD8, 0xFF, 0xE0];
+        let mut writer = MrcPageWriter::new();
+        let obj_id = writer.add_background_xobject(&jpeg_data, 640, 480);
+        assert!(obj_id.0 > 0, "object id should be positive");
+    }
+
+    #[test]
+    fn test_create_mask_xobject() {
+        let jbig2_data: Vec<u8> = vec![0x97, 0x4A, 0x42, 0x32];
+        let mut writer = MrcPageWriter::new();
+        let obj_id = writer.add_mask_xobject(&jbig2_data, 800, 600);
+        assert!(obj_id.0 > 0, "object id should be positive");
+    }
+
+    #[test]
+    fn test_create_foreground_xobject_with_smask() {
+        let fg_jpeg: Vec<u8> = vec![0xFF, 0xD8, 0xFF, 0xE1];
+        let mask_jbig2: Vec<u8> = vec![0x97, 0x4A, 0x42, 0x32];
+        let mut writer = MrcPageWriter::new();
+        let mask_id = writer.add_mask_xobject(&mask_jbig2, 640, 480);
+        let fg_id = writer.add_foreground_xobject(&fg_jpeg, 640, 480, mask_id);
+
+        // Verify SMask reference via direct document access
+        let obj = writer.doc.get_object(fg_id).expect("get object");
+        let stream = obj.as_stream().expect("as stream");
+        let smask = stream.dict.get(b"SMask").expect("get SMask");
+        match smask {
+            Object::Reference(ref_id) => {
+                assert_eq!(*ref_id, mask_id, "SMask should reference the mask object");
+            }
+            _ => panic!("SMask should be a Reference, got {:?}", smask),
+        }
+    }
+
+    #[test]
+    fn test_save_to_bytes_without_catalog_fails() {
+        let mut writer = MrcPageWriter::new();
+        let result = writer.save_to_bytes();
+        assert!(result.is_err(), "save without Catalog should fail");
+    }
+
+    #[test]
+    fn test_save_to_bytes_with_valid_document() {
+        let layers = crate::mrc::MrcLayers {
+            background_jpeg: vec![0xFF, 0xD8, 0xFF, 0xE0],
+            foreground_jpeg: vec![0xFF, 0xD8, 0xFF, 0xE1],
+            mask_jbig2: vec![0x97, 0x4A, 0x42, 0x32],
+            width: 640,
+            height: 480,
+        };
+        let mut writer = MrcPageWriter::new();
+        writer.write_mrc_page(&layers).expect("write MRC page");
+        let pdf_bytes = writer.save_to_bytes().expect("save to bytes");
+        let doc = Document::load_mem(&pdf_bytes).expect("load PDF from memory");
+        assert_eq!(doc.get_pages().len(), 1);
     }
 }

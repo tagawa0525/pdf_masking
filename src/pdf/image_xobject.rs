@@ -13,6 +13,20 @@ pub fn bbox_overlaps(a: &BBox, b: &BBox) -> bool {
 ///
 /// v1ではplaceholder実装。実際のJPEGデコード→白塗り→再エンコードは
 /// Phase 7+で実装する。
-pub fn redact_region_placeholder() -> bool {
+#[allow(dead_code)]
+pub(crate) fn redact_region_placeholder() -> bool {
     true
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_redact_region_placeholder() {
+        assert!(
+            redact_region_placeholder(),
+            "placeholder should return true"
+        );
+    }
 }
