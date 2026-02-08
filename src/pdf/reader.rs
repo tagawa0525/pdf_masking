@@ -89,6 +89,7 @@ impl PdfReader {
                 lopdf::Object::Stream(s) => &s.dict,
                 _ => continue,
             };
+            #[allow(clippy::collapsible_if)]
             if let Ok(subtype) = obj_dict.get(b"Subtype").and_then(lopdf::Object::as_name) {
                 if subtype == b"Image" {
                     let name = String::from_utf8_lossy(name_bytes);

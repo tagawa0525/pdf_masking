@@ -1,8 +1,8 @@
 // Phase 3: 安全ラッパー（Pix型、RAII Drop）
 
 use super::leptonica_sys::{
-    pixClone, pixConvertRGBToGray, pixCreate, pixDestroy, pixGetData, pixGetDepth, pixGetHeight,
-    pixGetRegionsBinary, pixGetWidth, pixGetWpl, pixOtsuAdaptiveThreshold, pixSetAll, PIX,
+    PIX, pixClone, pixConvertRGBToGray, pixCreate, pixDestroy, pixGetData, pixGetDepth,
+    pixGetHeight, pixGetRegionsBinary, pixGetWidth, pixGetWpl, pixOtsuAdaptiveThreshold, pixSetAll,
 };
 use crate::error::{PdfMaskError, Result};
 use std::ptr;

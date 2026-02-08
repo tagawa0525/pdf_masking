@@ -1,10 +1,10 @@
 // Phase 2: コンテンツストリーム解析テスト
 
-use pdf_masking::pdf::content_stream::{extract_xobject_placements, Matrix};
+use pdf_masking::pdf::content_stream::{Matrix, extract_xobject_placements};
 use pdf_masking::pdf::reader::PdfReader;
 
 use lopdf::content::{Content, Operation};
-use lopdf::{dictionary, Document, Object, Stream};
+use lopdf::{Document, Object, Stream, dictionary};
 
 // ============================================================
 // Helper: lopdfで最小限のテスト用PDFをファイルに書き出す

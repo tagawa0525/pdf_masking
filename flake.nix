@@ -33,6 +33,7 @@
             qpdf
             libjpeg
             libpng
+            pdfium-binaries
 
             # Development tools
             markdownlint-cli
@@ -49,7 +50,11 @@
               pkgs.libjpeg
               pkgs.libpng
               pkgs.libclang.lib
+              pkgs.pdfium-binaries
             ]}:$LD_LIBRARY_PATH"
+
+            # pdfium path for pdfium-render dynamic loading
+            export PDFIUM_DYNAMIC_LIB_PATH="${pkgs.pdfium-binaries}/lib"
             export PKG_CONFIG_PATH="${pkgs.leptonica}/lib/pkgconfig:$PKG_CONFIG_PATH"
             export LIBCLANG_PATH="${pkgs.libclang.lib}/lib"
             export BINDGEN_EXTRA_CLANG_ARGS="''${BINDGEN_EXTRA_CLANG_ARGS:-} -I${pkgs.libclang.lib}/lib/clang/${pkgs.libclang.version}/include"

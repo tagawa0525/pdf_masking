@@ -1,6 +1,6 @@
 // Phase 1: 設定ファイル解析テスト (RED)
 
-use pdf_masking::config::job::{parse_page_range, JobFile};
+use pdf_masking::config::job::{JobFile, parse_page_range};
 use pdf_masking::config::load_settings_for_job;
 use pdf_masking::config::merged::MergedConfig;
 use pdf_masking::config::settings::Settings;
