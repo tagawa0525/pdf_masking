@@ -1,2 +1,51 @@
-// Phase 11: qpdf-rs ラッパー: リニアライズ
-// TODO: Implement in Phase 11
+// Phase 11: PDF linearization via qpdf CLI wrapper
+
+use std::process::Command;
+
+/// Linearize a PDF file using qpdf.
+///
+/// Creates a linearized copy of the input PDF at the output path.
+/// If input_path == output_path, uses qpdf's --replace-input mode.
+///
+/// qpdf must be available in PATH (provided by nix develop environment).
+#[allow(dead_code)]
+pub fn linearize(input_path: &str, output_path: &str) -> crate::error::Result<()> {
+    let output = if input_path == output_path {
+        // In-place mode: qpdf --linearize --replace-input <path>
+        Command::new("qpdf")
+            .args(["--linearize", "--replace-input", input_path])
+            .output()
+    } else {
+        // Separate output: qpdf --linearize <input> <output>
+        Command::new("qpdf")
+            .args(["--linearize", input_path, output_path])
+            .output()
+    };
+
+    match output {
+        Ok(result) => {
+            if result.status.success() {
+                Ok(())
+            } else {
+                let stderr = String::from_utf8_lossy(&result.stderr);
+                Err(crate::error::PdfMaskError::linearize(format!(
+                    "qpdf failed (exit code {}): {}",
+                    result
+                        .status
+                        .code()
+                        .map_or_else(|| "unknown".to_string(), |c| c.to_string()),
+                    stderr.trim()
+                )))
+            }
+        }
+        Err(e) => Err(crate::error::PdfMaskError::linearize(format!(
+            "failed to execute qpdf: {e}"
+        ))),
+    }
+}
+
+/// Linearize a PDF in-place (replaces the original file).
+#[allow(dead_code)]
+pub fn linearize_in_place(path: &str) -> crate::error::Result<()> {
+    linearize(path, path)
+}
