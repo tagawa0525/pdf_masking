@@ -8,7 +8,7 @@ use pdf_masking::render::pdfium::render_page;
 /// Create a minimal 1-page PDF (Letter size: 612x792 points) using lopdf.
 /// Returns the path to a temporary file containing the PDF.
 fn create_test_pdf(dir: &tempfile::TempDir) -> String {
-    use lopdf::{dictionary, Document, Object, Stream};
+    use lopdf::{Document, Object, Stream, dictionary};
 
     let mut doc = Document::with_version("1.4");
 
@@ -38,10 +38,8 @@ fn create_test_pdf(dir: &tempfile::TempDir) -> String {
     let pages_id = doc.add_object(pages);
 
     // Set Parent reference on page
-    if let Ok(page_obj) = doc.get_object_mut(page_id) {
-        if let Object::Dictionary(ref mut dict) = page_obj {
-            dict.set("Parent", pages_id);
-        }
+    if let Ok(Object::Dictionary(dict)) = doc.get_object_mut(page_id) {
+        dict.set("Parent", pages_id);
     }
 
     // Catalog

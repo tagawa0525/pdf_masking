@@ -1,5 +1,5 @@
-use serde::de::{self, SeqAccess, Visitor};
 use serde::Deserialize;
+use serde::de::{self, SeqAccess, Visitor};
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct JobFile {

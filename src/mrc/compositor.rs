@@ -1,6 +1,6 @@
 // Phase 5: pipeline integration: bitmap + config -> MrcLayers
 
-use super::{jbig2, jpeg, segmenter, MrcLayers};
+use super::{MrcLayers, jbig2, jpeg, segmenter};
 use crate::error::PdfMaskError;
 use image::{DynamicImage, RgbaImage};
 

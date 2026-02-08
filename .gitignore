@@ -1,2 +1,3 @@
 /target
 .dirlocal
+/vendor/pdfium/
