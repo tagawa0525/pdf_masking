@@ -266,7 +266,6 @@ fn test_job_config_creation() {
 
 /// TextMaskedモードでキャッシュが効くことを検証（store → 2回目でcache hit）
 #[test]
-#[ignore]
 fn test_process_page_text_masked_cache_roundtrip() {
     use std::collections::HashMap;
 

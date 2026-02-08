@@ -358,7 +358,6 @@ fn sample_text_masked_data() -> TextMaskedData {
 
 /// TextMaskedDataをstore→retrieveし、全フィールドが一致することを検証。
 #[test]
-#[ignore]
 fn test_store_and_retrieve_text_masked() {
     let dir = tempdir().expect("create temp dir");
     let store = CacheStore::new(dir.path());
@@ -399,7 +398,6 @@ fn test_store_and_retrieve_text_masked() {
 
 /// modified_imagesを含むTextMaskedDataをstore→retrieveし、画像データが復元されることを検証。
 #[test]
-#[ignore]
 fn test_store_and_retrieve_text_masked_with_modified_images() {
     let dir = tempdir().expect("create temp dir");
     let store = CacheStore::new(dir.path());
@@ -454,7 +452,6 @@ fn test_store_and_retrieve_text_masked_with_modified_images() {
 
 /// TextMaskedDataをstore後にcontainsがtrueを返すことを検証。
 #[test]
-#[ignore]
 fn test_contains_text_masked() {
     let dir = tempdir().expect("create temp dir");
     let store = CacheStore::new(dir.path());
@@ -474,7 +471,6 @@ fn test_contains_text_masked() {
 
 /// TextMaskedキャッシュのディスク上のファイル構造を検証。
 #[test]
-#[ignore]
 fn test_text_masked_cache_files_on_disk() {
     let dir = tempdir().expect("create temp dir");
     let store = CacheStore::new(dir.path());

@@ -77,7 +77,14 @@ pub fn process_page(
                     });
                 }
             }
-            PageOutput::Skip(_) | PageOutput::TextMasked(_) => {}
+            PageOutput::TextMasked(_) => {
+                return Ok(ProcessedPage {
+                    page_index,
+                    output: cached,
+                    cache_key,
+                });
+            }
+            PageOutput::Skip(_) => {}
         }
         // Dimension mismatch: treat as cache miss and recompose
     }
