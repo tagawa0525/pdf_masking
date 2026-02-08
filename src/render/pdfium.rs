@@ -6,34 +6,22 @@ use std::path::PathBuf;
 
 /// Resolves the path to the pdfium shared library.
 ///
-/// Search order:
-/// 1. `PDFIUM_DYNAMIC_LIB_PATH` environment variable
-/// 2. `vendor/pdfium/lib/` relative to the project root (for development)
+/// Uses `PDFIUM_DYNAMIC_LIB_PATH` environment variable (set by flake.nix).
 fn resolve_pdfium_lib_path() -> crate::error::Result<PathBuf> {
-    // 1. Check environment variable
-    if let Ok(path) = std::env::var("PDFIUM_DYNAMIC_LIB_PATH") {
-        let p = PathBuf::from(&path);
-        if p.exists() {
-            return Ok(p);
-        }
-        return Err(crate::error::PdfMaskError::render(format!(
-            "PDFIUM_DYNAMIC_LIB_PATH is set to '{}' but the path does not exist",
+    let path = std::env::var("PDFIUM_DYNAMIC_LIB_PATH").map_err(|_| {
+        crate::error::PdfMaskError::render(
+            "PDFIUM_DYNAMIC_LIB_PATH not set: run inside `nix develop`",
+        )
+    })?;
+    let p = PathBuf::from(&path);
+    if p.exists() {
+        Ok(p)
+    } else {
+        Err(crate::error::PdfMaskError::render(format!(
+            "PDFIUM_DYNAMIC_LIB_PATH='{}' does not exist",
             path
-        )));
+        )))
     }
-
-    // 2. Fallback: vendor/pdfium/lib/ relative to project root
-    //    In development, CARGO_MANIFEST_DIR points to the project root.
-    if let Ok(manifest_dir) = std::env::var("CARGO_MANIFEST_DIR") {
-        let vendor_path = PathBuf::from(&manifest_dir).join("vendor/pdfium/lib");
-        if vendor_path.exists() {
-            return Ok(vendor_path);
-        }
-    }
-
-    Err(crate::error::PdfMaskError::render(
-        "pdfium library not found: set PDFIUM_DYNAMIC_LIB_PATH or place libpdfium.so in vendor/pdfium/lib/",
-    ))
 }
 
 /// Creates a new Pdfium instance by dynamically loading the shared library.
