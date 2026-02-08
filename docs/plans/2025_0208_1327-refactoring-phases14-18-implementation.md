@@ -4,7 +4,7 @@
 
 Phase 1-13 の TDD 開発完了後のコードレビューで、3つの横断的構造
 問題と複数の個別課題が発見された。レビュー結果
-(`docs/plans/code-review-findings.md`) に基づき、5つの PR で
+(`docs/plans/2025_0208_1245-code-review-findings.md`) に基づき、5つの PR で
 リファクタリングを段階的に実施する。
 
 1つの PR を作成 → レビュー → 修正 → マージの順で完了させてから次に進む。
@@ -13,7 +13,7 @@ Phase 1-13 の TDD 開発完了後のコードレビューで、3つの横断的
 
 ## Step 0: レビュー結果ドキュメントのコミット
 
-`docs/plans/code-review-findings.md` を main にマージするための PR を作成。
+`docs/plans/2025_0208_1245-code-review-findings.md` を main にマージするための PR を作成。
 
 ---
 
@@ -40,7 +40,7 @@ Phase 1-13 の TDD 開発完了後のコードレビューで、3つの横断的
 
 **残す箇所 (実際の dead code):**
 
-- `src/pdf/image_xobject.rs:16` — Phase 7+ スタブ
+- `src/pdf/image_xobject.rs:17` — Phase 7+ スタブ
 
 **手順:**
 

@@ -8,13 +8,11 @@
 
 ## `unsafe` の調査結果: 問題なし
 
-全13箇所、すべて FFI（C ライブラリ連携）に必要なもの。不要な
-`unsafe` は存在しない。
+すべて FFI（C ライブラリ連携）に必要なもの。不要な `unsafe` は存在しない。
 
-- `src/ffi/leptonica.rs` (10箇所): leptonica C ライブラリの呼び出し・
-  メモリ管理
+- `src/ffi/leptonica.rs` (12箇所): leptonica C ライブラリの呼び出し・メモリ管理
 - `src/ffi/jbig2enc_sys.rs` (1箇所): jbig2enc C 関数の FFI 宣言
-- `src/ffi/jbig2enc.rs` (2箇所): jbig2enc 呼び出しとバッファ変換・解放
+- `src/ffi/jbig2enc.rs` (3箇所): jbig2enc 呼び出しとバッファ変換・解放
 
 すべての `unsafe` ブロックで以下が守られている:
 
