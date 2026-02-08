@@ -345,7 +345,10 @@ fn sample_text_masked_data() -> TextMaskedData {
     TextMaskedData {
         stripped_content_stream: b"q 100 0 0 100 0 0 cm /Im1 Do Q".to_vec(),
         text_regions: vec![TextRegionCrop {
-            jpeg_data: vec![0xFF, 0xD8, 0xFF, 0xE0, 0x00, 0x10],
+            data: vec![0xFF, 0xD8, 0xFF, 0xE0, 0x00, 0x10],
+            filter: "DCTDecode".to_string(),
+            color_space: "DeviceRGB".to_string(),
+            bits_per_component: 8,
             bbox_points: BBox {
                 x_min: 72.0,
                 y_min: 600.0,
@@ -387,7 +390,7 @@ fn test_store_and_retrieve_text_masked() {
             assert_eq!(tm.color_mode, ColorMode::Rgb);
             assert_eq!(tm.text_regions.len(), 1);
             let region = &tm.text_regions[0];
-            assert_eq!(region.jpeg_data, vec![0xFF, 0xD8, 0xFF, 0xE0, 0x00, 0x10]);
+            assert_eq!(region.data, vec![0xFF, 0xD8, 0xFF, 0xE0, 0x00, 0x10]);
             assert_eq!(region.pixel_width, 128);
             assert_eq!(region.pixel_height, 100);
             assert!((region.bbox_points.x_min - 72.0).abs() < f64::EPSILON);
@@ -494,7 +497,7 @@ fn test_text_masked_cache_files_on_disk() {
     let data = TextMaskedData {
         stripped_content_stream: b"q Q".to_vec(),
         text_regions: vec![TextRegionCrop {
-            jpeg_data: vec![0xFF, 0xD8],
+            data: vec![0xFF, 0xD8],
             bbox_points: BBox {
                 x_min: 0.0,
                 y_min: 0.0,
@@ -503,6 +506,9 @@ fn test_text_masked_cache_files_on_disk() {
             },
             pixel_width: 50,
             pixel_height: 50,
+            filter: "DCTDecode".to_string(),
+            color_space: "DeviceRGB".to_string(),
+            bits_per_component: 8,
         }],
         modified_images,
         page_index: 0,

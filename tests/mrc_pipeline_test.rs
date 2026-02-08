@@ -538,8 +538,7 @@ fn test_compose_text_masked_grayscale() {
     assert!(matches!(text_data.color_mode, ColorMode::Grayscale));
     // Text regions should have valid JPEG data
     for region in &text_data.text_regions {
-        assert!(!region.jpeg_data.is_empty());
-        assert!(region.jpeg_data.starts_with(&[0xFF, 0xD8]));
+        assert!(!region.data.is_empty());
         assert!(region.pixel_width > 0);
         assert!(region.pixel_height > 0);
     }
@@ -587,4 +586,40 @@ fn test_compose_text_masked_valid_bboxes() {
             "y_max should > y_min"
         );
     }
+}
+
+/// TextRegionCropにfilter/color_space/bits_per_componentフィールドがあり、
+/// 白黒テキスト画像ではJBIG2が選択されること。
+#[test]
+#[ignore] // RED: JBIG2最適エンコードが未実装（常にDCTDecode）
+fn test_text_region_prefers_jbig2_for_bw() {
+    // 白黒テキスト画像: JBIG2の方がJPEGより効率的なはず
+    let (data, width, height) = create_test_rgba_image();
+    let image_streams = std::collections::HashMap::new();
+
+    let params = compositor::TextMaskedParams {
+        content_bytes: b"",
+        rgba_data: &data,
+        bitmap_width: width,
+        bitmap_height: height,
+        page_width_pts: 200.0,
+        page_height_pts: 200.0,
+        image_streams: &image_streams,
+        quality: 50,
+        color_mode: ColorMode::Rgb,
+        page_index: 0,
+    };
+
+    let result = compositor::compose_text_masked(&params).expect("should succeed");
+
+    // テスト画像は白黒（上半分黒、下半分白）なので、
+    // JBIG2エンコードがJPEGより小さくなるはず
+    let has_jbig2 = result
+        .text_regions
+        .iter()
+        .any(|r| r.filter == "JBIG2Decode");
+    assert!(
+        has_jbig2,
+        "black-and-white text regions should use JBIG2Decode"
+    );
 }

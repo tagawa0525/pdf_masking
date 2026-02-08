@@ -62,6 +62,22 @@ struct TextRegionMeta {
     pixel_width: u32,
     pixel_height: u32,
     file: String,
+    #[serde(default = "default_dct_filter")]
+    filter: String,
+    #[serde(default = "default_device_rgb")]
+    color_space: String,
+    #[serde(default = "default_bpc_8")]
+    bits_per_component: u8,
+}
+
+fn default_dct_filter() -> String {
+    "DCTDecode".to_string()
+}
+fn default_device_rgb() -> String {
+    "DeviceRGB".to_string()
+}
+fn default_bpc_8() -> u8 {
+    8
 }
 
 /// リダクション済み画像のキャッシュメタデータ。
@@ -252,17 +268,25 @@ impl CacheStore {
         )
         .map_err(|e| PdfMaskError::cache(e.to_string()))?;
 
-        // region_*.jpg
+        // region_*.{jpg,jbig2}
         let mut region_metas = Vec::with_capacity(data.text_regions.len());
         for (i, region) in data.text_regions.iter().enumerate() {
-            let filename = format!("region_{}.jpg", i);
-            fs::write(tmp_dir.join(&filename), &region.jpeg_data)
+            let ext = if region.filter == "JBIG2Decode" {
+                "jbig2"
+            } else {
+                "jpg"
+            };
+            let filename = format!("region_{}.{}", i, ext);
+            fs::write(tmp_dir.join(&filename), &region.data)
                 .map_err(|e| PdfMaskError::cache(e.to_string()))?;
             region_metas.push(TextRegionMeta {
                 bbox: region.bbox_points.clone(),
                 pixel_width: region.pixel_width,
                 pixel_height: region.pixel_height,
                 file: filename,
+                filter: region.filter.clone(),
+                color_space: region.color_space.clone(),
+                bits_per_component: region.bits_per_component,
             });
         }
 
@@ -386,13 +410,16 @@ impl CacheStore {
 
         let mut text_regions = Vec::with_capacity(metadata.regions.len());
         for region_meta in &metadata.regions {
-            let jpeg_data = fs::read(dir.join(&region_meta.file))
+            let data = fs::read(dir.join(&region_meta.file))
                 .map_err(|e| PdfMaskError::cache(e.to_string()))?;
             text_regions.push(TextRegionCrop {
-                jpeg_data,
+                data,
                 bbox_points: region_meta.bbox.clone(),
                 pixel_width: region_meta.pixel_width,
                 pixel_height: region_meta.pixel_height,
+                filter: region_meta.filter.clone(),
+                color_space: region_meta.color_space.clone(),
+                bits_per_component: region_meta.bits_per_component,
             });
         }
 

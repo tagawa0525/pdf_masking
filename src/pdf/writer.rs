@@ -324,22 +324,17 @@ impl MrcPageWriter {
             dict.set("Parent", Object::Reference(pages_id));
         }
 
-        let color_space = match data.color_mode {
-            ColorMode::Grayscale => "DeviceGray",
-            _ => "DeviceRGB",
-        };
-
         // テキスト領域XObjectを作成
         let mut text_xobjects: Vec<(String, lopdf::ObjectId)> = Vec::new();
         for (i, region) in data.text_regions.iter().enumerate() {
             let name = format!("TxtRgn{}", i);
             let xobj_id = self.add_image_xobject(
-                &region.jpeg_data,
+                &region.data,
                 region.pixel_width,
                 region.pixel_height,
-                color_space,
-                8,
-                "DCTDecode",
+                &region.color_space,
+                region.bits_per_component.into(),
+                &region.filter,
                 None,
             );
             text_xobjects.push((name, xobj_id));

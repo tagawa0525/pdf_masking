@@ -247,6 +247,11 @@ pub fn compose_text_masked(params: &TextMaskedParams) -> crate::error::Result<Te
 
     let crops = crop_text_regions(&dynamic, &bboxes, params.quality, params.color_mode)?;
 
+    let color_space = match params.color_mode {
+        ColorMode::Grayscale => "DeviceGray",
+        _ => "DeviceRGB",
+    };
+
     let text_regions: Vec<TextRegionCrop> = crops
         .into_iter()
         .map(|(jpeg_data, pixel_bbox)| {
@@ -258,10 +263,13 @@ pub fn compose_text_masked(params: &TextMaskedParams) -> crate::error::Result<Te
                 params.bitmap_height,
             )?;
             Ok(TextRegionCrop {
-                jpeg_data,
+                data: jpeg_data,
                 bbox_points,
                 pixel_width: pixel_bbox.width,
                 pixel_height: pixel_bbox.height,
+                filter: "DCTDecode".to_string(),
+                color_space: color_space.to_string(),
+                bits_per_component: 8,
             })
         })
         .collect::<crate::error::Result<Vec<_>>>()?;

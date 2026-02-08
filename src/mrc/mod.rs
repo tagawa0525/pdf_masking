@@ -35,10 +35,17 @@ pub struct SkipData {
 /// テキスト領域のクロップ結果
 #[derive(Debug)]
 pub struct TextRegionCrop {
-    pub jpeg_data: Vec<u8>,
+    /// エンコード済み画像データ（JPEGまたはJBIG2）
+    pub data: Vec<u8>,
     pub bbox_points: BBox,
     pub pixel_width: u32,
     pub pixel_height: u32,
+    /// PDF Filter名 ("DCTDecode" or "JBIG2Decode")
+    pub filter: String,
+    /// PDF ColorSpace名 ("DeviceRGB" or "DeviceGray")
+    pub color_space: String,
+    /// BitsPerComponent (8 for JPEG, 1 for JBIG2)
+    pub bits_per_component: u8,
 }
 
 /// 画像XObjectの変更内容
