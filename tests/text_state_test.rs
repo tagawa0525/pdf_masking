@@ -1,6 +1,6 @@
 // テキスト状態パーサのテスト (RED phase)
 
-use pdf_masking::pdf::text_state::{FillColor, TextDrawCommand, parse_content_operations};
+use pdf_masking::pdf::text_state::{FillColor, parse_content_operations};
 
 // ============================================================
 // 1. 基本的なテキストブロック解析
