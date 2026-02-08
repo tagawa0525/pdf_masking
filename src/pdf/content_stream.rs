@@ -140,7 +140,7 @@ pub fn extract_xobject_placements(
 }
 
 /// lopdfのObjectから数値をf64として取得する。
-fn operand_to_f64(obj: &lopdf::Object) -> crate::error::Result<f64> {
+pub(crate) fn operand_to_f64(obj: &lopdf::Object) -> crate::error::Result<f64> {
     match obj {
         lopdf::Object::Integer(i) => Ok(*i as f64),
         lopdf::Object::Real(r) => Ok(*r as f64),
