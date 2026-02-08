@@ -7,8 +7,7 @@ pub struct PdfReader {
 impl PdfReader {
     /// PDFファイルを開いてPdfReaderを作成する。
     pub fn open(path: &str) -> crate::error::Result<Self> {
-        let doc = Document::load(path)
-            .map_err(|e| crate::error::PdfMaskError::pdf_read(e.to_string()))?;
+        let doc = Document::load(path)?;
         Ok(Self { doc })
     }
 
@@ -21,18 +20,13 @@ impl PdfReader {
     /// 複数のContentストリームがある場合は結合して返す。
     pub fn page_content_stream(&self, page_num: u32) -> crate::error::Result<Vec<u8>> {
         let page_id = self.get_page_id(page_num)?;
-        self.doc
-            .get_page_content(page_id)
-            .map_err(|e| crate::error::PdfMaskError::pdf_read(e.to_string()))
+        Ok(self.doc.get_page_content(page_id)?)
     }
 
     /// 指定ページ(1-indexed)のXObjectリソースのうち、Subtype=ImageのXObject名一覧を返す。
     pub fn page_xobject_names(&self, page_num: u32) -> crate::error::Result<Vec<String>> {
         let page_id = self.get_page_id(page_num)?;
-        let (resource_dict, resource_ids) = self
-            .doc
-            .get_page_resources(page_id)
-            .map_err(|e| crate::error::PdfMaskError::pdf_read(e.to_string()))?;
+        let (resource_dict, resource_ids) = self.doc.get_page_resources(page_id)?;
 
         let mut names = Vec::new();
 
@@ -43,10 +37,7 @@ impl PdfReader {
 
         // 参照されているResources（親ページツリーから継承されたものも含む）
         for res_id in resource_ids {
-            let dict = self
-                .doc
-                .get_dictionary(res_id)
-                .map_err(|e| crate::error::PdfMaskError::pdf_read(e.to_string()))?;
+            let dict = self.doc.get_dictionary(res_id)?;
             names.extend(self.collect_image_names_from_dict(dict)?);
         }
 
@@ -69,23 +60,22 @@ impl PdfReader {
 
         let xobject_dict = match xobject_entry {
             lopdf::Object::Dictionary(d) => d,
-            lopdf::Object::Reference(id) => self
-                .doc
-                .get_object(*id)
-                .and_then(lopdf::Object::as_dict)
-                .map_err(|e| crate::error::PdfMaskError::pdf_read(e.to_string()))?,
+            lopdf::Object::Reference(id) => {
+                self.doc.get_object(*id).and_then(lopdf::Object::as_dict)?
+            }
             _ => return Ok(names),
         };
 
         for (name_bytes, value) in xobject_dict.iter() {
             // XObjectの実体を取得してSubtype=Imageかチェック
             let obj_dict = match value {
-                lopdf::Object::Reference(id) => self
-                    .doc
-                    .get_object(*id)
-                    .and_then(lopdf::Object::as_stream)
-                    .map(|s| &s.dict)
-                    .map_err(|e| crate::error::PdfMaskError::pdf_read(e.to_string()))?,
+                lopdf::Object::Reference(id) => {
+                    &self
+                        .doc
+                        .get_object(*id)
+                        .and_then(lopdf::Object::as_stream)?
+                        .dict
+                }
                 lopdf::Object::Stream(s) => &s.dict,
                 _ => continue,
             };
