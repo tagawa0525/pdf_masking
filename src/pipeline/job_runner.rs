@@ -19,8 +19,10 @@ use crate::render::pdfium::render_page;
 pub struct JobConfig {
     pub input_path: PathBuf,
     pub output_path: PathBuf,
-    /// 0-based page index and its color mode, sorted by page index.
-    pub page_modes: Vec<(u32, ColorMode)>,
+    /// Default color mode for pages not in overrides map.
+    pub default_color_mode: ColorMode,
+    /// 1-based page overrides (from resolve_page_modes).
+    pub color_mode_overrides: std::collections::HashMap<u32, ColorMode>,
     pub dpi: u32,
     pub bg_quality: u8,
     pub fg_quality: u8,
@@ -45,21 +47,31 @@ pub fn run_job(config: &JobConfig) -> crate::error::Result<JobResult> {
     let reader = PdfReader::open(&config.input_path)?;
     let page_count = reader.page_count();
 
-    // Validate all page indices are within range
-    for &(page_idx, _) in &config.page_modes {
-        let page_num = page_idx + 1;
-        if page_num > page_count {
+    // Validate override page numbers are within range
+    for &page_num in config.color_mode_overrides.keys() {
+        if page_num < 1 || page_num > page_count {
             return Err(PdfMaskError::pdf_read(format!(
-                "page index {} out of range (document has {} pages)",
-                page_idx, page_count
+                "override page {} out of range (document has {} pages)",
+                page_num, page_count
             )));
         }
     }
 
+    // Build page_modes for all pages (convert 1-based to 0-based)
+    let page_modes: Vec<(u32, ColorMode)> = (1..=page_count)
+        .map(|p| {
+            let mode = config
+                .color_mode_overrides
+                .get(&p)
+                .copied()
+                .unwrap_or(config.default_color_mode);
+            (p - 1, mode)
+        })
+        .collect();
+
     // --- Phase A: Content stream analysis (sequential) ---
     // Skip pages don't need content streams or rendering.
-    let non_skip: Vec<(u32, ColorMode)> = config
-        .page_modes
+    let non_skip: Vec<(u32, ColorMode)> = page_modes
         .iter()
         .filter(|(_, mode)| *mode != ColorMode::Skip)
         .copied()
@@ -117,7 +129,7 @@ pub fn run_job(config: &JobConfig) -> crate::error::Result<JobResult> {
     }
 
     // Add skip pages directly (no rendering or MRC processing needed)
-    for &(page_idx, mode) in &config.page_modes {
+    for &(page_idx, mode) in &page_modes {
         if mode == ColorMode::Skip {
             successful_pages.push(ProcessedPage {
                 page_index: page_idx,

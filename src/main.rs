@@ -5,7 +5,6 @@ use pdf_masking::config::job::JobFile;
 use pdf_masking::config::merged::MergedConfig;
 use pdf_masking::config::{self};
 use pdf_masking::linearize;
-use pdf_masking::pdf::reader::PdfReader;
 use pdf_masking::pipeline::job_runner::JobConfig;
 use pdf_masking::pipeline::orchestrator::run_all_jobs;
 
@@ -73,19 +72,9 @@ fn main() -> ExitCode {
             let input_path = resolve_path(&job_dir, &job.input);
             let output_path = resolve_path(&job_dir, &job.output);
 
-            // Open PDF to get page count for page mode resolution
-            let reader = match PdfReader::open(&input_path) {
-                Ok(r) => r,
-                Err(e) => {
-                    eprintln!("ERROR: Failed to open {}: {e}", input_path.display());
-                    return ExitCode::FAILURE;
-                }
-            };
-            let page_count = reader.page_count();
-
             // Resolve per-page color mode overrides (1-based)
-            let default_mode = merged.color_mode;
-            let overrides = match job.resolve_page_modes() {
+            let default_color_mode = merged.color_mode;
+            let color_mode_overrides = match job.resolve_page_modes() {
                 Ok(m) => m,
                 Err(e) => {
                     eprintln!("ERROR: {e}");
@@ -93,31 +82,13 @@ fn main() -> ExitCode {
                 }
             };
 
-            // Validate override page numbers are within range
-            for &page_num in overrides.keys() {
-                if page_num < 1 || page_num > page_count {
-                    eprintln!(
-                        "ERROR: Override page {} out of range (document has {} pages)",
-                        page_num, page_count
-                    );
-                    return ExitCode::FAILURE;
-                }
-            }
-
-            // Build page_modes for all pages (convert 1-based to 0-based)
-            let page_modes: Vec<(u32, _)> = (1..=page_count)
-                .map(|p| {
-                    let mode = overrides.get(&p).copied().unwrap_or(default_mode);
-                    (p - 1, mode)
-                })
-                .collect();
-
             linearize_flags.push(merged.linearize);
 
             job_configs.push(JobConfig {
                 input_path,
                 output_path,
-                page_modes,
+                default_color_mode,
+                color_mode_overrides,
                 dpi: merged.dpi,
                 bg_quality: merged.bg_quality,
                 fg_quality: merged.fg_quality,

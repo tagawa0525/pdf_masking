@@ -124,14 +124,17 @@ fn test_process_page_cache_hit() {
 
 #[test]
 fn test_job_config_creation() {
+    use std::collections::HashMap;
+
+    let mut overrides = HashMap::new();
+    overrides.insert(2, ColorMode::Bw);
+    overrides.insert(3, ColorMode::Skip);
+
     let config = JobConfig {
         input_path: PathBuf::from("input.pdf"),
         output_path: PathBuf::from("output.pdf"),
-        page_modes: vec![
-            (0, ColorMode::Rgb),
-            (1, ColorMode::Bw),
-            (2, ColorMode::Skip),
-        ],
+        default_color_mode: ColorMode::Rgb,
+        color_mode_overrides: overrides.clone(),
         dpi: 300,
         bg_quality: 50,
         fg_quality: 30,
@@ -141,10 +144,10 @@ fn test_job_config_creation() {
 
     assert_eq!(config.input_path, Path::new("input.pdf"));
     assert_eq!(config.output_path, Path::new("output.pdf"));
-    assert_eq!(config.page_modes.len(), 3);
-    assert_eq!(config.page_modes[0], (0, ColorMode::Rgb));
-    assert_eq!(config.page_modes[1], (1, ColorMode::Bw));
-    assert_eq!(config.page_modes[2], (2, ColorMode::Skip));
+    assert_eq!(config.default_color_mode, ColorMode::Rgb);
+    assert_eq!(config.color_mode_overrides.len(), 2);
+    assert_eq!(config.color_mode_overrides.get(&2), Some(&ColorMode::Bw));
+    assert_eq!(config.color_mode_overrides.get(&3), Some(&ColorMode::Skip));
     assert_eq!(config.dpi, 300);
     assert_eq!(config.bg_quality, 50);
     assert_eq!(config.fg_quality, 30);
