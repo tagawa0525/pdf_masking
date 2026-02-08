@@ -1,6 +1,9 @@
 // Phase 2: コンテンツストリーム解析テスト
 
-use pdf_masking::pdf::content_stream::{Matrix, extract_xobject_placements, strip_text_operators};
+use pdf_masking::mrc::segmenter::PixelBBox;
+use pdf_masking::pdf::content_stream::{
+    Matrix, extract_xobject_placements, pixel_to_page_coords, strip_text_operators,
+};
 use pdf_masking::pdf::reader::PdfReader;
 
 use lopdf::content::{Content, Operation};
@@ -605,6 +608,78 @@ fn test_strip_text_operators_multiple_text_blocks() {
     assert_eq!(decoded.operations[0].operator, "q");
     assert_eq!(decoded.operations[1].operator, "Do");
     assert_eq!(decoded.operations[2].operator, "Q");
+}
+
+// ============================================================
+// 4. pixel_to_page_coords テスト
+// ============================================================
+
+#[test]
+fn test_pixel_to_page_coords_basic() {
+    // 612x792pt ページ、300DPI → 2550x3300px ビットマップ
+    let pixel_bbox = PixelBBox {
+        x: 0,
+        y: 0,
+        width: 2550,
+        height: 3300,
+    };
+    let bbox = pixel_to_page_coords(&pixel_bbox, 612.0, 792.0, 2550, 3300);
+    assert_approx(bbox.x_min, 0.0);
+    assert_approx(bbox.y_min, 0.0);
+    assert_approx(bbox.x_max, 612.0);
+    assert_approx(bbox.y_max, 792.0);
+}
+
+#[test]
+fn test_pixel_to_page_coords_y_inversion() {
+    // ビットマップ上端（y=0）はPDFの上端（y=792）
+    let pixel_bbox = PixelBBox {
+        x: 0,
+        y: 0,
+        width: 100,
+        height: 100,
+    };
+    // 1000x1000px bitmap, 100x100pt page
+    let bbox = pixel_to_page_coords(&pixel_bbox, 100.0, 100.0, 1000, 1000);
+    // ビットマップ (0,0)-(100,100) → PDF (0,90)-(10,100)
+    assert_approx(bbox.x_min, 0.0);
+    assert_approx(bbox.y_min, 90.0); // 100 - 100*0.1 = 90
+    assert_approx(bbox.x_max, 10.0);
+    assert_approx(bbox.y_max, 100.0); // 100 - 0*0.1 = 100
+}
+
+#[test]
+fn test_pixel_to_page_coords_center_region() {
+    // ビットマップ中央の領域
+    let pixel_bbox = PixelBBox {
+        x: 250,
+        y: 250,
+        width: 500,
+        height: 500,
+    };
+    // 1000x1000px bitmap, 100x100pt page → scale=0.1
+    let bbox = pixel_to_page_coords(&pixel_bbox, 100.0, 100.0, 1000, 1000);
+    assert_approx(bbox.x_min, 25.0);
+    assert_approx(bbox.y_min, 25.0); // 100 - (250+500)*0.1 = 25
+    assert_approx(bbox.x_max, 75.0);
+    assert_approx(bbox.y_max, 75.0); // 100 - 250*0.1 = 75
+}
+
+#[test]
+fn test_pixel_to_page_coords_bottom_right() {
+    // ビットマップ右下（PDFの右下は y_min=0）
+    let pixel_bbox = PixelBBox {
+        x: 900,
+        y: 900,
+        width: 100,
+        height: 100,
+    };
+    // 1000x1000px bitmap, 100x100pt page → scale=0.1
+    let bbox = pixel_to_page_coords(&pixel_bbox, 100.0, 100.0, 1000, 1000);
+    assert_approx(bbox.x_min, 90.0);
+    assert_approx(bbox.y_min, 0.0); // 100 - (900+100)*0.1 = 0
+    assert_approx(bbox.x_max, 100.0);
+    assert_approx(bbox.y_max, 10.0); // 100 - 900*0.1 = 10
 }
 
 // ============================================================

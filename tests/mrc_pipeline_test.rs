@@ -310,6 +310,95 @@ fn test_connected_component_bboxes_wrong_depth() {
     assert!(result.is_err(), "Should reject non-1-bit image");
 }
 
+// ---- compositor::crop_text_regions tests ----
+
+/// Test cropping a single text region from a bitmap.
+#[test]
+fn test_crop_text_regions_single() {
+    let (data, width, height) = create_test_rgba_image();
+    let img = image::RgbaImage::from_raw(width, height, data).expect("create image");
+    let dynamic = image::DynamicImage::ImageRgba8(img);
+
+    let bboxes = vec![segmenter::PixelBBox {
+        x: 10,
+        y: 10,
+        width: 50,
+        height: 50,
+    }];
+
+    let result =
+        compositor::crop_text_regions(&dynamic, &bboxes, 75, ColorMode::Rgb).expect("crop");
+    assert_eq!(result.len(), 1);
+    // JPEG data should be non-empty and start with FF D8
+    assert!(!result[0].0.is_empty());
+    assert!(result[0].0.starts_with(&[0xFF, 0xD8]));
+    // BBox should be preserved
+    assert_eq!(result[0].1, bboxes[0]);
+}
+
+/// Test cropping multiple regions.
+#[test]
+fn test_crop_text_regions_multiple() {
+    let (data, width, height) = create_test_rgba_image();
+    let img = image::RgbaImage::from_raw(width, height, data).expect("create image");
+    let dynamic = image::DynamicImage::ImageRgba8(img);
+
+    let bboxes = vec![
+        segmenter::PixelBBox {
+            x: 0,
+            y: 0,
+            width: 100,
+            height: 50,
+        },
+        segmenter::PixelBBox {
+            x: 50,
+            y: 100,
+            width: 80,
+            height: 40,
+        },
+    ];
+
+    let result =
+        compositor::crop_text_regions(&dynamic, &bboxes, 50, ColorMode::Rgb).expect("crop");
+    assert_eq!(result.len(), 2);
+    for (jpeg_data, _) in &result {
+        assert!(!jpeg_data.is_empty());
+        assert!(jpeg_data.starts_with(&[0xFF, 0xD8]));
+    }
+}
+
+/// Test cropping in grayscale mode.
+#[test]
+fn test_crop_text_regions_grayscale() {
+    let (data, width, height) = create_test_rgba_image();
+    let img = image::RgbaImage::from_raw(width, height, data).expect("create image");
+    let dynamic = image::DynamicImage::ImageRgba8(img);
+
+    let bboxes = vec![segmenter::PixelBBox {
+        x: 0,
+        y: 0,
+        width: 100,
+        height: 100,
+    }];
+
+    let result =
+        compositor::crop_text_regions(&dynamic, &bboxes, 75, ColorMode::Grayscale).expect("crop");
+    assert_eq!(result.len(), 1);
+    assert!(!result[0].0.is_empty());
+    assert!(result[0].0.starts_with(&[0xFF, 0xD8]));
+}
+
+/// Test cropping with empty bboxes returns empty.
+#[test]
+fn test_crop_text_regions_empty() {
+    let (data, width, height) = create_test_rgba_image();
+    let img = image::RgbaImage::from_raw(width, height, data).expect("create image");
+    let dynamic = image::DynamicImage::ImageRgba8(img);
+
+    let result = compositor::crop_text_regions(&dynamic, &[], 75, ColorMode::Rgb).expect("crop");
+    assert!(result.is_empty());
+}
+
 // ---- compositor.rs tests ----
 
 /// Test the full MRC pipeline: RGBA bitmap + config -> MrcLayers.
