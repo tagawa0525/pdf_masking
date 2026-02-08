@@ -32,8 +32,9 @@ pub fn process_page(
     cache_settings: &CacheSettings,
     cache_store: Option<&CacheStore>,
     pdf_path: &Path,
-    color_mode: ColorMode,
 ) -> crate::error::Result<ProcessedPage> {
+    let color_mode = cache_settings.color_mode;
+
     // Skip モードはMRC処理不要
     if color_mode == ColorMode::Skip {
         return Ok(ProcessedPage {
@@ -49,31 +50,31 @@ pub fn process_page(
     let bitmap_height = bitmap.height();
 
     // Check cache first
-    if let Some(store) = cache_store {
-        if let Some(cached) = store.retrieve(&cache_key, color_mode)? {
-            match &cached {
-                PageOutput::Mrc(layers) => {
-                    if layers.width == bitmap_width && layers.height == bitmap_height {
-                        return Ok(ProcessedPage {
-                            page_index,
-                            output: cached,
-                            cache_key,
-                        });
-                    }
+    if let Some(store) = cache_store
+        && let Some(cached) = store.retrieve(&cache_key, color_mode)?
+    {
+        match &cached {
+            PageOutput::Mrc(layers) => {
+                if layers.width == bitmap_width && layers.height == bitmap_height {
+                    return Ok(ProcessedPage {
+                        page_index,
+                        output: cached,
+                        cache_key,
+                    });
                 }
-                PageOutput::BwMask(layers) => {
-                    if layers.width == bitmap_width && layers.height == bitmap_height {
-                        return Ok(ProcessedPage {
-                            page_index,
-                            output: cached,
-                            cache_key,
-                        });
-                    }
-                }
-                PageOutput::Skip(_) => {}
             }
-            // Dimension mismatch: treat as cache miss and recompose
+            PageOutput::BwMask(layers) => {
+                if layers.width == bitmap_width && layers.height == bitmap_height {
+                    return Ok(ProcessedPage {
+                        page_index,
+                        output: cached,
+                        cache_key,
+                    });
+                }
+            }
+            PageOutput::Skip(_) => {}
         }
+        // Dimension mismatch: treat as cache miss and recompose
     }
 
     // Cache miss: run MRC composition
