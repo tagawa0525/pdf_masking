@@ -175,7 +175,7 @@ impl Pix {
             } else {
                 // Clean up the threshold intermediate result
                 if !pix_threshold.is_null() {
-                    pixDestroy(&mut pix_threshold.clone());
+                    pixDestroy(&mut pix_threshold);
                 }
                 Ok(Pix { ptr: pix_result })
             }

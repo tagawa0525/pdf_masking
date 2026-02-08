@@ -30,7 +30,7 @@ fn settings_to_canonical_json(settings: &CacheSettings) -> String {
         "preserve_images",
         serde_json::json!(settings.preserve_images),
     );
-    serde_json::to_string(&map).unwrap()
+    serde_json::to_string(&map).expect("serializing primitive cache settings to JSON must not fail")
 }
 
 /// コンテンツストリームと設定からキャッシュキー（SHA-256ハッシュ）を計算する。
