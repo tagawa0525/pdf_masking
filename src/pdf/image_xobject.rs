@@ -49,7 +49,11 @@ fn read_image_meta(stream: &lopdf::Stream) -> crate::error::Result<ImageMeta> {
 
     let width = dict_get_u32(dict, b"Width")?;
     let height = dict_get_u32(dict, b"Height")?;
-    let bits_per_component = dict_get_u32(dict, b"BitsPerComponent").unwrap_or(8) as u8;
+    // BitsPerComponent: missing keyの場合のみデフォルト8、型エラーは伝播
+    let bits_per_component = match dict.get(b"BitsPerComponent") {
+        Ok(_) => dict_get_u32(dict, b"BitsPerComponent")? as u8,
+        Err(_) => 8,
+    };
 
     let color_space = match dict.get(b"ColorSpace") {
         Ok(obj) => match obj {
@@ -83,11 +87,33 @@ fn read_image_meta(stream: &lopdf::Stream) -> crate::error::Result<ImageMeta> {
     })
 }
 
-/// 辞書からu32値を取得するヘルパー
+/// 辞書からu32値を取得するヘルパー（負の値はエラー）
 fn dict_get_u32(dict: &lopdf::Dictionary, key: &[u8]) -> crate::error::Result<u32> {
     match dict.get(key) {
-        Ok(Object::Integer(i)) => Ok(*i as u32),
-        Ok(Object::Real(f)) => Ok(*f as u32),
+        Ok(Object::Integer(i)) => {
+            let val = *i;
+            if val < 0 || val > u32::MAX as i64 {
+                Err(PdfMaskError::image_xobject(format!(
+                    "Value out of u32 range for {:?}: {}",
+                    String::from_utf8_lossy(key),
+                    val
+                )))
+            } else {
+                Ok(val as u32)
+            }
+        }
+        Ok(Object::Real(f)) => {
+            let val = *f;
+            if val < 0.0 || val > u32::MAX as f32 {
+                Err(PdfMaskError::image_xobject(format!(
+                    "Value out of u32 range for {:?}: {}",
+                    String::from_utf8_lossy(key),
+                    val
+                )))
+            } else {
+                Ok(val as u32)
+            }
+        }
         Ok(other) => Err(PdfMaskError::image_xobject(format!(
             "Expected integer for {:?}, got {:?}",
             String::from_utf8_lossy(key),
@@ -212,11 +238,14 @@ fn page_to_image_coords(
     let local_y_max_pdf = redact_bbox.y_max - image_placement.y_min;
 
     // ピクセル座標に変換（Y軸反転: PDF上端 = 画像上端）
-    let px_x_min = (local_x_min * scale_x).max(0.0) as u32;
-    let px_x_max = (local_x_max * scale_x).min(img_width as f64) as u32;
+    // min座標はfloor、max座標はceilでリダクション領域を確実にカバー
+    let px_x_min = (local_x_min * scale_x).max(0.0).floor() as u32;
+    let px_x_max = (local_x_max * scale_x).min(img_width as f64).ceil() as u32;
     // Y反転: PDF y_max → image y=0
-    let px_y_min = ((page_h - local_y_max_pdf) * scale_y).max(0.0) as u32;
-    let px_y_max = ((page_h - local_y_min_pdf) * scale_y).min(img_height as f64) as u32;
+    let px_y_min = ((page_h - local_y_max_pdf) * scale_y).max(0.0).floor() as u32;
+    let px_y_max = ((page_h - local_y_min_pdf) * scale_y)
+        .min(img_height as f64)
+        .ceil() as u32;
 
     if px_x_min >= px_x_max || px_y_min >= px_y_max {
         return None;
@@ -255,16 +284,22 @@ pub fn redact_image_regions(
         return Ok(None);
     }
 
+    // ピクセル領域に変換可能な重なりがあるか確認
+    let pixel_regions: Vec<(u32, u32, u32, u32)> = overlapping
+        .iter()
+        .filter_map(|rb| page_to_image_coords(rb, image_placement, meta.width, meta.height))
+        .collect();
+
+    if pixel_regions.is_empty() {
+        return Ok(None);
+    }
+
     // 画像デコード
     let mut img = decode_image_stream(image_stream, &meta)?;
 
     // 各重なり領域を白で塗りつぶし
-    for redact_bbox in &overlapping {
-        if let Some((x, y, w, h)) =
-            page_to_image_coords(redact_bbox, image_placement, meta.width, meta.height)
-        {
-            fill_white(&mut img, x, y, w, h);
-        }
+    for (x, y, w, h) in &pixel_regions {
+        fill_white(&mut img, *x, *y, *w, *h);
     }
 
     // 元のフィルタ形式で再エンコード
@@ -326,7 +361,7 @@ fn encode_image(img: &DynamicImage, meta: &ImageMeta) -> crate::error::Result<(V
             };
             Ok((data, "DCTDecode".to_string()))
         }
-        Some("FlateDecode") | None => {
+        Some("FlateDecode") => {
             let raw = if meta.color_space == "DeviceGray" {
                 img.to_luma8().into_raw()
             } else {
@@ -334,6 +369,15 @@ fn encode_image(img: &DynamicImage, meta: &ImageMeta) -> crate::error::Result<(V
             };
             let compressed = flate_encode(&raw)?;
             Ok((compressed, "FlateDecode".to_string()))
+        }
+        None => {
+            // 元が非圧縮の場合はそのまま非圧縮で返す
+            let raw = if meta.color_space == "DeviceGray" {
+                img.to_luma8().into_raw()
+            } else {
+                img.to_rgb8().into_raw()
+            };
+            Ok((raw, String::new()))
         }
         Some(other) => Err(PdfMaskError::image_xobject(format!(
             "Cannot re-encode unsupported filter: {}",
@@ -372,33 +416,42 @@ pub fn optimize_image_encoding(
     original_size: usize,
     quality: u8,
 ) -> crate::error::Result<Option<OptimizedImage>> {
-    let mut candidates: Vec<OptimizedImage> = Vec::new();
+    if !(1..=100).contains(&quality) {
+        return Err(PdfMaskError::image_xobject(format!(
+            "JPEG quality must be 1-100, got {}",
+            quality
+        )));
+    }
 
-    // 候補A: B&W JBIG2（Otsu閾値で二値化）
-    let gray = decoded.to_luma8();
-    let (w, h) = gray.dimensions();
-    // Otsu二値化: leptonica Pixを作成して閾値化
-    let rgba_for_binarize: Vec<u8> = gray
-        .pixels()
-        .flat_map(|p| [p.0[0], p.0[0], p.0[0], 255])
-        .collect();
-    if let Ok(pix) = crate::ffi::leptonica::Pix::from_raw_rgba(w, h, &rgba_for_binarize) {
-        // Otsu adaptive threshold: tile size = clamp(dim, 16, 2000)
-        let sx = w.clamp(16, 2000);
-        let sy = h.clamp(16, 2000);
-        if let Ok(mut binary) = pix.otsu_adaptive_threshold(sx, sy)
-            && let Ok(jbig2_data) = jbig2::encode_mask(&mut binary)
-        {
-            candidates.push(OptimizedImage {
-                data: jbig2_data,
-                filter: "JBIG2Decode",
-                color_space: "DeviceGray",
-                bits_per_component: 1,
-            });
+    let mut candidates: Vec<OptimizedImage> = Vec::new();
+    let is_color = decoded.color().has_color();
+
+    // 候補A: B&W JBIG2（グレースケール画像のみ。カラー画像のJBIG2化は意味的に不適切）
+    if !is_color {
+        let gray = decoded.to_luma8();
+        let (w, h) = gray.dimensions();
+        let rgba_for_binarize: Vec<u8> = gray
+            .pixels()
+            .flat_map(|p| [p.0[0], p.0[0], p.0[0], 255])
+            .collect();
+        if let Ok(pix) = crate::ffi::leptonica::Pix::from_raw_rgba(w, h, &rgba_for_binarize) {
+            let sx = w.clamp(16, 2000);
+            let sy = h.clamp(16, 2000);
+            if let Ok(mut binary) = pix.otsu_adaptive_threshold(sx, sy)
+                && let Ok(jbig2_data) = jbig2::encode_mask(&mut binary)
+            {
+                candidates.push(OptimizedImage {
+                    data: jbig2_data,
+                    filter: "JBIG2Decode",
+                    color_space: "DeviceGray",
+                    bits_per_component: 1,
+                });
+            }
         }
     }
 
     // 候補B: グレースケールJPEG
+    let gray = decoded.to_luma8();
     if let Ok(gray_jpeg) = jpeg::encode_gray_to_jpeg(&gray, quality) {
         candidates.push(OptimizedImage {
             data: gray_jpeg,
@@ -409,7 +462,7 @@ pub fn optimize_image_encoding(
     }
 
     // 候補C: RGB JPEG（元がカラーの場合）
-    if decoded.color().has_color() {
+    if is_color {
         let rgb = decoded.to_rgb8();
         if let Ok(rgb_jpeg) = jpeg::encode_rgb_to_jpeg(&rgb, quality) {
             candidates.push(OptimizedImage {
