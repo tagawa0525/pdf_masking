@@ -125,7 +125,6 @@ fn test_process_page_cache_hit() {
 
 /// image_streams=Some (非空) の場合、TextMaskedモードに分岐することを検証
 #[test]
-#[ignore = "PR 7 RED: stub not yet implemented"]
 fn test_process_page_text_masked_with_image_streams() {
     use std::collections::HashMap;
 

@@ -8,7 +8,9 @@ use image::DynamicImage;
 use crate::cache::hash::{CacheSettings, compute_cache_key};
 use crate::cache::store::CacheStore;
 use crate::config::job::ColorMode;
-use crate::mrc::compositor::{MrcConfig, compose, compose_bw};
+use crate::mrc::compositor::{
+    MrcConfig, TextMaskedParams, compose, compose_bw, compose_text_masked,
+};
 use crate::mrc::{PageOutput, SkipData};
 
 /// Single page processing result.
@@ -91,8 +93,28 @@ pub fn process_page(
             PageOutput::BwMask(bw_layers)
         }
         mode @ (ColorMode::Rgb | ColorMode::Grayscale) => {
-            if cache_settings.preserve_images && image_streams.is_some() {
-                todo!("PR 7: implement TextMasked routing in process_page")
+            if cache_settings.preserve_images {
+                if let Some(streams) = image_streams {
+                    let page_width_pts = width as f64 * 72.0 / cache_settings.dpi as f64;
+                    let page_height_pts = height as f64 * 72.0 / cache_settings.dpi as f64;
+                    let params = TextMaskedParams {
+                        content_bytes: content_stream,
+                        rgba_data: &rgba_data,
+                        bitmap_width: width,
+                        bitmap_height: height,
+                        page_width_pts,
+                        page_height_pts,
+                        image_streams: streams,
+                        quality: mrc_config.fg_quality,
+                        color_mode: mode,
+                        page_index,
+                    };
+                    let text_masked = compose_text_masked(&params)?;
+                    PageOutput::TextMasked(text_masked)
+                } else {
+                    let mrc_layers = compose(&rgba_data, width, height, mrc_config, mode)?;
+                    PageOutput::Mrc(mrc_layers)
+                }
             } else {
                 let mrc_layers = compose(&rgba_data, width, height, mrc_config, mode)?;
                 PageOutput::Mrc(mrc_layers)

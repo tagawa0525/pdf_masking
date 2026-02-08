@@ -203,8 +203,10 @@ pub fn run_job(config: &JobConfig) -> crate::error::Result<JobResult> {
                 writer.copy_page_from(reader.document(), page_num)?;
                 // Skip pages are NOT added to masked_page_ids (no font optimization)
             }
-            PageOutput::TextMasked(_data) => {
-                todo!("PR 7: implement TextMasked page writing in run_job")
+            PageOutput::TextMasked(data) => {
+                let page_num = page.page_index + 1;
+                let page_id = writer.write_text_masked_page(reader.document(), page_num, data)?;
+                masked_page_ids.push(page_id);
             }
         }
     }

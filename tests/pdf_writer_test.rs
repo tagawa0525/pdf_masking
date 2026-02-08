@@ -122,7 +122,6 @@ fn test_write_mrc_page() {
 /// ソースPDFから元ページをdeep copyし、テキスト領域XObjectを追加して正しい構造の
 /// PDFが生成されることを検証する。
 #[test]
-#[ignore = "PR 7 RED: stub not yet implemented"]
 fn test_write_text_masked_page_basic() {
     use pdf_masking::mrc::TextMaskedData;
     use pdf_masking::mrc::TextRegionCrop;
@@ -217,7 +216,6 @@ fn test_write_text_masked_page_basic() {
 
 /// テキスト領域が空の場合（テキストなしページ）でも正常に動作することを検証。
 #[test]
-#[ignore = "PR 7 RED: stub not yet implemented"]
 fn test_write_text_masked_page_no_text_regions() {
     use pdf_masking::mrc::TextMaskedData;
     use std::collections::HashMap;
@@ -270,7 +268,6 @@ fn test_write_text_masked_page_no_text_regions() {
 
 /// リダクション済み画像の差し替えが正しく行われることを検証。
 #[test]
-#[ignore = "PR 7 RED: stub not yet implemented"]
 fn test_write_text_masked_page_with_modified_images() {
     use pdf_masking::mrc::{ImageModification, TextMaskedData};
     use std::collections::HashMap;

@@ -150,7 +150,6 @@ fn test_page_resources_xobjects() {
 }
 
 #[test]
-#[ignore = "PR 7 RED: stub not yet implemented"]
 fn test_page_image_streams_returns_image_xobjects() {
     // Image XObjectを持つPDFからストリームを取得できることを検証
     let (_dir, path) = create_test_pdf(
@@ -185,7 +184,6 @@ fn test_page_image_streams_returns_image_xobjects() {
 }
 
 #[test]
-#[ignore = "PR 7 RED: stub not yet implemented"]
 fn test_page_image_streams_empty_when_no_images() {
     // XObjectがないPDFでは空のHashMapが返る
     let (_dir, path) = create_test_pdf(vec![], vec![]);
