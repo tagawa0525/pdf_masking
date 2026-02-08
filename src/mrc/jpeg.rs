@@ -1,7 +1,7 @@
 // Phase 5: image crate: fg/bg -> JPEG bytes
 
 use crate::error::PdfMaskError;
-use image::{DynamicImage, RgbImage, RgbaImage};
+use image::{DynamicImage, GrayImage, RgbImage, RgbaImage};
 use std::io::Cursor;
 
 /// Encode raw RGBA pixel data to JPEG bytes.
@@ -59,10 +59,22 @@ pub fn encode_rgba_to_jpeg(
 /// This is an internal helper used when the caller has already performed the
 /// RGBA-to-RGB conversion and wants to encode at a given quality without
 /// repeating that conversion.
-pub(crate) fn encode_rgb_to_jpeg(rgb: &RgbImage, quality: u8) -> crate::error::Result<Vec<u8>> {
+pub fn encode_rgb_to_jpeg(rgb: &RgbImage, quality: u8) -> crate::error::Result<Vec<u8>> {
     let mut buf = Cursor::new(Vec::new());
     let encoder = image::codecs::jpeg::JpegEncoder::new_with_quality(&mut buf, quality);
     rgb.write_with_encoder(encoder)?;
+
+    Ok(buf.into_inner())
+}
+
+/// Encode a grayscale image to JPEG bytes.
+///
+/// 1チャンネルのグレースケール画像をJPEG圧縮する。
+/// RGB JPEGよりも小さいファイルサイズになる。
+pub fn encode_gray_to_jpeg(gray: &GrayImage, quality: u8) -> crate::error::Result<Vec<u8>> {
+    let mut buf = Cursor::new(Vec::new());
+    let encoder = image::codecs::jpeg::JpegEncoder::new_with_quality(&mut buf, quality);
+    gray.write_with_encoder(encoder)?;
 
     Ok(buf.into_inner())
 }

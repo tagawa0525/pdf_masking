@@ -129,6 +129,56 @@ fn test_encode_foreground_jpeg() {
     assert!(!jpeg_data.is_empty(), "Foreground JPEG should not be empty");
 }
 
+/// Test encoding a grayscale image to JPEG format.
+#[test]
+fn test_encode_gray_to_jpeg() {
+    let width: u32 = 100;
+    let height: u32 = 100;
+    let gray_data = vec![128u8; (width * height) as usize];
+    let gray_img = image::GrayImage::from_raw(width, height, gray_data).expect("create GrayImage");
+
+    let result = jpeg::encode_gray_to_jpeg(&gray_img, 75);
+    assert!(
+        result.is_ok(),
+        "encode_gray_to_jpeg failed: {:?}",
+        result.err()
+    );
+
+    let jpeg_data = result.unwrap();
+    assert!(!jpeg_data.is_empty(), "Grayscale JPEG should not be empty");
+    // JPEG files start with FF D8
+    assert!(
+        jpeg_data.starts_with(&[0xFF, 0xD8]),
+        "Grayscale JPEG should start with FF D8 marker"
+    );
+}
+
+/// Test that grayscale JPEG is smaller than RGB JPEG for same dimensions.
+#[test]
+fn test_gray_jpeg_smaller_than_rgb() {
+    let width: u32 = 200;
+    let height: u32 = 200;
+
+    // Create RGB image (all gray pixels, but 3 channels)
+    let rgb_data: Vec<u8> = (0..width * height)
+        .flat_map(|_| vec![128u8, 128, 128])
+        .collect();
+    let rgb_img = image::RgbImage::from_raw(width, height, rgb_data).expect("create RgbImage");
+    let rgb_jpeg = jpeg::encode_rgb_to_jpeg(&rgb_img, 50).expect("encode RGB");
+
+    // Create grayscale image (same content, 1 channel)
+    let gray_data = vec![128u8; (width * height) as usize];
+    let gray_img = image::GrayImage::from_raw(width, height, gray_data).expect("create GrayImage");
+    let gray_jpeg = jpeg::encode_gray_to_jpeg(&gray_img, 50).expect("encode gray");
+
+    assert!(
+        gray_jpeg.len() < rgb_jpeg.len(),
+        "Grayscale JPEG ({} bytes) should be smaller than RGB JPEG ({} bytes)",
+        gray_jpeg.len(),
+        rgb_jpeg.len()
+    );
+}
+
 // ---- compositor.rs tests ----
 
 /// Test the full MRC pipeline: RGBA bitmap + config -> MrcLayers.
