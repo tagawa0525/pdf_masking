@@ -22,7 +22,7 @@ fn test_compute_cache_key() {
         preserve_images: false,
     };
 
-    let key = compute_cache_key(content, &settings);
+    let key = compute_cache_key(content, &settings, "test.pdf", 0);
 
     // SHA-256 produces a 64-character hex string
     assert_eq!(key.len(), 64, "Cache key should be 64 hex characters");
@@ -44,8 +44,8 @@ fn test_cache_key_deterministic() {
         preserve_images: false,
     };
 
-    let key1 = compute_cache_key(content, &settings);
-    let key2 = compute_cache_key(content, &settings);
+    let key1 = compute_cache_key(content, &settings, "test.pdf", 0);
+    let key2 = compute_cache_key(content, &settings, "test.pdf", 0);
 
     assert_eq!(key1, key2, "Same inputs should produce the same cache key");
 }
@@ -61,8 +61,8 @@ fn test_cache_key_differs_with_different_content() {
         preserve_images: false,
     };
 
-    let key_a = compute_cache_key(b"content A", &settings);
-    let key_b = compute_cache_key(b"content B", &settings);
+    let key_a = compute_cache_key(b"content A", &settings, "test.pdf", 0);
+    let key_b = compute_cache_key(b"content B", &settings, "test.pdf", 0);
 
     assert_ne!(
         key_a, key_b,
@@ -90,12 +90,54 @@ fn test_cache_key_differs_with_different_settings() {
         preserve_images: true,
     };
 
-    let key_a = compute_cache_key(content, &settings_a);
-    let key_b = compute_cache_key(content, &settings_b);
+    let key_a = compute_cache_key(content, &settings_a, "test.pdf", 0);
+    let key_b = compute_cache_key(content, &settings_b, "test.pdf", 0);
 
     assert_ne!(
         key_a, key_b,
         "Different settings should produce different cache keys"
+    );
+}
+
+/// Test that different pdf_path produces a different cache key.
+#[test]
+fn test_cache_key_differs_with_different_pdf_path() {
+    let content = b"same content";
+    let settings = CacheSettings {
+        dpi: 300,
+        fg_dpi: 150,
+        bg_quality: 50,
+        fg_quality: 30,
+        preserve_images: false,
+    };
+
+    let key_a = compute_cache_key(content, &settings, "file_a.pdf", 0);
+    let key_b = compute_cache_key(content, &settings, "file_b.pdf", 0);
+
+    assert_ne!(
+        key_a, key_b,
+        "Different pdf_path should produce different cache keys"
+    );
+}
+
+/// Test that different page_index produces a different cache key.
+#[test]
+fn test_cache_key_differs_with_different_page_index() {
+    let content = b"same content";
+    let settings = CacheSettings {
+        dpi: 300,
+        fg_dpi: 150,
+        bg_quality: 50,
+        fg_quality: 30,
+        preserve_images: false,
+    };
+
+    let key_a = compute_cache_key(content, &settings, "test.pdf", 0);
+    let key_b = compute_cache_key(content, &settings, "test.pdf", 1);
+
+    assert_ne!(
+        key_a, key_b,
+        "Different page_index should produce different cache keys"
     );
 }
 
