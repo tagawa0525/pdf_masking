@@ -188,3 +188,57 @@ fn ctm_to_bbox(ctm: &Matrix) -> BBox {
         y_max,
     }
 }
+
+/// コンテンツストリームからBT...ETブロック（テキストオブジェクト）を除去する。
+///
+/// BTオペレータでテキストブロックが開始され、ETオペレータで終了する。
+/// このネスト深度を追跡し、深度>0の全オペレーションを除去する。
+/// 非テキストオペレーション（グラフィックス、XObject描画等）はそのまま保持する。
+///
+/// # 引数
+/// * `content_bytes` - 元のコンテンツストリームバイト列
+///
+/// # 戻り値
+/// テキストオペレーションを除去したコンテンツストリーム
+pub fn strip_text_operators(content_bytes: &[u8]) -> crate::error::Result<Vec<u8>> {
+    // 空バイト列の場合は空を返す
+    if content_bytes.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let content = Content::decode(content_bytes)
+        .map_err(|e| crate::error::PdfMaskError::content_stream(e.to_string()))?;
+
+    let mut depth = 0_u32;
+    let mut filtered_operations = Vec::new();
+
+    for op in &content.operations {
+        match op.operator.as_str() {
+            "BT" => {
+                // テキストブロック開始
+                depth = depth.saturating_add(1);
+                // BTオペレータ自体も除去
+            }
+            "ET" => {
+                // テキストブロック終了
+                depth = depth.saturating_sub(1);
+                // ETオペレータ自体も除去
+            }
+            _ => {
+                // 深度0（テキストブロック外）のオペレーションのみ保持
+                if depth == 0 {
+                    filtered_operations.push(op.clone());
+                }
+            }
+        }
+    }
+
+    // 再エンコード
+    let filtered_content = Content {
+        operations: filtered_operations,
+    };
+
+    filtered_content
+        .encode()
+        .map_err(|e| crate::error::PdfMaskError::content_stream(e.to_string()))
+}

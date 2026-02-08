@@ -1,5 +1,7 @@
 /target
 /deps
+/sample
+
 .dirlocal
 .cache
 scripts/env-windows.ps1

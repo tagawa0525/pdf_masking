@@ -1,6 +1,6 @@
 // Phase 2: コンテンツストリーム解析テスト
 
-use pdf_masking::pdf::content_stream::{Matrix, extract_xobject_placements};
+use pdf_masking::pdf::content_stream::{Matrix, extract_xobject_placements, strip_text_operators};
 use pdf_masking::pdf::reader::PdfReader;
 
 use lopdf::content::{Content, Operation};
@@ -406,6 +406,205 @@ fn test_nested_graphics_states() {
     // Im2: identity
     assert_eq!(placements[1].ctm, Matrix::identity());
     assert_eq!(placements[1].name, "Im2");
+}
+
+// ============================================================
+// 3. strip_text_operators テスト
+// ============================================================
+
+#[test]
+fn test_strip_text_operators_removes_bt_et_blocks() {
+    // BT...ETブロックが除去されることを確認
+    let ops = vec![
+        Operation::new("q", vec![]),
+        Operation::new("BT", vec![]),
+        Operation::new("Tf", vec![Object::Name(b"F1".to_vec()), 12.into()]),
+        Operation::new(
+            "Tj",
+            vec![Object::String(
+                b"Hello".to_vec(),
+                lopdf::StringFormat::Literal,
+            )],
+        ),
+        Operation::new("ET", vec![]),
+        Operation::new("Q", vec![]),
+    ];
+    let content = Content { operations: ops };
+    let bytes = content.encode().expect("encode");
+
+    let result = strip_text_operators(&bytes).expect("strip text");
+    let decoded = Content::decode(&result).expect("decode result");
+
+    // q と Q のみが残る
+    assert_eq!(decoded.operations.len(), 2);
+    assert_eq!(decoded.operations[0].operator, "q");
+    assert_eq!(decoded.operations[1].operator, "Q");
+}
+
+#[test]
+fn test_strip_text_operators_preserves_non_text() {
+    // 非テキストオペレーション（グラフィックス、XObject等）は保持される
+    let ops = vec![
+        Operation::new("q", vec![]),
+        Operation::new(
+            "cm",
+            vec![
+                100.into(),
+                Object::Real(0.0),
+                Object::Real(0.0),
+                100.into(),
+                0.into(),
+                0.into(),
+            ],
+        ),
+        Operation::new("Do", vec![Object::Name(b"Im1".to_vec())]),
+        Operation::new("BT", vec![]),
+        Operation::new(
+            "Tj",
+            vec![Object::String(
+                b"Text".to_vec(),
+                lopdf::StringFormat::Literal,
+            )],
+        ),
+        Operation::new("ET", vec![]),
+        Operation::new("Q", vec![]),
+    ];
+    let content = Content { operations: ops };
+    let bytes = content.encode().expect("encode");
+
+    let result = strip_text_operators(&bytes).expect("strip text");
+    let decoded = Content::decode(&result).expect("decode result");
+
+    // q, cm, Do, Q が残る（BT, Tj, ETは除去）
+    assert_eq!(decoded.operations.len(), 4);
+    assert_eq!(decoded.operations[0].operator, "q");
+    assert_eq!(decoded.operations[1].operator, "cm");
+    assert_eq!(decoded.operations[2].operator, "Do");
+    assert_eq!(decoded.operations[3].operator, "Q");
+}
+
+#[test]
+fn test_strip_text_operators_empty_stream() {
+    // 空のコンテンツストリーム
+    let result = strip_text_operators(b"").expect("strip empty");
+    assert!(result.is_empty(), "empty input should return empty output");
+}
+
+#[test]
+fn test_strip_text_operators_no_text() {
+    // テキストオペレーションがない場合、全て保持される
+    let ops = vec![
+        Operation::new("q", vec![]),
+        Operation::new(
+            "cm",
+            vec![
+                100.into(),
+                Object::Real(0.0),
+                Object::Real(0.0),
+                100.into(),
+                50.into(),
+                60.into(),
+            ],
+        ),
+        Operation::new("Do", vec![Object::Name(b"Im1".to_vec())]),
+        Operation::new("Q", vec![]),
+    ];
+    let content = Content {
+        operations: ops.clone(),
+    };
+    let bytes = content.encode().expect("encode");
+
+    let result = strip_text_operators(&bytes).expect("strip text");
+    let decoded = Content::decode(&result).expect("decode result");
+
+    // 全てのオペレーションが保持される
+    assert_eq!(decoded.operations.len(), ops.len());
+    for (i, op) in decoded.operations.iter().enumerate() {
+        assert_eq!(op.operator, ops[i].operator);
+    }
+}
+
+#[test]
+fn test_strip_text_operators_nested_bt_et() {
+    // ネストしたBT...ETブロック（通常PDFでは発生しないが、ネスト深度追跡の動作確認）
+    let ops = vec![
+        Operation::new("q", vec![]),
+        Operation::new("BT", vec![]),
+        Operation::new(
+            "Tj",
+            vec![Object::String(
+                b"Outer".to_vec(),
+                lopdf::StringFormat::Literal,
+            )],
+        ),
+        Operation::new("BT", vec![]), // ネストBT
+        Operation::new(
+            "Tj",
+            vec![Object::String(
+                b"Inner".to_vec(),
+                lopdf::StringFormat::Literal,
+            )],
+        ),
+        Operation::new("ET", vec![]), // 内側ET
+        Operation::new(
+            "Tj",
+            vec![Object::String(
+                b"Back to outer".to_vec(),
+                lopdf::StringFormat::Literal,
+            )],
+        ),
+        Operation::new("ET", vec![]), // 外側ET
+        Operation::new("Q", vec![]),
+    ];
+    let content = Content { operations: ops };
+    let bytes = content.encode().expect("encode");
+
+    let result = strip_text_operators(&bytes).expect("strip text");
+    let decoded = Content::decode(&result).expect("decode result");
+
+    // q と Q のみが残る（全てのBT...ET内容が除去される）
+    assert_eq!(decoded.operations.len(), 2);
+    assert_eq!(decoded.operations[0].operator, "q");
+    assert_eq!(decoded.operations[1].operator, "Q");
+}
+
+#[test]
+fn test_strip_text_operators_multiple_text_blocks() {
+    // 複数のBT...ETブロック
+    let ops = vec![
+        Operation::new("BT", vec![]),
+        Operation::new(
+            "Tj",
+            vec![Object::String(
+                b"First".to_vec(),
+                lopdf::StringFormat::Literal,
+            )],
+        ),
+        Operation::new("ET", vec![]),
+        Operation::new("q", vec![]),
+        Operation::new("Do", vec![Object::Name(b"Im1".to_vec())]),
+        Operation::new("Q", vec![]),
+        Operation::new("BT", vec![]),
+        Operation::new(
+            "Tj",
+            vec![Object::String(
+                b"Second".to_vec(),
+                lopdf::StringFormat::Literal,
+            )],
+        ),
+        Operation::new("ET", vec![]),
+    ];
+    let content = Content { operations: ops };
+    let bytes = content.encode().expect("encode");
+
+    let result = strip_text_operators(&bytes).expect("strip text");
+    let decoded = Content::decode(&result).expect("decode result");
+
+    // q, Do, Q のみが残る
+    assert_eq!(decoded.operations.len(), 3);
+    assert_eq!(decoded.operations[0].operator, "q");
+    assert_eq!(decoded.operations[1].operator, "Do");
+    assert_eq!(decoded.operations[2].operator, "Q");
 }
 
 // ============================================================
