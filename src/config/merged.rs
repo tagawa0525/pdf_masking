@@ -14,6 +14,7 @@ pub struct MergedConfig {
     pub cache_dir: PathBuf,
     pub preserve_images: bool,
     pub linearize: bool,
+    pub text_to_outlines: bool,
 }
 
 impl MergedConfig {
@@ -29,6 +30,7 @@ impl MergedConfig {
             cache_dir: settings.cache_dir.clone(),
             preserve_images: job.preserve_images.unwrap_or(settings.preserve_images),
             linearize: job.linearize.unwrap_or(settings.linearize),
+            text_to_outlines: job.text_to_outlines.unwrap_or(settings.text_to_outlines),
         }
     }
 }

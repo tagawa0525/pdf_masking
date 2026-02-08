@@ -28,6 +28,7 @@ pub struct JobConfig {
     pub fg_quality: u8,
     pub preserve_images: bool,
     pub cache_dir: Option<PathBuf>,
+    pub text_to_outlines: bool,
 }
 
 /// Result of processing a single job.
