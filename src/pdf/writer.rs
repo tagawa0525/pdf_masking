@@ -337,6 +337,16 @@ impl MrcPageWriter {
                 &region.filter,
                 None,
             );
+            // JBIG2: Leptonicaの規約(text=1, non-text=0)とPDFのデフォルト
+            // Decode=[0,1](0=黒, 1=白)が逆なので、Decode=[1,0]で反転する。
+            if region.filter == "JBIG2Decode"
+                && let Some(Object::Stream(stream)) = self.doc.objects.get_mut(&xobj_id)
+            {
+                stream.dict.set(
+                    "Decode",
+                    Object::Array(vec![Object::Integer(1), Object::Integer(0)]),
+                );
+            }
             text_xobjects.push((name, xobj_id));
         }
 
