@@ -156,3 +156,29 @@ impl CacheStore {
         CACHE_ENTRY_FILES.iter().all(|f| dir.join(f).exists())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_validate_cache_key_rejects_uppercase_hex() {
+        // 64-char hex but with uppercase A-F digits
+        let uppercase_key = "a".repeat(58) + "ABCDEF";
+        assert_eq!(uppercase_key.len(), 64);
+        assert!(validate_cache_key(&uppercase_key).is_err());
+    }
+
+    #[test]
+    fn test_validate_cache_key_accepts_lowercase_hex() {
+        // Valid lowercase hex
+        let lowercase_key = "a".repeat(64);
+        assert!(validate_cache_key(&lowercase_key).is_ok());
+    }
+
+    #[test]
+    fn test_validate_cache_key_rejects_wrong_length() {
+        let short_key = "a".repeat(63);
+        assert!(validate_cache_key(&short_key).is_err());
+    }
+}
