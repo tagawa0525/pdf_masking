@@ -203,8 +203,7 @@ pub fn compose_text_masked(params: &TextMaskedParams) -> crate::error::Result<Te
                 .collect();
 
             if !overlapping.is_empty()
-                && let Ok(Some(redacted)) =
-                    redact_image_regions(stream, &overlapping, &placement.bbox)
+                && let Some(redacted) = redact_image_regions(stream, &overlapping, &placement.bbox)?
             {
                 modified_images.insert(
                     placement.name.clone(),
@@ -220,9 +219,23 @@ pub fn compose_text_masked(params: &TextMaskedParams) -> crate::error::Result<Te
     }
 
     // 5. ビットマップからテキスト領域を抽出・JPEG化
+    /// テキスト領域のマージ距離（px）。近接する矩形を結合してXObject数を削減する。
+    const TEXT_BBOX_MERGE_DISTANCE: u32 = 5;
+
     let text_mask =
         segmenter::segment_text_mask(params.rgba_data, params.bitmap_width, params.bitmap_height)?;
-    let bboxes = segmenter::extract_text_bboxes(&text_mask, 5)?;
+    let bboxes = segmenter::extract_text_bboxes(&text_mask, TEXT_BBOX_MERGE_DISTANCE)?;
+
+    // テキスト領域が無い場合はビットマップコピーを回避して早期リターン
+    if bboxes.is_empty() {
+        return Ok(TextMaskedData {
+            stripped_content_stream,
+            text_regions: Vec::new(),
+            modified_images,
+            page_index: params.page_index,
+            color_mode: params.color_mode,
+        });
+    }
 
     let bitmap = RgbaImage::from_raw(
         params.bitmap_width,
