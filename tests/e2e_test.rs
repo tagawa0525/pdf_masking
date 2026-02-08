@@ -125,16 +125,14 @@ fn create_multi_page_pdf(path: &Path, num_pages: usize) {
 
 /// Write a jobs.yaml file for testing.
 ///
-/// `pages` are 1-based page numbers (as expected in the YAML format).
-fn write_jobs_yaml(dir: &Path, input: &str, output: &str, pages: &[u32]) {
-    let pages_str = pages
-        .iter()
-        .map(|p| p.to_string())
-        .collect::<Vec<_>>()
-        .join(", ");
-    let yaml = format!(
-        "jobs:\n  - input: \"{input}\"\n    output: \"{output}\"\n    pages: \"{pages_str}\"\n    dpi: 72\n"
-    );
+/// All pages are processed by default with RGB mode.
+/// Use `extra_yaml` to add color_mode, *_pages overrides, etc.
+fn write_jobs_yaml(dir: &Path, input: &str, output: &str, extra_yaml: &str) {
+    let mut yaml =
+        format!("jobs:\n  - input: \"{input}\"\n    output: \"{output}\"\n    dpi: 72\n");
+    if !extra_yaml.is_empty() {
+        yaml += extra_yaml;
+    }
     std::fs::write(dir.join("jobs.yaml"), yaml).expect("failed to write jobs.yaml");
 }
 
@@ -162,7 +160,7 @@ fn test_e2e_single_page_pdf() {
     let output_path = dir.path().join("output.pdf");
 
     create_single_page_pdf(&input_path);
-    write_jobs_yaml(dir.path(), "input.pdf", "output.pdf", &[1]);
+    write_jobs_yaml(dir.path(), "input.pdf", "output.pdf", "");
 
     let jobs_yaml_path = dir.path().join("jobs.yaml");
 
@@ -188,8 +186,8 @@ fn test_e2e_single_page_pdf() {
 // 2. Multi-page PDF E2E test
 // ============================================================
 
-/// Create a 3-page PDF, write jobs.yaml targeting pages 1 and 3, run CLI,
-/// verify output exists and is valid.
+/// Create a 3-page PDF, process all pages (default RGB), run CLI,
+/// verify output has all 3 pages.
 #[test]
 fn test_e2e_multi_page_pdf() {
     if !pdfium_available() {
@@ -202,7 +200,7 @@ fn test_e2e_multi_page_pdf() {
     let output_path = dir.path().join("output.pdf");
 
     create_multi_page_pdf(&input_path, 3);
-    write_jobs_yaml(dir.path(), "input.pdf", "output.pdf", &[1, 3]);
+    write_jobs_yaml(dir.path(), "input.pdf", "output.pdf", "");
 
     let jobs_yaml_path = dir.path().join("jobs.yaml");
 
@@ -221,11 +219,11 @@ fn test_e2e_multi_page_pdf() {
     // Verify output PDF exists and is loadable
     assert!(output_path.exists(), "output PDF should exist");
     let doc = Document::load(&output_path).expect("output PDF should be loadable by lopdf");
-    // The pipeline creates a new PDF with only the processed pages
+    // All pages are processed by default (no page selection)
     assert_eq!(
         doc.get_pages().len(),
-        2,
-        "output PDF should have 2 pages (pages 1 and 3 from input)"
+        3,
+        "output PDF should have 3 pages (all pages processed by default)"
     );
 }
 
@@ -248,7 +246,7 @@ fn test_e2e_with_settings_yaml() {
 
     create_single_page_pdf(&input_path);
     write_settings_yaml(dir.path(), 72, 30);
-    write_jobs_yaml(dir.path(), "input.pdf", "output.pdf", &[1]);
+    write_jobs_yaml(dir.path(), "input.pdf", "output.pdf", "");
 
     let jobs_yaml_path = dir.path().join("jobs.yaml");
 
@@ -323,7 +321,7 @@ fn test_e2e_output_has_mrc_structure() {
     let output_path = dir.path().join("output.pdf");
 
     create_single_page_pdf(&input_path);
-    write_jobs_yaml(dir.path(), "input.pdf", "output.pdf", &[1]);
+    write_jobs_yaml(dir.path(), "input.pdf", "output.pdf", "");
 
     let jobs_yaml_path = dir.path().join("jobs.yaml");
 
@@ -377,7 +375,7 @@ fn test_e2e_output_has_mrc_structure() {
 // 5. E2E test: invalid page range
 // ============================================================
 
-/// jobs.yaml with page number > page count, verify CLI exits with error.
+/// jobs.yaml with override page number > page count, verify CLI exits with error.
 #[test]
 fn test_e2e_invalid_page_range() {
     if !pdfium_available() {
@@ -388,9 +386,14 @@ fn test_e2e_invalid_page_range() {
     let dir = tempfile::tempdir().expect("create temp dir");
     let input_path = dir.path().join("input.pdf");
 
-    // Create a 1-page PDF but request page 99
+    // Create a 1-page PDF but request rgb_pages with page 99
     create_single_page_pdf(&input_path);
-    write_jobs_yaml(dir.path(), "input.pdf", "output.pdf", &[99]);
+    write_jobs_yaml(
+        dir.path(),
+        "input.pdf",
+        "output.pdf",
+        "    rgb_pages: [99]\n",
+    );
 
     let jobs_yaml_path = dir.path().join("jobs.yaml");
 
@@ -443,7 +446,7 @@ fn test_e2e_multiple_job_files() {
 
     // Job file 1: uses absolute paths since job dir differs from PDF dir
     let jobs1_yaml = format!(
-        "jobs:\n  - input: \"{}\"\n    output: \"{}\"\n    pages: \"1\"\n    dpi: 72\n",
+        "jobs:\n  - input: \"{}\"\n    output: \"{}\"\n    dpi: 72\n",
         input1.to_string_lossy(),
         output1.to_string_lossy()
     );
@@ -452,7 +455,7 @@ fn test_e2e_multiple_job_files() {
 
     // Job file 2: uses absolute paths
     let jobs2_yaml = format!(
-        "jobs:\n  - input: \"{}\"\n    output: \"{}\"\n    pages: \"1\"\n    dpi: 72\n",
+        "jobs:\n  - input: \"{}\"\n    output: \"{}\"\n    dpi: 72\n",
         input2.to_string_lossy(),
         output2.to_string_lossy()
     );
@@ -480,4 +483,299 @@ fn test_e2e_multiple_job_files() {
     let doc2 = Document::load(&output2).expect("output2 should be loadable");
     assert_eq!(doc1.get_pages().len(), 1, "output1 should have 1 page");
     assert_eq!(doc2.get_pages().len(), 1, "output2 should have 1 page");
+}
+
+// ============================================================
+// 7. E2E test: BW mode
+// ============================================================
+
+/// Process a single page in BW mode. Output should have JBIG2 mask only (no BgImg/FgImg).
+#[test]
+fn test_e2e_bw_mode() {
+    if !pdfium_available() {
+        eprintln!("Skipping: PDFIUM_DYNAMIC_LIB_PATH not set (run inside `nix develop`)");
+        return;
+    }
+
+    let dir = tempfile::tempdir().expect("create temp dir");
+    let input_path = dir.path().join("input.pdf");
+    let output_path = dir.path().join("output.pdf");
+
+    create_single_page_pdf(&input_path);
+    write_jobs_yaml(
+        dir.path(),
+        "input.pdf",
+        "output.pdf",
+        "    color_mode: bw\n",
+    );
+
+    let jobs_yaml_path = dir.path().join("jobs.yaml");
+
+    let output = cargo_bin()
+        .arg(&jobs_yaml_path)
+        .current_dir(dir.path())
+        .output()
+        .expect("failed to execute binary");
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        output.status.success(),
+        "CLI should exit with success for BW mode, stderr: {stderr}"
+    );
+
+    assert!(output_path.exists(), "output PDF should exist");
+    let doc = Document::load(&output_path).expect("output PDF should be loadable");
+    assert_eq!(doc.get_pages().len(), 1, "output PDF should have 1 page");
+
+    // BW page: should have BwImg XObject but NO BgImg/FgImg
+    let pages = doc.get_pages();
+    let first_page_id = pages.values().next().expect("should have a page");
+    let page_dict = doc
+        .get_dictionary(*first_page_id)
+        .expect("page should be a dictionary");
+    let resources = page_dict
+        .get(b"Resources")
+        .expect("page should have Resources");
+    let resources_dict = match resources {
+        Object::Reference(r) => doc.get_dictionary(*r).expect("resolve Resources ref"),
+        Object::Dictionary(d) => d,
+        _ => panic!("Resources should be a dictionary or reference"),
+    };
+    let xobject = resources_dict
+        .get(b"XObject")
+        .expect("Resources should have XObject");
+    let xobject_dict = match xobject {
+        Object::Reference(r) => doc.get_dictionary(*r).expect("resolve XObject ref"),
+        Object::Dictionary(d) => d,
+        _ => panic!("XObject should be a dictionary or reference"),
+    };
+    assert!(
+        xobject_dict.has(b"BwImg"),
+        "BW page should have BwImg XObject"
+    );
+    assert!(
+        !xobject_dict.has(b"BgImg"),
+        "BW page should NOT have BgImg XObject"
+    );
+    assert!(
+        !xobject_dict.has(b"FgImg"),
+        "BW page should NOT have FgImg XObject"
+    );
+}
+
+// ============================================================
+// 8. E2E test: Grayscale mode
+// ============================================================
+
+/// Process a single page in grayscale mode. Output should have DeviceGray XObjects.
+#[test]
+fn test_e2e_grayscale_mode() {
+    if !pdfium_available() {
+        eprintln!("Skipping: PDFIUM_DYNAMIC_LIB_PATH not set (run inside `nix develop`)");
+        return;
+    }
+
+    let dir = tempfile::tempdir().expect("create temp dir");
+    let input_path = dir.path().join("input.pdf");
+    let output_path = dir.path().join("output.pdf");
+
+    create_single_page_pdf(&input_path);
+    write_jobs_yaml(
+        dir.path(),
+        "input.pdf",
+        "output.pdf",
+        "    color_mode: grayscale\n",
+    );
+
+    let jobs_yaml_path = dir.path().join("jobs.yaml");
+
+    let output = cargo_bin()
+        .arg(&jobs_yaml_path)
+        .current_dir(dir.path())
+        .output()
+        .expect("failed to execute binary");
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        output.status.success(),
+        "CLI should exit with success for grayscale mode, stderr: {stderr}"
+    );
+
+    assert!(output_path.exists(), "output PDF should exist");
+    let doc = Document::load(&output_path).expect("output PDF should be loadable");
+    assert_eq!(doc.get_pages().len(), 1);
+
+    // Grayscale page: should have BgImg/FgImg with DeviceGray ColorSpace
+    let pages = doc.get_pages();
+    let first_page_id = pages.values().next().expect("should have a page");
+    let page_dict = doc
+        .get_dictionary(*first_page_id)
+        .expect("page should be a dictionary");
+    let resources = page_dict
+        .get(b"Resources")
+        .expect("page should have Resources");
+    let resources_dict = match resources {
+        Object::Reference(r) => doc.get_dictionary(*r).expect("resolve Resources ref"),
+        Object::Dictionary(d) => d,
+        _ => panic!("Resources should be a dictionary or reference"),
+    };
+    let xobject = resources_dict
+        .get(b"XObject")
+        .expect("Resources should have XObject");
+    let xobject_dict = match xobject {
+        Object::Reference(r) => doc.get_dictionary(*r).expect("resolve XObject ref"),
+        Object::Dictionary(d) => d,
+        _ => panic!("XObject should be a dictionary or reference"),
+    };
+
+    assert!(xobject_dict.has(b"BgImg"), "should have BgImg");
+    assert!(xobject_dict.has(b"FgImg"), "should have FgImg");
+
+    // Verify BgImg uses DeviceGray
+    let bg_ref = xobject_dict.get(b"BgImg").expect("BgImg should exist");
+    if let Object::Reference(bg_id) = bg_ref {
+        let bg_stream = doc
+            .get_object(*bg_id)
+            .and_then(|o| o.as_stream())
+            .expect("BgImg should be a stream");
+        let cs = bg_stream
+            .dict
+            .get(b"ColorSpace")
+            .expect("BgImg should have ColorSpace");
+        let cs_name = cs.as_name().expect("ColorSpace should be a name");
+        assert_eq!(
+            cs_name, b"DeviceGray",
+            "Grayscale BgImg should use DeviceGray"
+        );
+    }
+}
+
+// ============================================================
+// 9. E2E test: Skip mode (page copy)
+// ============================================================
+
+/// Process with skip_pages to copy a page as-is from source PDF.
+#[test]
+fn test_e2e_skip_mode() {
+    if !pdfium_available() {
+        eprintln!("Skipping: PDFIUM_DYNAMIC_LIB_PATH not set (run inside `nix develop`)");
+        return;
+    }
+
+    let dir = tempfile::tempdir().expect("create temp dir");
+    let input_path = dir.path().join("input.pdf");
+    let output_path = dir.path().join("output.pdf");
+
+    create_multi_page_pdf(&input_path, 2);
+    // Page 1: default RGB, Page 2: skip (copy as-is)
+    write_jobs_yaml(
+        dir.path(),
+        "input.pdf",
+        "output.pdf",
+        "    skip_pages: [2]\n",
+    );
+
+    let jobs_yaml_path = dir.path().join("jobs.yaml");
+
+    let output = cargo_bin()
+        .arg(&jobs_yaml_path)
+        .current_dir(dir.path())
+        .output()
+        .expect("failed to execute binary");
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        output.status.success(),
+        "CLI should exit with success with skip pages, stderr: {stderr}"
+    );
+
+    assert!(output_path.exists(), "output PDF should exist");
+    let doc = Document::load(&output_path).expect("output PDF should be loadable");
+    assert_eq!(
+        doc.get_pages().len(),
+        2,
+        "output should have 2 pages (1 MRC + 1 skip)"
+    );
+}
+
+// ============================================================
+// 10. E2E test: Mixed mode (per-page overrides)
+// ============================================================
+
+/// 3-page PDF with: page 1 = RGB (default), page 2 = BW, page 3 = skip.
+#[test]
+fn test_e2e_mixed_mode() {
+    if !pdfium_available() {
+        eprintln!("Skipping: PDFIUM_DYNAMIC_LIB_PATH not set (run inside `nix develop`)");
+        return;
+    }
+
+    let dir = tempfile::tempdir().expect("create temp dir");
+    let input_path = dir.path().join("input.pdf");
+    let output_path = dir.path().join("output.pdf");
+
+    create_multi_page_pdf(&input_path, 3);
+    write_jobs_yaml(
+        dir.path(),
+        "input.pdf",
+        "output.pdf",
+        "    bw_pages: [2]\n    skip_pages: [3]\n",
+    );
+
+    let jobs_yaml_path = dir.path().join("jobs.yaml");
+
+    let output = cargo_bin()
+        .arg(&jobs_yaml_path)
+        .current_dir(dir.path())
+        .output()
+        .expect("failed to execute binary");
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        output.status.success(),
+        "CLI should exit with success for mixed mode, stderr: {stderr}"
+    );
+
+    assert!(output_path.exists(), "output PDF should exist");
+    let doc = Document::load(&output_path).expect("output PDF should be loadable");
+    assert_eq!(doc.get_pages().len(), 3, "output should have 3 pages");
+
+    // Page 1 (RGB): should have BgImg + FgImg
+    let pages = doc.get_pages();
+    let page1_id = pages.get(&1).expect("page 1");
+    let page1_dict = doc.get_dictionary(*page1_id).expect("page 1 dict");
+    let res1 = page1_dict.get(b"Resources").expect("Resources");
+    let res1_dict = match res1 {
+        Object::Reference(r) => doc.get_dictionary(*r).expect("resolve"),
+        Object::Dictionary(d) => d,
+        _ => panic!("dict expected"),
+    };
+    let xobj1 = res1_dict.get(b"XObject").expect("XObject");
+    let xobj1_dict = match xobj1 {
+        Object::Reference(r) => doc.get_dictionary(*r).expect("resolve"),
+        Object::Dictionary(d) => d,
+        _ => panic!("dict expected"),
+    };
+    assert!(xobj1_dict.has(b"BgImg"), "Page 1 (RGB) should have BgImg");
+
+    // Page 2 (BW): should have BwImg but no BgImg
+    let page2_id = pages.get(&2).expect("page 2");
+    let page2_dict = doc.get_dictionary(*page2_id).expect("page 2 dict");
+    let res2 = page2_dict.get(b"Resources").expect("Resources");
+    let res2_dict = match res2 {
+        Object::Reference(r) => doc.get_dictionary(*r).expect("resolve"),
+        Object::Dictionary(d) => d,
+        _ => panic!("dict expected"),
+    };
+    let xobj2 = res2_dict.get(b"XObject").expect("XObject");
+    let xobj2_dict = match xobj2 {
+        Object::Reference(r) => doc.get_dictionary(*r).expect("resolve"),
+        Object::Dictionary(d) => d,
+        _ => panic!("dict expected"),
+    };
+    assert!(xobj2_dict.has(b"BwImg"), "Page 2 (BW) should have BwImg");
+    assert!(
+        !xobj2_dict.has(b"BgImg"),
+        "Page 2 (BW) should NOT have BgImg"
+    );
 }

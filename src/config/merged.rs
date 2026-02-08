@@ -1,10 +1,11 @@
 use std::path::PathBuf;
 
-use super::job::Job;
+use super::job::{ColorMode, Job};
 use super::settings::Settings;
 
 #[derive(Debug, Clone)]
 pub struct MergedConfig {
+    pub color_mode: ColorMode,
     pub dpi: u32,
     pub fg_dpi: u32,
     pub bg_quality: u8,
@@ -19,6 +20,7 @@ impl MergedConfig {
     /// JobのOption値がSomeならJobの値を、NoneならSettingsの値を使用する。
     pub fn new(settings: &Settings, job: &Job) -> Self {
         MergedConfig {
+            color_mode: job.color_mode.unwrap_or(settings.color_mode),
             dpi: job.dpi.unwrap_or(settings.dpi),
             fg_dpi: job.fg_dpi.unwrap_or(settings.fg_dpi),
             bg_quality: job.bg_quality.unwrap_or(settings.bg_quality),

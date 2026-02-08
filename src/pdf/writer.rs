@@ -2,7 +2,8 @@
 
 use lopdf::{Document, Object, Stream, dictionary};
 
-use crate::mrc::MrcLayers;
+use crate::config::job::ColorMode;
+use crate::mrc::{BwLayers, MrcLayers};
 
 /// PDF Name仕様 (PDF Reference 7.3.5) に従い、名前をエスケープする。
 ///
@@ -92,8 +93,9 @@ impl MrcPageWriter {
         jpeg_data: &[u8],
         width: u32,
         height: u32,
+        color_space: &str,
     ) -> lopdf::ObjectId {
-        self.add_image_xobject(jpeg_data, width, height, "DeviceRGB", 8, "DCTDecode", None)
+        self.add_image_xobject(jpeg_data, width, height, color_space, 8, "DCTDecode", None)
     }
 
     /// マスクJBIG2 XObjectを追加する。
@@ -121,12 +123,13 @@ impl MrcPageWriter {
         width: u32,
         height: u32,
         mask_id: lopdf::ObjectId,
+        color_space: &str,
     ) -> lopdf::ObjectId {
         self.add_image_xobject(
             jpeg_data,
             width,
             height,
-            "DeviceRGB",
+            color_space,
             8,
             "DCTDecode",
             Some(mask_id),
@@ -134,9 +137,6 @@ impl MrcPageWriter {
     }
 
     /// MRC用のコンテンツストリームバイト列を生成する。
-    ///
-    /// 背景と前景の描画コマンドを生成する:
-    /// `q <width> 0 0 <height> 0 0 cm /BgName Do Q q <width> 0 0 <height> 0 0 cm /FgName Do Q`
     pub fn build_mrc_content_stream(
         bg_name: &str,
         fg_name: &str,
@@ -149,45 +149,87 @@ impl MrcPageWriter {
             .into_bytes()
     }
 
-    /// MrcLayersからPDFページを構築する。
-    ///
-    /// 最初の呼び出しでPages/Catalog構造を作成し、以降の呼び出しでは
-    /// 既存のKids配列にページを追加する。追加されたページのObjectIdを返す。
-    pub fn write_mrc_page(&mut self, layers: &MrcLayers) -> crate::error::Result<lopdf::ObjectId> {
-        let width = layers.width;
-        let height = layers.height;
+    /// BW用のコンテンツストリームバイト列を生成する。
+    fn build_bw_content_stream(img_name: &str, width: u32, height: u32) -> Vec<u8> {
+        let name = escape_pdf_name(img_name);
+        format!("q {width} 0 0 {height} 0 0 cm /{name} Do Q").into_bytes()
+    }
 
-        // XObjectを追加
-        let bg_id = self.add_background_xobject(&layers.background_jpeg, width, height);
-        let mask_id = self.add_mask_xobject(&layers.mask_jbig2, width, height);
-        let fg_id = self.add_foreground_xobject(&layers.foreground_jpeg, width, height, mask_id);
-
-        // Pages構造を初期化（初回のみ）またはIDを取得
-        let pages_id = match self.pages_id {
+    /// PagesノードのIDを取得（初回時は新規作成）。
+    fn ensure_pages_id(&mut self) -> lopdf::ObjectId {
+        match self.pages_id {
             Some(id) => id,
             None => {
                 let id = self.doc.new_object_id();
                 self.pages_id = Some(id);
                 id
             }
+        }
+    }
+
+    /// ページをPages Kidsに追加する。初回呼び出しでPages+Catalogを作成。
+    fn append_page_to_kids(&mut self, pages_id: lopdf::ObjectId, page_id: lopdf::ObjectId) {
+        if let Some(Object::Dictionary(pages_dict)) = self.doc.objects.get_mut(&pages_id) {
+            if let Ok(kids) = pages_dict.get_mut(b"Kids") {
+                if let Ok(kids_array) = kids.as_array_mut() {
+                    kids_array.push(page_id.into());
+                }
+            }
+            if let Ok(count_obj) = pages_dict.get_mut(b"Count") {
+                if let Ok(count) = count_obj.as_i64() {
+                    *count_obj = Object::Integer(count + 1);
+                }
+            }
+        } else {
+            let pages = dictionary! {
+                "Type" => "Pages",
+                "Kids" => vec![page_id.into()],
+                "Count" => 1,
+            };
+            self.doc.objects.insert(pages_id, Object::Dictionary(pages));
+
+            let catalog_id = self.doc.add_object(dictionary! {
+                "Type" => "Catalog",
+                "Pages" => pages_id,
+            });
+            self.doc.trailer.set("Root", catalog_id);
+        }
+    }
+
+    /// MrcLayersからPDFページを構築する。
+    pub fn write_mrc_page(&mut self, layers: &MrcLayers) -> crate::error::Result<lopdf::ObjectId> {
+        let width = layers.width;
+        let height = layers.height;
+        let color_space = match layers.color_mode {
+            ColorMode::Grayscale => "DeviceGray",
+            _ => "DeviceRGB",
         };
 
-        // XObjectリソース辞書を構築
+        let bg_id =
+            self.add_background_xobject(&layers.background_jpeg, width, height, color_space);
+        let mask_id = self.add_mask_xobject(&layers.mask_jbig2, width, height);
+        let fg_id = self.add_foreground_xobject(
+            &layers.foreground_jpeg,
+            width,
+            height,
+            mask_id,
+            color_space,
+        );
+
+        let pages_id = self.ensure_pages_id();
+
         let mut xobject_dict = lopdf::Dictionary::new();
         xobject_dict.set("BgImg", Object::Reference(bg_id));
         xobject_dict.set("FgImg", Object::Reference(fg_id));
-        // MaskImgはSMask経由で参照されるため、XObjectリソースには不要
 
         let resources_id = self.doc.add_object(dictionary! {
             "XObject" => Object::Dictionary(xobject_dict),
         });
 
-        // コンテンツストリームを生成
         let content_bytes = Self::build_mrc_content_stream("BgImg", "FgImg", width, height);
         let content_stream = Stream::new(dictionary! {}, content_bytes);
         let content_id = self.doc.add_object(Object::Stream(content_stream));
 
-        // ページを作成
         let page_id = self.doc.add_object(dictionary! {
             "Type" => "Page",
             "Parent" => pages_id,
@@ -201,44 +243,170 @@ impl MrcPageWriter {
             "Contents" => content_id,
         });
 
-        // PagesノードにKidsを追加/更新
-        if let Some(Object::Dictionary(pages_dict)) = self.doc.objects.get_mut(&pages_id) {
-            // 既存のPagesノードにページを追加
-            if let Ok(kids) = pages_dict.get_mut(b"Kids") {
-                if let Ok(kids_array) = kids.as_array_mut() {
-                    kids_array.push(page_id.into());
-                }
-            }
-            if let Ok(count_obj) = pages_dict.get_mut(b"Count") {
-                if let Ok(count) = count_obj.as_i64() {
-                    *count_obj = Object::Integer(count + 1);
-                }
-            }
-        } else {
-            // 初回: Pagesノードを新規作成
-            let pages = dictionary! {
-                "Type" => "Pages",
-                "Kids" => vec![page_id.into()],
-                "Count" => 1,
-            };
-            self.doc.objects.insert(pages_id, Object::Dictionary(pages));
-
-            // Catalogを作成（初回のみ）
-            let catalog_id = self.doc.add_object(dictionary! {
-                "Type" => "Catalog",
-                "Pages" => pages_id,
-            });
-            self.doc.trailer.set("Root", catalog_id);
-        }
+        self.append_page_to_kids(pages_id, page_id);
 
         Ok(page_id)
     }
 
-    /// PDFドキュメントをバイト列として出力する。
+    /// BwLayersからPDFページを構築する（JBIG2マスクのみ）。
+    pub fn write_bw_page(&mut self, layers: &BwLayers) -> crate::error::Result<lopdf::ObjectId> {
+        let width = layers.width;
+        let height = layers.height;
+
+        let mask_id = self.add_mask_xobject(&layers.mask_jbig2, width, height);
+
+        // BWページとしてマスクをそのまま画像として描画する場合、
+        // 現在のビット定義は text=1, non-text=0 であり、
+        // DeviceGray + BitsPerComponent=1 の既定デコード (0=黒, 1=白) のままだと
+        // テキストが白・背景が黒に反転してしまう。
+        // そのため、このBW用XObjectに対してのみ Decode 配列で極性を反転させる。
+        if let Some(Object::Stream(stream)) = self.doc.objects.get_mut(&mask_id) {
+            stream.dict.set(
+                "Decode",
+                Object::Array(vec![Object::Integer(1), Object::Integer(0)]),
+            );
+        }
+
+        let pages_id = self.ensure_pages_id();
+
+        let mut xobject_dict = lopdf::Dictionary::new();
+        xobject_dict.set("BwImg", Object::Reference(mask_id));
+
+        let resources_id = self.doc.add_object(dictionary! {
+            "XObject" => Object::Dictionary(xobject_dict),
+        });
+
+        let content_bytes = Self::build_bw_content_stream("BwImg", width, height);
+        let content_stream = Stream::new(dictionary! {}, content_bytes);
+        let content_id = self.doc.add_object(Object::Stream(content_stream));
+
+        let page_id = self.doc.add_object(dictionary! {
+            "Type" => "Page",
+            "Parent" => pages_id,
+            "MediaBox" => vec![
+                Object::Integer(0),
+                Object::Integer(0),
+                Object::Integer(width as i64),
+                Object::Integer(height as i64),
+            ],
+            "Resources" => resources_id,
+            "Contents" => content_id,
+        });
+
+        self.append_page_to_kids(pages_id, page_id);
+
+        Ok(page_id)
+    }
+
+    /// ソースPDFからページをコピーする（Skipモード用）。
     ///
-    /// Catalog及びPagesが存在しない場合はエラーを返す。
+    /// lopdfオブジェクトの深コピーを行い、Parent参照を出力PDFのPagesノードに差し替える。
+    pub fn copy_page_from(
+        &mut self,
+        source: &Document,
+        page_num: u32,
+    ) -> crate::error::Result<lopdf::ObjectId> {
+        let pages = source.get_pages();
+        let source_page_id = pages.get(&page_num).ok_or_else(|| {
+            crate::error::PdfMaskError::pdf_read(format!(
+                "page {} not found in source document",
+                page_num
+            ))
+        })?;
+
+        let pages_id = self.ensure_pages_id();
+
+        // オブジェクトIDマッピング（ソース→出力）
+        let mut id_map = std::collections::HashMap::new();
+
+        let new_page_id = self.deep_copy_object(source, *source_page_id, &mut id_map)?;
+
+        // Parentを出力PDFのPagesに差し替え
+        if let Some(Object::Dictionary(dict)) = self.doc.objects.get_mut(&new_page_id) {
+            dict.set("Parent", Object::Reference(pages_id));
+        }
+
+        self.append_page_to_kids(pages_id, new_page_id);
+
+        Ok(new_page_id)
+    }
+
+    /// ソースPDFのオブジェクトを再帰的に深コピーする。
+    fn deep_copy_object(
+        &mut self,
+        source: &Document,
+        source_id: lopdf::ObjectId,
+        id_map: &mut std::collections::HashMap<lopdf::ObjectId, lopdf::ObjectId>,
+    ) -> crate::error::Result<lopdf::ObjectId> {
+        // 既にコピー済みならマッピングを返す
+        if let Some(&mapped_id) = id_map.get(&source_id) {
+            return Ok(mapped_id);
+        }
+
+        // 先にIDを予約して循環参照を防ぐ
+        let new_id = self.doc.new_object_id();
+        id_map.insert(source_id, new_id);
+
+        let source_obj = source
+            .get_object(source_id)
+            .map_err(|e| crate::error::PdfMaskError::pdf_read(e.to_string()))?;
+
+        let new_obj = self.deep_copy_value(source, source_obj, id_map)?;
+        self.doc.objects.insert(new_id, new_obj);
+
+        Ok(new_id)
+    }
+
+    /// オブジェクト値を再帰的にコピーし、Reference先もコピーする。
+    fn deep_copy_value(
+        &mut self,
+        source: &Document,
+        obj: &Object,
+        id_map: &mut std::collections::HashMap<lopdf::ObjectId, lopdf::ObjectId>,
+    ) -> crate::error::Result<Object> {
+        match obj {
+            Object::Reference(ref_id) => {
+                let new_id = self.deep_copy_object(source, *ref_id, id_map)?;
+                Ok(Object::Reference(new_id))
+            }
+            Object::Dictionary(dict) => {
+                let mut new_dict = lopdf::Dictionary::new();
+                for (key, value) in dict.iter() {
+                    // Parentはコピーしない（呼び出し側で差し替え）
+                    if key == b"Parent" {
+                        continue;
+                    }
+                    let new_value = self.deep_copy_value(source, value, id_map)?;
+                    new_dict.set(key.clone(), new_value);
+                }
+                Ok(Object::Dictionary(new_dict))
+            }
+            Object::Array(arr) => {
+                let mut new_arr = Vec::with_capacity(arr.len());
+                for item in arr {
+                    new_arr.push(self.deep_copy_value(source, item, id_map)?);
+                }
+                Ok(Object::Array(new_arr))
+            }
+            Object::Stream(stream) => {
+                let mut new_dict = lopdf::Dictionary::new();
+                for (key, value) in stream.dict.iter() {
+                    if key == b"Parent" {
+                        continue;
+                    }
+                    let new_value = self.deep_copy_value(source, value, id_map)?;
+                    new_dict.set(key.clone(), new_value);
+                }
+                let new_stream = Stream::new(new_dict, stream.content.clone());
+                Ok(Object::Stream(new_stream))
+            }
+            // プリミティブ型はそのままクローン
+            other => Ok(other.clone()),
+        }
+    }
+
+    /// PDFドキュメントをバイト列として出力する。
     pub fn save_to_bytes(&mut self) -> crate::error::Result<Vec<u8>> {
-        // Catalog/Pagesの存在を検証する
         let root_ref = self.doc.trailer.get(b"Root").map_err(|_| {
             crate::error::PdfMaskError::pdf_write("missing Catalog (Root) in trailer")
         })?;
@@ -299,7 +467,7 @@ mod tests {
     fn test_create_background_xobject() {
         let jpeg_data: Vec<u8> = vec![0xFF, 0xD8, 0xFF, 0xE0];
         let mut writer = MrcPageWriter::new();
-        let obj_id = writer.add_background_xobject(&jpeg_data, 640, 480);
+        let obj_id = writer.add_background_xobject(&jpeg_data, 640, 480, "DeviceRGB");
         assert!(obj_id.0 > 0, "object id should be positive");
     }
 
@@ -317,9 +485,8 @@ mod tests {
         let mask_jbig2: Vec<u8> = vec![0x97, 0x4A, 0x42, 0x32];
         let mut writer = MrcPageWriter::new();
         let mask_id = writer.add_mask_xobject(&mask_jbig2, 640, 480);
-        let fg_id = writer.add_foreground_xobject(&fg_jpeg, 640, 480, mask_id);
+        let fg_id = writer.add_foreground_xobject(&fg_jpeg, 640, 480, mask_id, "DeviceRGB");
 
-        // Verify SMask reference via direct document access
         let obj = writer.doc.get_object(fg_id).expect("get object");
         let stream = obj.as_stream().expect("as stream");
         let smask = stream.dict.get(b"SMask").expect("get SMask");
@@ -346,6 +513,7 @@ mod tests {
             mask_jbig2: vec![0x97, 0x4A, 0x42, 0x32],
             width: 640,
             height: 480,
+            color_mode: ColorMode::Rgb,
         };
         let mut writer = MrcPageWriter::new();
         writer.write_mrc_page(&layers).expect("write MRC page");
@@ -362,6 +530,7 @@ mod tests {
             mask_jbig2: vec![0x97, 0x4A, 0x42, 0x32],
             width: 640,
             height: 480,
+            color_mode: ColorMode::Rgb,
         };
         let layers2 = crate::mrc::MrcLayers {
             background_jpeg: vec![0xFF, 0xD8, 0xFF, 0xE0, 0x01],
@@ -369,6 +538,7 @@ mod tests {
             mask_jbig2: vec![0x97, 0x4A, 0x42, 0x32, 0x01],
             width: 800,
             height: 600,
+            color_mode: ColorMode::Rgb,
         };
         let layers3 = crate::mrc::MrcLayers {
             background_jpeg: vec![0xFF, 0xD8, 0xFF, 0xE0, 0x02],
@@ -376,6 +546,7 @@ mod tests {
             mask_jbig2: vec![0x97, 0x4A, 0x42, 0x32, 0x02],
             width: 1024,
             height: 768,
+            color_mode: ColorMode::Rgb,
         };
 
         let mut writer = MrcPageWriter::new();
@@ -383,7 +554,6 @@ mod tests {
         let id2 = writer.write_mrc_page(&layers2).expect("write page 2");
         let id3 = writer.write_mrc_page(&layers3).expect("write page 3");
 
-        // All page IDs should be unique
         assert_ne!(id1, id2);
         assert_ne!(id2, id3);
         assert_ne!(id1, id3);
@@ -391,5 +561,158 @@ mod tests {
         let pdf_bytes = writer.save_to_bytes().expect("save to bytes");
         let doc = Document::load_mem(&pdf_bytes).expect("load PDF from memory");
         assert_eq!(doc.get_pages().len(), 3, "should have 3 pages");
+    }
+
+    #[test]
+    fn test_write_bw_page() {
+        let layers = crate::mrc::BwLayers {
+            mask_jbig2: vec![0x97, 0x4A, 0x42, 0x32],
+            width: 640,
+            height: 480,
+        };
+        let mut writer = MrcPageWriter::new();
+        writer.write_bw_page(&layers).expect("write BW page");
+        let pdf_bytes = writer.save_to_bytes().expect("save to bytes");
+        let doc = Document::load_mem(&pdf_bytes).expect("load PDF from memory");
+        assert_eq!(doc.get_pages().len(), 1);
+    }
+
+    #[test]
+    fn test_write_grayscale_mrc_page() {
+        let layers = crate::mrc::MrcLayers {
+            background_jpeg: vec![0xFF, 0xD8, 0xFF, 0xE0],
+            foreground_jpeg: vec![0xFF, 0xD8, 0xFF, 0xE1],
+            mask_jbig2: vec![0x97, 0x4A, 0x42, 0x32],
+            width: 640,
+            height: 480,
+            color_mode: ColorMode::Grayscale,
+        };
+        let mut writer = MrcPageWriter::new();
+        let page_id = writer
+            .write_mrc_page(&layers)
+            .expect("write grayscale MRC page");
+
+        let pdf_bytes = writer.save_to_bytes().expect("save to bytes");
+        let doc = Document::load_mem(&pdf_bytes).expect("load PDF from memory");
+        assert_eq!(doc.get_pages().len(), 1);
+
+        // Verify ColorSpace is DeviceGray
+        let page_dict = doc.get_dictionary(page_id).expect("page dict");
+        let resources_ref = page_dict
+            .get(b"Resources")
+            .expect("Resources")
+            .as_reference()
+            .expect("Resources ref");
+        let resources = doc.get_dictionary(resources_ref).expect("Resources dict");
+        let xobject = resources
+            .get(b"XObject")
+            .expect("XObject")
+            .as_dict()
+            .expect("XObject dict");
+        let bg_ref = xobject
+            .get(b"BgImg")
+            .expect("BgImg")
+            .as_reference()
+            .expect("BgImg ref");
+        let bg_stream = doc
+            .get_object(bg_ref)
+            .expect("bg obj")
+            .as_stream()
+            .expect("bg stream");
+        let cs = bg_stream.dict.get(b"ColorSpace").expect("ColorSpace");
+        match cs {
+            Object::Name(name) => assert_eq!(name, b"DeviceGray"),
+            _ => panic!("ColorSpace should be a Name, got {:?}", cs),
+        }
+    }
+
+    #[test]
+    fn test_copy_page_from() {
+        // Create a source document with 2 pages
+        let mut source = Document::with_version("1.4");
+        let pages_id = source.new_object_id();
+
+        let content1 = Stream::new(dictionary! {}, b"q 612 0 0 792 0 0 cm Q".to_vec());
+        let content1_id = source.add_object(content1);
+        let page1_id = source.add_object(dictionary! {
+            "Type" => "Page",
+            "Parent" => pages_id,
+            "MediaBox" => vec![
+                Object::Integer(0), Object::Integer(0),
+                Object::Integer(612), Object::Integer(792),
+            ],
+            "Contents" => content1_id,
+            "Resources" => dictionary! {},
+        });
+
+        let content2 = Stream::new(dictionary! {}, b"q 100 0 0 100 0 0 cm Q".to_vec());
+        let content2_id = source.add_object(content2);
+        let page2_id = source.add_object(dictionary! {
+            "Type" => "Page",
+            "Parent" => pages_id,
+            "MediaBox" => vec![
+                Object::Integer(0), Object::Integer(0),
+                Object::Integer(100), Object::Integer(100),
+            ],
+            "Contents" => content2_id,
+            "Resources" => dictionary! {},
+        });
+
+        let pages = dictionary! {
+            "Type" => "Pages",
+            "Kids" => vec![page1_id.into(), page2_id.into()],
+            "Count" => 2,
+        };
+        source.objects.insert(pages_id, Object::Dictionary(pages));
+        let catalog_id = source.add_object(dictionary! {
+            "Type" => "Catalog",
+            "Pages" => pages_id,
+        });
+        source.trailer.set("Root", catalog_id);
+
+        // Copy page 1 into a new writer
+        let mut writer = MrcPageWriter::new();
+        writer.copy_page_from(&source, 1).expect("copy page 1");
+
+        let pdf_bytes = writer.save_to_bytes().expect("save to bytes");
+        let doc = Document::load_mem(&pdf_bytes).expect("load output PDF");
+        assert_eq!(doc.get_pages().len(), 1, "output should have 1 copied page");
+
+        // Verify MediaBox is preserved
+        let out_pages = doc.get_pages();
+        let out_page_id = out_pages.values().next().expect("should have a page");
+        let out_page = doc.get_dictionary(*out_page_id).expect("page dict");
+        let media_box = out_page.get(b"MediaBox").expect("MediaBox");
+        let arr = media_box.as_array().expect("MediaBox array");
+        assert_eq!(arr.len(), 4);
+    }
+
+    #[test]
+    fn test_mixed_mode_pages() {
+        let mrc_layers = crate::mrc::MrcLayers {
+            background_jpeg: vec![0xFF, 0xD8, 0xFF, 0xE0],
+            foreground_jpeg: vec![0xFF, 0xD8, 0xFF, 0xE1],
+            mask_jbig2: vec![0x97, 0x4A, 0x42, 0x32],
+            width: 640,
+            height: 480,
+            color_mode: ColorMode::Rgb,
+        };
+        let bw_layers = crate::mrc::BwLayers {
+            mask_jbig2: vec![0x97, 0x4A, 0x42, 0x32],
+            width: 640,
+            height: 480,
+        };
+
+        let mut writer = MrcPageWriter::new();
+        writer.write_mrc_page(&mrc_layers).expect("write MRC page");
+        writer.write_bw_page(&bw_layers).expect("write BW page");
+
+        let pdf_bytes = writer.save_to_bytes().expect("save to bytes");
+        let doc = Document::load_mem(&pdf_bytes).expect("load PDF from memory");
+        assert_eq!(
+            doc.get_pages().len(),
+            2,
+            "should have 2 pages (1 MRC + 1 BW)"
+        );
     }
 }

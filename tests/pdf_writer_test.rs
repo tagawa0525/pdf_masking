@@ -1,6 +1,7 @@
 // Phase 7: PDF構築（MRC → PDF）テスト
 
 use lopdf::Document;
+use pdf_masking::config::job::ColorMode;
 use pdf_masking::mrc::MrcLayers;
 use pdf_masking::pdf::content_stream::BBox;
 use pdf_masking::pdf::image_xobject::bbox_overlaps;
@@ -77,6 +78,7 @@ fn test_write_mrc_page() {
         mask_jbig2: vec![0x97, 0x4A, 0x42, 0x32],      // ダミーJBIG2マスク
         width: 640,
         height: 480,
+        color_mode: ColorMode::Rgb,
     };
 
     let mut writer = MrcPageWriter::new();

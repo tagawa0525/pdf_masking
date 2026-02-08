@@ -116,14 +116,12 @@ fn test_job_required_fields_only() {
 jobs:
   - input: "input.pdf"
     output: "output.pdf"
-    pages: "1-5"
 "#;
     let job_file: JobFile = serde_yml::from_str(yaml).expect("should parse required fields");
     assert_eq!(job_file.jobs.len(), 1);
     let job = &job_file.jobs[0];
     assert_eq!(job.input, "input.pdf");
     assert_eq!(job.output, "output.pdf");
-    assert_eq!(job.pages, vec![1, 2, 3, 4, 5]);
     assert!(job.dpi.is_none());
     assert!(job.fg_dpi.is_none());
     assert!(job.bg_quality.is_none());
@@ -138,7 +136,6 @@ fn test_job_with_optional_fields() {
 jobs:
   - input: "input.pdf"
     output: "output.pdf"
-    pages: "1, 3"
     dpi: 600
     preserve_images: false
 "#;
@@ -146,7 +143,6 @@ jobs:
     let job = &job_file.jobs[0];
     assert_eq!(job.dpi, Some(600));
     assert_eq!(job.preserve_images, Some(false));
-    assert_eq!(job.pages, vec![1, 3]);
 }
 
 #[test]
@@ -155,7 +151,6 @@ fn test_job_missing_required_field() {
     let yaml = r#"
 jobs:
   - output: "output.pdf"
-    pages: "1-5"
 "#;
     let result: Result<JobFile, _> = serde_yml::from_str(yaml);
     assert!(
@@ -170,17 +165,13 @@ fn test_job_multiple_jobs() {
 jobs:
   - input: "a.pdf"
     output: "a_out.pdf"
-    pages: "1"
   - input: "b.pdf"
     output: "b_out.pdf"
-    pages: "2-4"
 "#;
     let job_file: JobFile = serde_yml::from_str(yaml).expect("should parse multiple jobs");
     assert_eq!(job_file.jobs.len(), 2);
     assert_eq!(job_file.jobs[0].input, "a.pdf");
-    assert_eq!(job_file.jobs[0].pages, vec![1]);
     assert_eq!(job_file.jobs[1].input, "b.pdf");
-    assert_eq!(job_file.jobs[1].pages, vec![2, 3, 4]);
 }
 
 // ============================================================
@@ -194,7 +185,6 @@ fn test_merge_job_dpi_overrides_settings() {
 jobs:
   - input: "in.pdf"
     output: "out.pdf"
-    pages: "1"
     dpi: 600
 "#;
     let job_file: JobFile = serde_yml::from_str(job_yaml).expect("parse job");
@@ -209,7 +199,6 @@ fn test_merge_job_no_dpi_uses_settings() {
 jobs:
   - input: "in.pdf"
     output: "out.pdf"
-    pages: "1"
 "#;
     let job_file: JobFile = serde_yml::from_str(job_yaml).expect("parse job");
     let merged = MergedConfig::new(&settings, &job_file.jobs[0]);
@@ -223,7 +212,6 @@ fn test_merge_no_settings_uses_defaults() {
 jobs:
   - input: "in.pdf"
     output: "out.pdf"
-    pages: "1"
 "#;
     let job_file: JobFile = serde_yml::from_str(job_yaml).expect("parse job");
     let merged = MergedConfig::new(&settings, &job_file.jobs[0]);
@@ -268,46 +256,4 @@ fn test_auto_detect_settings_yaml_missing() {
         settings.dpi, 300,
         "should use default when settings.yaml absent"
     );
-}
-
-// ============================================================
-// 6. YAML配列形式のpagesフィールド
-// ============================================================
-
-#[test]
-fn test_job_pages_yaml_sequence_integers() {
-    let yaml = r#"
-jobs:
-  - input: "input.pdf"
-    output: "output.pdf"
-    pages: [1, 3, 5]
-"#;
-    let job_file: JobFile =
-        serde_yml::from_str(yaml).expect("should parse YAML sequence of integers");
-    assert_eq!(job_file.jobs[0].pages, vec![1, 3, 5]);
-}
-
-#[test]
-fn test_job_pages_yaml_sequence_with_ranges() {
-    let yaml = r#"
-jobs:
-  - input: "input.pdf"
-    output: "output.pdf"
-    pages: [1, 3, "5-10", 15]
-"#;
-    let job_file: JobFile =
-        serde_yml::from_str(yaml).expect("should parse YAML sequence with ranges");
-    assert_eq!(job_file.jobs[0].pages, vec![1, 3, 5, 6, 7, 8, 9, 10, 15]);
-}
-
-#[test]
-fn test_job_pages_yaml_string_form() {
-    let yaml = r#"
-jobs:
-  - input: "input.pdf"
-    output: "output.pdf"
-    pages: "1, 3, 5-10"
-"#;
-    let job_file: JobFile = serde_yml::from_str(yaml).expect("should parse string form pages");
-    assert_eq!(job_file.jobs[0].pages, vec![1, 3, 5, 6, 7, 8, 9, 10]);
 }

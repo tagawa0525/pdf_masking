@@ -72,22 +72,12 @@ fn main() -> ExitCode {
             let input_path = resolve_path(&job_dir, &job.input);
             let output_path = resolve_path(&job_dir, &job.output);
 
-            // Convert 1-based YAML pages to 0-based indices for JobConfig.
-            let pages: Vec<u32> = match job
-                .pages
-                .iter()
-                .map(|&p| {
-                    if p == 0 {
-                        Err("Page number 0 is invalid; pages are 1-based in job files")
-                    } else {
-                        Ok(p - 1)
-                    }
-                })
-                .collect::<Result<Vec<u32>, _>>()
-            {
-                Ok(ps) => ps,
+            // Resolve per-page color mode overrides (1-based)
+            let default_color_mode = merged.color_mode;
+            let color_mode_overrides = match job.resolve_page_modes() {
+                Ok(m) => m,
                 Err(e) => {
-                    eprintln!("ERROR: {e} in {job_file_arg}");
+                    eprintln!("ERROR: {e}");
                     return ExitCode::FAILURE;
                 }
             };
@@ -97,7 +87,8 @@ fn main() -> ExitCode {
             job_configs.push(JobConfig {
                 input_path,
                 output_path,
-                pages,
+                default_color_mode,
+                color_mode_overrides,
                 dpi: merged.dpi,
                 bg_quality: merged.bg_quality,
                 fg_quality: merged.fg_quality,

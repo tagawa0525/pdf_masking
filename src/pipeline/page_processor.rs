@@ -6,13 +6,14 @@ use image::DynamicImage;
 
 use crate::cache::hash::{CacheSettings, compute_cache_key};
 use crate::cache::store::CacheStore;
-use crate::mrc::MrcLayers;
-use crate::mrc::compositor::{MrcConfig, compose};
+use crate::config::job::ColorMode;
+use crate::mrc::compositor::{MrcConfig, compose, compose_bw};
+use crate::mrc::{PageOutput, SkipData};
 
-/// Single page MRC processing result.
+/// Single page processing result.
 pub struct ProcessedPage {
     pub page_index: u32,
-    pub mrc_layers: MrcLayers,
+    pub output: PageOutput,
     pub cache_key: String,
 }
 
@@ -31,7 +32,17 @@ pub fn process_page(
     cache_settings: &CacheSettings,
     cache_store: Option<&CacheStore>,
     pdf_path: &Path,
+    color_mode: ColorMode,
 ) -> crate::error::Result<ProcessedPage> {
+    // Skip モードはMRC処理不要
+    if color_mode == ColorMode::Skip {
+        return Ok(ProcessedPage {
+            page_index,
+            output: PageOutput::Skip(SkipData { page_index }),
+            cache_key: String::new(),
+        });
+    }
+
     let cache_key = compute_cache_key(content_stream, cache_settings, pdf_path, page_index);
 
     let bitmap_width = bitmap.width();
@@ -39,14 +50,27 @@ pub fn process_page(
 
     // Check cache first
     if let Some(store) = cache_store {
-        if let Some(layers) = store.retrieve(&cache_key)? {
-            // Validate cached layer dimensions against current bitmap
-            if layers.width == bitmap_width && layers.height == bitmap_height {
-                return Ok(ProcessedPage {
-                    page_index,
-                    mrc_layers: layers,
-                    cache_key,
-                });
+        if let Some(cached) = store.retrieve(&cache_key, color_mode)? {
+            match &cached {
+                PageOutput::Mrc(layers) => {
+                    if layers.width == bitmap_width && layers.height == bitmap_height {
+                        return Ok(ProcessedPage {
+                            page_index,
+                            output: cached,
+                            cache_key,
+                        });
+                    }
+                }
+                PageOutput::BwMask(layers) => {
+                    if layers.width == bitmap_width && layers.height == bitmap_height {
+                        return Ok(ProcessedPage {
+                            page_index,
+                            output: cached,
+                            cache_key,
+                        });
+                    }
+                }
+                PageOutput::Skip(_) => {}
             }
             // Dimension mismatch: treat as cache miss and recompose
         }
@@ -57,16 +81,26 @@ pub fn process_page(
     let (width, height) = (rgba_image.width(), rgba_image.height());
     let rgba_data = rgba_image.into_raw();
 
-    let mrc_layers = compose(&rgba_data, width, height, mrc_config)?;
+    let output = match color_mode {
+        ColorMode::Bw => {
+            let bw_layers = compose_bw(&rgba_data, width, height)?;
+            PageOutput::BwMask(bw_layers)
+        }
+        mode @ (ColorMode::Rgb | ColorMode::Grayscale) => {
+            let mrc_layers = compose(&rgba_data, width, height, mrc_config, mode)?;
+            PageOutput::Mrc(mrc_layers)
+        }
+        ColorMode::Skip => unreachable!("Skip handled above"),
+    };
 
     // Store in cache if available
     if let Some(store) = cache_store {
-        store.store(&cache_key, &mrc_layers)?;
+        store.store(&cache_key, &output)?;
     }
 
     Ok(ProcessedPage {
         page_index,
-        mrc_layers,
+        output,
         cache_key,
     })
 }

@@ -7,7 +7,8 @@ use std::path::Path;
 
 use pdf_masking::cache::hash::{CacheSettings, compute_cache_key};
 use pdf_masking::cache::store::CacheStore;
-use pdf_masking::mrc::MrcLayers;
+use pdf_masking::config::job::ColorMode;
+use pdf_masking::mrc::{MrcLayers, PageOutput};
 use tempfile::tempdir;
 
 // ---- hash.rs tests ----
@@ -22,6 +23,7 @@ fn test_compute_cache_key() {
         bg_quality: 50,
         fg_quality: 30,
         preserve_images: false,
+        color_mode: ColorMode::Rgb,
     };
 
     let key = compute_cache_key(content, &settings, Path::new("test.pdf"), 0);
@@ -44,6 +46,7 @@ fn test_cache_key_deterministic() {
         bg_quality: 50,
         fg_quality: 30,
         preserve_images: false,
+        color_mode: ColorMode::Rgb,
     };
 
     let key1 = compute_cache_key(content, &settings, Path::new("test.pdf"), 0);
@@ -61,6 +64,7 @@ fn test_cache_key_differs_with_different_content() {
         bg_quality: 50,
         fg_quality: 30,
         preserve_images: false,
+        color_mode: ColorMode::Rgb,
     };
 
     let key_a = compute_cache_key(b"content A", &settings, Path::new("test.pdf"), 0);
@@ -83,6 +87,7 @@ fn test_cache_key_differs_with_different_settings() {
         bg_quality: 50,
         fg_quality: 30,
         preserve_images: false,
+        color_mode: ColorMode::Rgb,
     };
     let settings_b = CacheSettings {
         dpi: 600,
@@ -90,6 +95,7 @@ fn test_cache_key_differs_with_different_settings() {
         bg_quality: 80,
         fg_quality: 60,
         preserve_images: true,
+        color_mode: ColorMode::Rgb,
     };
 
     let key_a = compute_cache_key(content, &settings_a, Path::new("test.pdf"), 0);
@@ -111,6 +117,7 @@ fn test_cache_key_differs_with_different_pdf_path() {
         bg_quality: 50,
         fg_quality: 30,
         preserve_images: false,
+        color_mode: ColorMode::Rgb,
     };
 
     let key_a = compute_cache_key(content, &settings, Path::new("file_a.pdf"), 0);
@@ -132,6 +139,7 @@ fn test_cache_key_differs_with_different_page_index() {
         bg_quality: 50,
         fg_quality: 30,
         preserve_images: false,
+        color_mode: ColorMode::Rgb,
     };
 
     let key_a = compute_cache_key(content, &settings, Path::new("test.pdf"), 0);
@@ -156,6 +164,7 @@ fn sample_layers() -> MrcLayers {
         background_jpeg: vec![0xFF, 0xD8, 0xFF, 0xE1],
         width: 200,
         height: 300,
+        color_mode: ColorMode::Rgb,
     }
 }
 
@@ -166,19 +175,30 @@ fn test_store_and_retrieve() {
     let store = CacheStore::new(dir.path());
     let layers = sample_layers();
 
+    let expected_mask = layers.mask_jbig2.clone();
+    let expected_fg = layers.foreground_jpeg.clone();
+    let expected_bg = layers.background_jpeg.clone();
+    let expected_width = layers.width;
+    let expected_height = layers.height;
+
     store
-        .store(TEST_KEY, &layers)
+        .store(TEST_KEY, &PageOutput::Mrc(layers))
         .expect("store should succeed");
     let retrieved = store
-        .retrieve(TEST_KEY)
+        .retrieve(TEST_KEY, ColorMode::Rgb)
         .expect("retrieve should succeed")
         .expect("should return Some for stored key");
 
-    assert_eq!(retrieved.mask_jbig2, layers.mask_jbig2);
-    assert_eq!(retrieved.foreground_jpeg, layers.foreground_jpeg);
-    assert_eq!(retrieved.background_jpeg, layers.background_jpeg);
-    assert_eq!(retrieved.width, layers.width);
-    assert_eq!(retrieved.height, layers.height);
+    match retrieved {
+        PageOutput::Mrc(ref mrc) => {
+            assert_eq!(mrc.mask_jbig2, expected_mask);
+            assert_eq!(mrc.foreground_jpeg, expected_fg);
+            assert_eq!(mrc.background_jpeg, expected_bg);
+            assert_eq!(mrc.width, expected_width);
+            assert_eq!(mrc.height, expected_height);
+        }
+        _ => panic!("expected PageOutput::Mrc"),
+    }
 }
 
 /// Test that retrieving a non-existent key returns None.
@@ -189,7 +209,7 @@ fn test_cache_miss() {
     let nonexistent_key = "0000000000000000000000000000000000000000000000000000000000000000";
 
     let result = store
-        .retrieve(nonexistent_key)
+        .retrieve(nonexistent_key, ColorMode::Rgb)
         .expect("retrieve should succeed even on miss");
 
     assert!(
@@ -211,7 +231,7 @@ fn test_cache_hit_after_store() {
     );
 
     store
-        .store(TEST_KEY, &layers)
+        .store(TEST_KEY, &PageOutput::Mrc(layers))
         .expect("store should succeed");
 
     assert!(store.contains(TEST_KEY), "Key should exist after storing");
@@ -229,7 +249,7 @@ fn test_cache_dir_creation() {
     assert!(!cache_path.exists());
 
     store
-        .store(TEST_KEY, &layers)
+        .store(TEST_KEY, &PageOutput::Mrc(layers))
         .expect("store should create directories and succeed");
 
     // After storing, the cache directory and key subdirectory should exist
@@ -241,18 +261,18 @@ fn test_cache_dir_creation() {
 fn test_store_rejects_invalid_key() {
     let dir = tempdir().expect("failed to create temp dir");
     let store = CacheStore::new(dir.path());
-    let layers = sample_layers();
+    let output = PageOutput::Mrc(sample_layers());
 
     // Too short
-    assert!(store.store("abc123", &layers).is_err());
+    assert!(store.store("abc123", &output).is_err());
     // Path traversal attempt
-    assert!(store.store("../etc/passwd", &layers).is_err());
+    assert!(store.store("../etc/passwd", &output).is_err());
     // Contains non-hex characters
     assert!(
         store
             .store(
                 "zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz",
-                &layers
+                &output
             )
             .is_err()
     );
@@ -264,8 +284,8 @@ fn test_retrieve_rejects_invalid_key() {
     let dir = tempdir().expect("failed to create temp dir");
     let store = CacheStore::new(dir.path());
 
-    assert!(store.retrieve("../etc/passwd").is_err());
-    assert!(store.retrieve("short").is_err());
+    assert!(store.retrieve("../etc/passwd", ColorMode::Rgb).is_err());
+    assert!(store.retrieve("short", ColorMode::Rgb).is_err());
 }
 
 /// Test that contains returns false for invalid keys.
@@ -305,7 +325,7 @@ fn test_new_accepts_path() {
     let layers = sample_layers();
 
     store
-        .store(TEST_KEY, &layers)
+        .store(TEST_KEY, &PageOutput::Mrc(layers))
         .expect("store should succeed");
     assert!(store.contains(TEST_KEY));
 }
