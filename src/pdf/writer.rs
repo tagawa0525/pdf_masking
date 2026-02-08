@@ -58,53 +58,62 @@ impl MrcPageWriter {
         &mut self.doc
     }
 
+    /// 画像XObjectを追加する共通ヘルパー。
+    fn add_image_xobject(
+        &mut self,
+        data: &[u8],
+        width: u32,
+        height: u32,
+        color_space: &str,
+        bits_per_component: i64,
+        filter: &str,
+        smask_id: Option<lopdf::ObjectId>,
+    ) -> lopdf::ObjectId {
+        let mut dict = dictionary! {
+            "Type" => "XObject",
+            "Subtype" => "Image",
+            "Width" => width as i64,
+            "Height" => height as i64,
+            "ColorSpace" => Object::Name(color_space.as_bytes().to_vec()),
+            "BitsPerComponent" => bits_per_component,
+            "Filter" => Object::Name(filter.as_bytes().to_vec()),
+        };
+        if let Some(mask_id) = smask_id {
+            dict.set("SMask", Object::Reference(mask_id));
+        }
+        let stream = Stream::new(dict, data.to_vec());
+        self.doc.add_object(Object::Stream(stream))
+    }
+
     /// 背景JPEG XObjectを追加する。
-    ///
-    /// 戻り値はXObjectのオブジェクトID。
     pub(crate) fn add_background_xobject(
         &mut self,
         jpeg_data: &[u8],
         width: u32,
         height: u32,
     ) -> lopdf::ObjectId {
-        let dict = dictionary! {
-            "Type" => "XObject",
-            "Subtype" => "Image",
-            "Width" => width as i64,
-            "Height" => height as i64,
-            "ColorSpace" => "DeviceRGB",
-            "BitsPerComponent" => 8,
-            "Filter" => "DCTDecode",
-        };
-        let stream = Stream::new(dict, jpeg_data.to_vec());
-        self.doc.add_object(Object::Stream(stream))
+        self.add_image_xobject(jpeg_data, width, height, "DeviceRGB", 8, "DCTDecode", None)
     }
 
     /// マスクJBIG2 XObjectを追加する。
-    ///
-    /// 戻り値はXObjectのオブジェクトID。
     pub(crate) fn add_mask_xobject(
         &mut self,
         jbig2_data: &[u8],
         width: u32,
         height: u32,
     ) -> lopdf::ObjectId {
-        let dict = dictionary! {
-            "Type" => "XObject",
-            "Subtype" => "Image",
-            "Width" => width as i64,
-            "Height" => height as i64,
-            "ColorSpace" => "DeviceGray",
-            "BitsPerComponent" => 1,
-            "Filter" => "JBIG2Decode",
-        };
-        let stream = Stream::new(dict, jbig2_data.to_vec());
-        self.doc.add_object(Object::Stream(stream))
+        self.add_image_xobject(
+            jbig2_data,
+            width,
+            height,
+            "DeviceGray",
+            1,
+            "JBIG2Decode",
+            None,
+        )
     }
 
     /// 前景JPEG XObjectを追加する（SMaskとしてmask_idを参照）。
-    ///
-    /// 戻り値はXObjectのオブジェクトID。
     pub(crate) fn add_foreground_xobject(
         &mut self,
         jpeg_data: &[u8],
@@ -112,18 +121,15 @@ impl MrcPageWriter {
         height: u32,
         mask_id: lopdf::ObjectId,
     ) -> lopdf::ObjectId {
-        let dict = dictionary! {
-            "Type" => "XObject",
-            "Subtype" => "Image",
-            "Width" => width as i64,
-            "Height" => height as i64,
-            "ColorSpace" => "DeviceRGB",
-            "BitsPerComponent" => 8,
-            "Filter" => "DCTDecode",
-            "SMask" => Object::Reference(mask_id),
-        };
-        let stream = Stream::new(dict, jpeg_data.to_vec());
-        self.doc.add_object(Object::Stream(stream))
+        self.add_image_xobject(
+            jpeg_data,
+            width,
+            height,
+            "DeviceRGB",
+            8,
+            "DCTDecode",
+            Some(mask_id),
+        )
     }
 
     /// MRC用のコンテンツストリームバイト列を生成する。
