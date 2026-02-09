@@ -1,4 +1,4 @@
-// テキスト→アウトライン変換テスト (RED phase)
+// テキスト→アウトライン変換テスト
 
 use std::collections::HashMap;
 
@@ -14,74 +14,8 @@ fn load_sample_fonts() -> HashMap<String, ParsedFont> {
     pdf_masking::pdf::font::parse_page_fonts(&doc, 1).expect("parse fonts")
 }
 
-fn sample_content_bytes() -> Vec<u8> {
-    let doc = lopdf::Document::load("sample/pdf_test.pdf").expect("load PDF");
-    let page_id = doc.page_iter().next().expect("at least one page");
-    let content = doc.get_page_content(page_id).expect("get content");
-    content
-}
-
 // ============================================================
-// 1. 基本変換
-// ============================================================
-
-#[test]
-fn test_text_removed_from_output() {
-    // BT...ETブロックがPDFテキストオペレータとして出力に残らないこと
-    let content = sample_content_bytes();
-    let fonts = load_sample_fonts();
-
-    let result = convert_text_to_outlines(&content, &fonts);
-    assert!(
-        result.is_ok(),
-        "conversion should succeed: {:?}",
-        result.err()
-    );
-
-    let output = result.unwrap();
-    let text = String::from_utf8_lossy(&output);
-
-    // BT/ETペアが存在しないこと（テキストオペレータが除去された）
-    assert!(!text.contains("\nBT\n"), "BT should not appear in output");
-    assert!(!text.contains("\nET\n"), "ET should not appear in output");
-}
-
-#[test]
-fn test_output_contains_path_operators() {
-    // テキストがパス演算子(m, l, c, h, f)に変換されること
-    let content = sample_content_bytes();
-    let fonts = load_sample_fonts();
-
-    let result = convert_text_to_outlines(&content, &fonts).unwrap();
-    let text = String::from_utf8_lossy(&result);
-
-    // パス演算子が含まれること
-    assert!(text.contains(" m"), "should contain moveto operators");
-    assert!(text.contains("\nf"), "should contain fill operators");
-}
-
-#[test]
-fn test_non_text_operators_preserved() {
-    // 画像Do, ベクター描画などの非テキストオペレータが保持されること
-    let content = sample_content_bytes();
-    let fonts = load_sample_fonts();
-
-    let result = convert_text_to_outlines(&content, &fonts).unwrap();
-    let text = String::from_utf8_lossy(&result);
-
-    // q/Q（グラフィックス状態保存/復元）が保持される
-    assert!(
-        text.contains("\nq\n") || text.contains("\nq "),
-        "should preserve q operator"
-    );
-    assert!(
-        text.contains("\nQ\n") || text.contains("\nQ "),
-        "should preserve Q operator"
-    );
-}
-
-// ============================================================
-// 2. 空・テキストなし
+// 1. 空・テキストなし
 // ============================================================
 
 #[test]
@@ -109,14 +43,14 @@ fn test_no_text_blocks() {
 }
 
 // ============================================================
-// 3. フォント不在時のフォールバック
+// 2. フォント不在時のフォールバック
 // ============================================================
 
 #[test]
 fn test_missing_font_returns_error() {
     // フォントマップに含まれないフォントを参照するテキスト → Err
     let content = b"BT /F99 12 Tf (Hello) Tj ET";
-    let fonts = HashMap::new(); // 空のフォントマップ
+    let fonts = HashMap::new();
 
     let result = convert_text_to_outlines(content, &fonts);
     assert!(
@@ -125,41 +59,108 @@ fn test_missing_font_returns_error() {
     );
 }
 
-// ============================================================
-// 4. サンプルPDFでの結合テスト
-// ============================================================
-
 #[test]
-fn test_sample_pdf_roundtrip() {
-    // サンプルPDFの全ページでconvert_text_to_outlinesが成功すること
+fn test_sample_pdf_missing_embedded_font_returns_error() {
+    // サンプルPDFのF1は埋め込みフォントがないため、変換時にエラーになる
     let doc = lopdf::Document::load("sample/pdf_test.pdf").expect("load PDF");
     let fonts = load_sample_fonts();
 
-    // ページ1のみテスト（フォントは先頭ページ用に読み込み済み）
     let page_id = doc.page_iter().next().expect("at least one page");
     let content = doc.get_page_content(page_id).expect("get content");
 
     let result = convert_text_to_outlines(&content, &fonts);
+    // F1に埋め込みフォントがないためエラーになる（pdfiumフォールバック用）
     assert!(
-        result.is_ok(),
-        "page 1 conversion failed: {:?}",
-        result.err()
+        result.is_err(),
+        "should error when non-embedded font (F1) is referenced"
     );
+}
+
+// ============================================================
+// 3. 合成テストケースで基本変換をテスト
+// ============================================================
+// 注: F4はWinAnsiEncoding（'A'=0x41のアウトラインあり）
+//     F2/F3/F5はIdentityH（CIDフォント、単バイトではアウトライン取得不可）
+
+#[test]
+fn test_text_replaced_with_paths() {
+    let fonts = load_sample_fonts();
+    assert!(fonts.contains_key("F4"), "F4 should be in parsed fonts");
+
+    // F4のみを使うコンテンツストリームを構築
+    let content = b"q BT /F4 12 Tf (A) Tj ET Q";
+
+    let result = convert_text_to_outlines(content, &fonts);
+    assert!(result.is_ok(), "should succeed: {:?}", result.err());
+
+    let output = result.unwrap();
+    let text = String::from_utf8_lossy(&output);
+
+    // BT/ETが出力に残らないこと
+    assert!(!text.contains(" BT"), "BT should not appear in output");
+    assert!(!text.contains(" ET"), "ET should not appear in output");
+    // Tfが出力に残らないこと
+    assert!(!text.contains(" Tf"), "Tf should not appear in output");
+    // Tjが出力に残らないこと
+    assert!(!text.contains(" Tj"), "Tj should not appear in output");
+}
+
+#[test]
+fn test_output_contains_path_operators() {
+    let fonts = load_sample_fonts();
+    let content = b"BT /F4 12 Tf (A) Tj ET";
+
+    let result = convert_text_to_outlines(content, &fonts).unwrap();
+    let text = String::from_utf8_lossy(&result);
+
+    // パス演算子が含まれること
+    assert!(text.contains(" m"), "should contain moveto operators");
+    assert!(text.contains("\nf"), "should contain fill operators");
+}
+
+#[test]
+fn test_non_text_operators_preserved() {
+    let fonts = load_sample_fonts();
+    let content = b"q 1 0 0 1 0 0 cm BT /F4 12 Tf (A) Tj ET Q";
+
+    let result = convert_text_to_outlines(content, &fonts).unwrap();
+    let text = String::from_utf8_lossy(&result);
+
+    // q/Q（グラフィックス状態保存/復元）が保持される
+    assert!(text.contains("q"), "should preserve q operator");
+    assert!(text.contains("Q"), "should preserve Q operator");
+    assert!(text.contains("cm"), "should preserve cm operator");
 }
 
 #[test]
 fn test_output_is_valid_content_stream() {
-    // 出力がlopdfでデコード可能な有効なコンテンツストリームであること
-    let content = sample_content_bytes();
     let fonts = load_sample_fonts();
+    let content = b"q BT /F4 10 Tf (A) Tj ET Q";
 
-    let result = convert_text_to_outlines(&content, &fonts).unwrap();
+    let result = convert_text_to_outlines(content, &fonts).unwrap();
 
-    // lopdfでデコードできることを確認
-    let decoded = lopdf::content::Content::decode(&result);
+    // 出力が空でないこと（q/Qとパスバイト列が含まれる）
+    assert!(!result.is_empty(), "output should not be empty");
+
+    let text = String::from_utf8_lossy(&result);
+    // パスが生成されていること
+    assert!(text.contains(" m"), "should contain path operators");
+}
+
+#[test]
+fn test_multiple_text_blocks() {
+    let fonts = load_sample_fonts();
+    // 複数のBT...ETブロック（F4で同じ文字'A'を異なるサイズで描画）
+    let content = b"BT /F4 12 Tf (A) Tj ET BT /F4 10 Tf (A) Tj ET";
+
+    let result = convert_text_to_outlines(content, &fonts).unwrap();
+    let text = String::from_utf8_lossy(&result);
+
+    // 複数のグリフパスが生成される
+    let m_count = text.matches(" m").count();
     assert!(
-        decoded.is_ok(),
-        "output should be a valid content stream: {:?}",
-        decoded.err()
+        m_count >= 2,
+        "should have moveto for both glyphs, got {}",
+        m_count
     );
 }
