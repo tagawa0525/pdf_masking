@@ -1,5 +1,6 @@
 pub mod content_stream;
 pub mod font;
+pub mod glyph_to_path;
 pub mod image_xobject;
 pub mod optimizer;
 pub mod reader;

@@ -45,10 +45,10 @@ impl ParsedFont {
         match &self.encoding {
             FontEncoding::WinAnsi { differences } => {
                 // Differences配列: グリフ名→cmapでUnicode→GID
-                if let Some(glyph_name) = differences.get(&(code as u8)) {
-                    if let Some(unicode) = glyph_name_to_unicode(glyph_name) {
-                        return face.glyph_index(unicode);
-                    }
+                if let Some(glyph_name) = differences.get(&(code as u8))
+                    && let Some(unicode) = glyph_name_to_unicode(glyph_name)
+                {
+                    return face.glyph_index(unicode);
                 }
                 // WinAnsi: char_code → Unicode → cmap lookup
                 let unicode_char = win_ansi_to_unicode(code as u8)?;

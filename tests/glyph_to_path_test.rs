@@ -32,8 +32,8 @@ fn test_simple_outline_produces_pdf_operators() {
     // PDFパス演算子が含まれること
     assert!(text.contains(" m"), "should contain moveto");
     assert!(text.contains(" l"), "should contain lineto");
-    assert!(text.contains(" h"), "should contain closepath");
-    assert!(text.contains(" f"), "should contain fill");
+    assert!(text.contains("\nh"), "should contain closepath");
+    assert!(text.contains("\nf"), "should contain fill");
 }
 
 #[test]
