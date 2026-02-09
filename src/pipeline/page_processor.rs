@@ -22,6 +22,33 @@ pub struct ProcessedPage {
     pub cache_key: String,
 }
 
+/// Process a page using text_to_outlines without bitmap rendering.
+///
+/// This path skips pdfium rendering entirely. It converts text to vector outlines
+/// and performs image redaction using only PDF-level data.
+///
+/// Returns `Err` if text-to-outlines conversion fails (e.g. missing fonts).
+pub fn process_page_outlines(
+    page_index: u32,
+    content_stream: &[u8],
+    cache_settings: &CacheSettings,
+    cache_store: Option<&CacheStore>,
+    pdf_path: &Path,
+    image_streams: Option<&HashMap<String, lopdf::Stream>>,
+    fonts: &HashMap<String, ParsedFont>,
+) -> crate::error::Result<ProcessedPage> {
+    let _ = (
+        page_index,
+        content_stream,
+        cache_settings,
+        cache_store,
+        pdf_path,
+        image_streams,
+        fonts,
+    );
+    todo!("process_page_outlines not yet implemented")
+}
+
 /// Process a single page: check cache -> MRC compose -> store in cache.
 ///
 /// `content_stream` is used with settings to compute the cache key.
