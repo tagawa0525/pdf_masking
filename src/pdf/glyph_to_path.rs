@@ -4,27 +4,38 @@ use crate::pdf::content_stream::Matrix;
 use crate::pdf::font::PathOp;
 use crate::pdf::text_state::FillColor;
 
+/// グリフ→PDFパス変換のパラメータ
+pub struct GlyphPathParams<'a> {
+    pub outline: &'a [PathOp],
+    pub font_size: f64,
+    pub units_per_em: u16,
+    pub text_matrix: &'a Matrix,
+    pub ctm: &'a Matrix,
+    pub fill_color: &'a FillColor,
+    /// Tz演算子の値（100.0 = デフォルト、50.0 = 半分の幅）
+    pub horizontal_scaling: f64,
+    /// Ts演算子の値（0.0 = デフォルト、上付き/下付きのオフセット量）
+    pub text_rise: f64,
+}
+
 /// グリフアウトラインをPDFパス演算子のバイト列に変換する。
 ///
-/// 座標変換: フォント単位 → テキスト空間(÷units_per_em × font_size) → ページ空間(text_matrix × ctm)
-pub fn glyph_to_pdf_path(
-    outline: &[PathOp],
-    font_size: f64,
-    units_per_em: u16,
-    text_matrix: &Matrix,
-    ctm: &Matrix,
-    fill_color: &FillColor,
-) -> Vec<u8> {
-    if outline.is_empty() {
+/// 座標変換（PDF仕様 §9.4.4 テキストレンダリング行列に準拠）:
+///   フォント単位 → テキスト空間(÷units_per_em × font_size, Tz/Ts適用) → ページ空間(text_matrix × ctm)
+pub fn glyph_to_pdf_path(params: &GlyphPathParams) -> Vec<u8> {
+    if params.outline.is_empty() {
         return Vec::new();
     }
 
-    let combined = text_matrix.multiply(ctm);
-    let scale = font_size / units_per_em as f64;
+    let combined = params.text_matrix.multiply(params.ctm);
+    let scale = params.font_size / params.units_per_em as f64;
+    let tz = params.horizontal_scaling / 100.0;
+    let text_rise = params.text_rise;
 
     let transform = |x: f64, y: f64| -> (f64, f64) {
-        let sx = x * scale;
-        let sy = y * scale;
+        // PDF §9.4.4: Trm = [Tfs×Th 0 0; 0 Tfs 0; 0 Trise 1] × Tm × CTM
+        let sx = x * scale * tz;
+        let sy = y * scale + text_rise;
         let px = combined.a * sx + combined.c * sy + combined.e;
         let py = combined.b * sx + combined.d * sy + combined.f;
         (px, py)
@@ -36,7 +47,7 @@ pub fn glyph_to_pdf_path(
     writeln!(buf, "q").unwrap();
 
     // 塗り色を設定
-    match fill_color {
+    match params.fill_color {
         FillColor::Gray(g) => {
             writeln!(buf, "{} g", format_f64(*g)).unwrap();
         }
@@ -67,7 +78,7 @@ pub fn glyph_to_pdf_path(
     let mut current_x = 0.0_f64;
     let mut current_y = 0.0_f64;
 
-    for op in outline {
+    for op in params.outline {
         match op {
             PathOp::MoveTo(x, y) => {
                 current_x = *x;
@@ -130,5 +141,10 @@ fn format_f64(v: f64) -> String {
     let s = format!("{:.4}", v);
     let s = s.trim_end_matches('0');
     let s = s.trim_end_matches('.');
-    s.to_string()
+    // -0 を 0 に正規化
+    if s == "-0" {
+        "0".to_string()
+    } else {
+        s.to_string()
+    }
 }

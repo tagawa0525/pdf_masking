@@ -1,9 +1,29 @@
-// グリフ→PDFパス変換テスト (RED phase)
+// グリフ→PDFパス変換テスト
 
 use pdf_masking::pdf::content_stream::Matrix;
 use pdf_masking::pdf::font::PathOp;
-use pdf_masking::pdf::glyph_to_path::glyph_to_pdf_path;
+use pdf_masking::pdf::glyph_to_path::{GlyphPathParams, glyph_to_pdf_path};
 use pdf_masking::pdf::text_state::FillColor;
+
+/// 出力ストリームから最初のmoveto演算子の座標を抽出するヘルパー
+fn first_moveto_coords(text: &str) -> (f32, f32) {
+    let tokens: Vec<&str> = text.split_whitespace().collect();
+    let m_pos = tokens
+        .iter()
+        .position(|&t| t == "m")
+        .expect("path should contain move-to operator 'm'");
+    assert!(
+        m_pos >= 2,
+        "move-to operator should have two preceding operands"
+    );
+    let x = tokens[m_pos - 2]
+        .parse::<f32>()
+        .expect("x coordinate before 'm' should be a number");
+    let y = tokens[m_pos - 1]
+        .parse::<f32>()
+        .expect("y coordinate before 'm' should be a number");
+    (x, y)
+}
 
 // ============================================================
 // 1. 基本的なパス変換
@@ -11,7 +31,6 @@ use pdf_masking::pdf::text_state::FillColor;
 
 #[test]
 fn test_simple_outline_produces_pdf_operators() {
-    // 簡単な三角形のアウトライン
     let outline = vec![
         PathOp::MoveTo(0.0, 0.0),
         PathOp::LineTo(500.0, 0.0),
@@ -19,17 +38,18 @@ fn test_simple_outline_produces_pdf_operators() {
         PathOp::Close,
     ];
 
-    let result = glyph_to_pdf_path(
-        &outline,
-        12.0,
-        1000,
-        &Matrix::identity(),
-        &Matrix::identity(),
-        &FillColor::Gray(0.0),
-    );
+    let result = glyph_to_pdf_path(&GlyphPathParams {
+        outline: &outline,
+        font_size: 12.0,
+        units_per_em: 1000,
+        text_matrix: &Matrix::identity(),
+        ctm: &Matrix::identity(),
+        fill_color: &FillColor::Gray(0.0),
+        horizontal_scaling: 100.0,
+        text_rise: 0.0,
+    });
 
     let text = String::from_utf8_lossy(&result);
-    // PDFパス演算子が含まれること
     assert!(text.contains(" m"), "should contain moveto");
     assert!(text.contains(" l"), "should contain lineto");
     assert!(text.contains("\nh"), "should contain closepath");
@@ -38,29 +58,28 @@ fn test_simple_outline_produces_pdf_operators() {
 
 #[test]
 fn test_quad_to_cubic_conversion() {
-    // TrueTypeの二次ベジェ → PDFの三次ベジェ変換
     let outline = vec![
         PathOp::MoveTo(0.0, 0.0),
         PathOp::QuadTo(500.0, 1000.0, 1000.0, 0.0),
         PathOp::Close,
     ];
 
-    let result = glyph_to_pdf_path(
-        &outline,
-        12.0,
-        1000,
-        &Matrix::identity(),
-        &Matrix::identity(),
-        &FillColor::Gray(0.0),
-    );
+    let result = glyph_to_pdf_path(&GlyphPathParams {
+        outline: &outline,
+        font_size: 12.0,
+        units_per_em: 1000,
+        text_matrix: &Matrix::identity(),
+        ctm: &Matrix::identity(),
+        fill_color: &FillColor::Gray(0.0),
+        horizontal_scaling: 100.0,
+        text_rise: 0.0,
+    });
 
     let text = String::from_utf8_lossy(&result);
-    // PDFの三次ベジェ(c)演算子に変換されること
     assert!(
         text.contains(" c"),
         "quad should be converted to cubic bezier"
     );
-    // 二次ベジェ(v/y)は使わない
     assert!(!text.contains(" v"), "should not use v operator");
     assert!(!text.contains(" y"), "should not use y operator");
 }
@@ -71,27 +90,36 @@ fn test_quad_to_cubic_conversion() {
 
 #[test]
 fn test_font_units_scaled_by_font_size() {
-    // font_size=12, units_per_em=1000 → scale = 12/1000 = 0.012
     let outline = vec![
         PathOp::MoveTo(1000.0, 1000.0),
         PathOp::LineTo(0.0, 0.0),
         PathOp::Close,
     ];
 
-    let result = glyph_to_pdf_path(
-        &outline,
-        12.0,
-        1000,
-        &Matrix::identity(),
-        &Matrix::identity(),
-        &FillColor::Gray(0.0),
-    );
+    let result = glyph_to_pdf_path(&GlyphPathParams {
+        outline: &outline,
+        font_size: 12.0,
+        units_per_em: 1000,
+        text_matrix: &Matrix::identity(),
+        ctm: &Matrix::identity(),
+        fill_color: &FillColor::Gray(0.0),
+        horizontal_scaling: 100.0,
+        text_rise: 0.0,
+    });
 
     let text = String::from_utf8_lossy(&result);
     // 1000 * (12/1000) = 12 にスケーリングされる
+    let (x, y) = first_moveto_coords(&text);
+    let epsilon = 0.001_f32;
     assert!(
-        text.contains("12"),
-        "coordinates should be scaled to text space"
+        (x - 12.0).abs() < epsilon,
+        "x coordinate should be scaled to 12.0, got {}",
+        x
+    );
+    assert!(
+        (y - 12.0).abs() < epsilon,
+        "y coordinate should be scaled to 12.0, got {}",
+        y
     );
 }
 
@@ -112,24 +140,29 @@ fn test_text_matrix_applied() {
         f: 200.0,
     };
 
-    let result = glyph_to_pdf_path(
-        &outline,
-        10.0,
-        1000,
-        &text_matrix,
-        &Matrix::identity(),
-        &FillColor::Gray(0.0),
-    );
+    let result = glyph_to_pdf_path(&GlyphPathParams {
+        outline: &outline,
+        font_size: 10.0,
+        units_per_em: 1000,
+        text_matrix: &text_matrix,
+        ctm: &Matrix::identity(),
+        fill_color: &FillColor::Gray(0.0),
+        horizontal_scaling: 100.0,
+        text_rise: 0.0,
+    });
 
     let text = String::from_utf8_lossy(&result);
     // (0,0) がtext_matrixで(100,200)に変換される
+    let (x, y) = first_moveto_coords(&text);
     assert!(
-        text.contains("100"),
-        "text_matrix translation should be applied"
+        (x - 100.0).abs() < 0.01,
+        "expected translated x ≈ 100, got {}",
+        x
     );
     assert!(
-        text.contains("200"),
-        "text_matrix translation should be applied"
+        (y - 200.0).abs() < 0.01,
+        "expected translated y ≈ 200, got {}",
+        y
     );
 }
 
@@ -145,14 +178,16 @@ fn test_fill_color_rgb() {
         PathOp::Close,
     ];
 
-    let result = glyph_to_pdf_path(
-        &outline,
-        12.0,
-        1000,
-        &Matrix::identity(),
-        &Matrix::identity(),
-        &FillColor::Rgb(1.0, 0.0, 0.0),
-    );
+    let result = glyph_to_pdf_path(&GlyphPathParams {
+        outline: &outline,
+        font_size: 12.0,
+        units_per_em: 1000,
+        text_matrix: &Matrix::identity(),
+        ctm: &Matrix::identity(),
+        fill_color: &FillColor::Rgb(1.0, 0.0, 0.0),
+        horizontal_scaling: 100.0,
+        text_rise: 0.0,
+    });
 
     let text = String::from_utf8_lossy(&result);
     assert!(text.contains("rg"), "should set RGB fill color");
@@ -166,14 +201,16 @@ fn test_fill_color_gray() {
         PathOp::Close,
     ];
 
-    let result = glyph_to_pdf_path(
-        &outline,
-        12.0,
-        1000,
-        &Matrix::identity(),
-        &Matrix::identity(),
-        &FillColor::Gray(0.5),
-    );
+    let result = glyph_to_pdf_path(&GlyphPathParams {
+        outline: &outline,
+        font_size: 12.0,
+        units_per_em: 1000,
+        text_matrix: &Matrix::identity(),
+        ctm: &Matrix::identity(),
+        fill_color: &FillColor::Gray(0.5),
+        horizontal_scaling: 100.0,
+        text_rise: 0.0,
+    });
 
     let text = String::from_utf8_lossy(&result);
     assert!(text.contains(" g"), "should set gray fill color");
@@ -185,17 +222,83 @@ fn test_fill_color_gray() {
 
 #[test]
 fn test_empty_outline() {
-    let result = glyph_to_pdf_path(
-        &[],
-        12.0,
-        1000,
-        &Matrix::identity(),
-        &Matrix::identity(),
-        &FillColor::Gray(0.0),
-    );
+    let result = glyph_to_pdf_path(&GlyphPathParams {
+        outline: &[],
+        font_size: 12.0,
+        units_per_em: 1000,
+        text_matrix: &Matrix::identity(),
+        ctm: &Matrix::identity(),
+        fill_color: &FillColor::Gray(0.0),
+        horizontal_scaling: 100.0,
+        text_rise: 0.0,
+    });
 
     assert!(
         result.is_empty(),
         "empty outline should produce empty output"
+    );
+}
+
+// ============================================================
+// 5. horizontal_scaling / text_rise
+// ============================================================
+
+#[test]
+fn test_horizontal_scaling_applies() {
+    // Tz=50 → x座標が半分になる
+    let outline = vec![
+        PathOp::MoveTo(1000.0, 0.0),
+        PathOp::LineTo(0.0, 0.0),
+        PathOp::Close,
+    ];
+
+    let result = glyph_to_pdf_path(&GlyphPathParams {
+        outline: &outline,
+        font_size: 10.0,
+        units_per_em: 1000,
+        text_matrix: &Matrix::identity(),
+        ctm: &Matrix::identity(),
+        fill_color: &FillColor::Gray(0.0),
+        horizontal_scaling: 50.0,
+        text_rise: 0.0,
+    });
+
+    let text = String::from_utf8_lossy(&result);
+    let (x, _y) = first_moveto_coords(&text);
+    // 1000 * (10/1000) * (50/100) = 5.0
+    assert!(
+        (x - 5.0).abs() < 0.01,
+        "x should be scaled by horizontal_scaling, got {}",
+        x
+    );
+}
+
+#[test]
+fn test_text_rise_applies() {
+    // Ts=3.0 → y座標に3.0が加算される
+    let outline = vec![
+        PathOp::MoveTo(0.0, 0.0),
+        PathOp::LineTo(1000.0, 0.0),
+        PathOp::Close,
+    ];
+
+    let result = glyph_to_pdf_path(&GlyphPathParams {
+        outline: &outline,
+        font_size: 10.0,
+        units_per_em: 1000,
+        text_matrix: &Matrix::identity(),
+        ctm: &Matrix::identity(),
+        fill_color: &FillColor::Gray(0.0),
+        horizontal_scaling: 100.0,
+        text_rise: 3.0,
+    });
+
+    let text = String::from_utf8_lossy(&result);
+    let (_x, y) = first_moveto_coords(&text);
+    // y = 0 * (10/1000) + 3.0 = 3.0
+    assert!(
+        (y - 3.0).abs() < 0.01,
+        "y should include text_rise offset, got {}",
+        y
     );
 }
