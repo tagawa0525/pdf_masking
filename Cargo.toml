@@ -35,6 +35,9 @@ hex = "0.4.3"
 # JSON serialization (Phase 8+)
 serde_json = "1.0.149"
 
+# Font parsing (text-to-outlines)
+ttf-parser = "0.25.1"
+
 # Compression (Phase 9+)
 flate2 = "1.1.9"
 
