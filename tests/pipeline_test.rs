@@ -9,7 +9,7 @@ use pdf_masking::mrc::PageOutput;
 use pdf_masking::mrc::compositor::MrcConfig;
 use pdf_masking::pipeline::job_runner::JobConfig;
 use pdf_masking::pipeline::orchestrator::run_all_jobs;
-use pdf_masking::pipeline::page_processor::process_page;
+use pdf_masking::pipeline::page_processor::{process_page, process_page_outlines};
 
 #[test]
 fn test_process_page_cache_miss() {
@@ -529,6 +529,143 @@ fn test_process_page_text_to_outlines_fallback_on_missing_font() {
         matches!(&processed.output, PageOutput::TextMasked(_)),
         "should fall back to TextMasked"
     );
+}
+
+/// process_page_outlines: ビットマップなしでテキスト→パス変換が成功する
+#[test]
+fn test_process_page_outlines_produces_text_masked() {
+    use pdf_masking::pdf::font::ParsedFont;
+    use std::collections::HashMap;
+
+    let doc = lopdf::Document::load("sample/pdf_test.pdf").expect("load PDF");
+    let fonts: HashMap<String, ParsedFont> =
+        pdf_masking::pdf::font::parse_page_fonts(&doc, 1).expect("parse fonts");
+
+    // F4はWinAnsiEncoding（'A'のアウトラインあり）
+    let content_stream = b"BT /F4 12 Tf (A) Tj ET";
+    let cache_settings = CacheSettings {
+        dpi: 300,
+        fg_dpi: 100,
+        bg_quality: 50,
+        fg_quality: 30,
+        preserve_images: true,
+        color_mode: ColorMode::Rgb,
+    };
+
+    let result = process_page_outlines(
+        0,
+        content_stream,
+        &cache_settings,
+        None,
+        Path::new("sample/pdf_test.pdf"),
+        None,
+        &fonts,
+    );
+    assert!(
+        result.is_ok(),
+        "process_page_outlines should succeed: {:?}",
+        result.err()
+    );
+
+    let processed = result.unwrap();
+    assert_eq!(processed.page_index, 0);
+    assert!(!processed.cache_key.is_empty());
+    match &processed.output {
+        PageOutput::TextMasked(data) => {
+            // テキストがパスに変換されるのでtext_regionsは空
+            assert!(data.text_regions.is_empty());
+            // コンテンツストリームにパス演算子が含まれること
+            let text = String::from_utf8_lossy(&data.stripped_content_stream);
+            assert!(text.contains(" m"), "should contain moveto operators");
+            assert_eq!(data.color_mode, ColorMode::Rgb);
+        }
+        other => panic!(
+            "expected PageOutput::TextMasked, got {:?}",
+            std::mem::discriminant(other)
+        ),
+    }
+}
+
+/// process_page_outlines: フォント不足でエラーを返す
+#[test]
+fn test_process_page_outlines_error_on_missing_font() {
+    use pdf_masking::pdf::font::ParsedFont;
+    use std::collections::HashMap;
+
+    let fonts: HashMap<String, ParsedFont> = HashMap::new();
+    let content_stream = b"BT /F99 12 Tf (Hello) Tj ET";
+    let cache_settings = CacheSettings {
+        dpi: 300,
+        fg_dpi: 100,
+        bg_quality: 50,
+        fg_quality: 30,
+        preserve_images: true,
+        color_mode: ColorMode::Rgb,
+    };
+
+    let result = process_page_outlines(
+        0,
+        content_stream,
+        &cache_settings,
+        None,
+        Path::new("test.pdf"),
+        None,
+        &fonts,
+    );
+    assert!(result.is_err(), "should fail when font is missing");
+}
+
+/// process_page_outlines: キャッシュが効くことを検証
+#[test]
+fn test_process_page_outlines_cache_roundtrip() {
+    use pdf_masking::pdf::font::ParsedFont;
+    use std::collections::HashMap;
+
+    let tmp_dir = tempfile::tempdir().expect("create temp dir");
+    let cache_store = CacheStore::new(tmp_dir.path());
+
+    let doc = lopdf::Document::load("sample/pdf_test.pdf").expect("load PDF");
+    let fonts: HashMap<String, ParsedFont> =
+        pdf_masking::pdf::font::parse_page_fonts(&doc, 1).expect("parse fonts");
+
+    let content_stream = b"BT /F4 12 Tf (A) Tj ET";
+    let cache_settings = CacheSettings {
+        dpi: 300,
+        fg_dpi: 100,
+        bg_quality: 50,
+        fg_quality: 30,
+        preserve_images: true,
+        color_mode: ColorMode::Rgb,
+    };
+
+    // 1回目: cache miss
+    let result1 = process_page_outlines(
+        0,
+        content_stream,
+        &cache_settings,
+        Some(&cache_store),
+        Path::new("sample/pdf_test.pdf"),
+        None,
+        &fonts,
+    );
+    assert!(result1.is_ok(), "first call: {:?}", result1.err());
+    let processed1 = result1.unwrap();
+    assert!(cache_store.contains(&processed1.cache_key));
+
+    // 2回目: cache hit
+    let result2 = process_page_outlines(
+        0,
+        content_stream,
+        &cache_settings,
+        Some(&cache_store),
+        Path::new("sample/pdf_test.pdf"),
+        None,
+        &fonts,
+    );
+    assert!(result2.is_ok(), "second call: {:?}", result2.err());
+    let processed2 = result2.unwrap();
+    assert_eq!(processed1.cache_key, processed2.cache_key);
+    assert!(matches!(&processed2.output, PageOutput::TextMasked(_)));
 }
 
 #[test]

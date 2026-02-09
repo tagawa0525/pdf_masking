@@ -12,7 +12,7 @@ use crate::mrc::compositor::MrcConfig;
 use crate::mrc::{PageOutput, SkipData};
 use crate::pdf::reader::PdfReader;
 use crate::pdf::writer::MrcPageWriter;
-use crate::pipeline::page_processor::{ProcessedPage, process_page};
+use crate::pipeline::page_processor::{ProcessedPage, process_page, process_page_outlines};
 use crate::render::pdfium::render_page;
 
 /// Configuration for a single job.
@@ -54,7 +54,6 @@ struct PageRenderData {
     bitmap: image::DynamicImage,
     content: Vec<u8>,
     image_streams: Option<std::collections::HashMap<String, lopdf::Stream>>,
-    fonts: Option<std::collections::HashMap<String, crate::pdf::font::ParsedFont>>,
 }
 
 /// Run a single PDF masking job through the 4-phase pipeline.
@@ -131,9 +130,52 @@ pub fn run_job(config: &JobConfig) -> crate::error::Result<JobResult> {
         });
     }
 
-    // --- Phase B: Page rendering (sequential) ---
-    let mut pages_data: Vec<PageRenderData> = Vec::new();
+    // --- Phase A2: Text-to-outlines (no rendering required) ---
+    let cache_store = config.cache_dir.as_ref().map(CacheStore::new);
+    let mut outlines_pages: Vec<ProcessedPage> = Vec::new();
+    let mut needs_rendering: Vec<ContentStreamData> = Vec::new();
+
     for cs in content_streams {
+        let eligible = config.text_to_outlines
+            && config.preserve_images
+            && matches!(cs.mode, ColorMode::Rgb | ColorMode::Grayscale)
+            && cs.fonts.is_some();
+
+        if eligible {
+            let cache_settings = CacheSettings {
+                dpi: config.dpi,
+                fg_dpi: config.dpi,
+                bg_quality: config.bg_quality,
+                fg_quality: config.fg_quality,
+                preserve_images: config.preserve_images,
+                color_mode: cs.mode,
+            };
+            let result = process_page_outlines(
+                cs.page_idx,
+                &cs.content,
+                &cache_settings,
+                cache_store.as_ref(),
+                &config.input_path,
+                cs.image_streams.as_ref(),
+                cs.fonts.as_ref().unwrap(),
+            );
+            match result {
+                Ok(page) => {
+                    outlines_pages.push(page);
+                    continue;
+                }
+                Err(_) => {
+                    needs_rendering.push(cs);
+                }
+            }
+        } else {
+            needs_rendering.push(cs);
+        }
+    }
+
+    // --- Phase B: Page rendering (sequential, only pages needing bitmap) ---
+    let mut pages_data: Vec<PageRenderData> = Vec::new();
+    for cs in needs_rendering {
         let bitmap = render_page(&config.input_path, cs.page_idx, config.dpi)?;
         pages_data.push(PageRenderData {
             page_idx: cs.page_idx,
@@ -141,16 +183,14 @@ pub fn run_job(config: &JobConfig) -> crate::error::Result<JobResult> {
             bitmap,
             content: cs.content,
             image_streams: cs.image_streams,
-            fonts: cs.fonts,
         });
     }
 
-    // --- Phase C: MRC processing (rayon parallel) ---
+    // --- Phase C: MRC processing (rayon parallel, outlines already handled) ---
     let mrc_config = MrcConfig {
         bg_quality: config.bg_quality,
         fg_quality: config.fg_quality,
     };
-    let cache_store = config.cache_dir.as_ref().map(CacheStore::new);
 
     let processed: Vec<crate::error::Result<ProcessedPage>> = pages_data
         .par_iter()
@@ -172,14 +212,14 @@ pub fn run_job(config: &JobConfig) -> crate::error::Result<JobResult> {
                 cache_store.as_ref(),
                 &config.input_path,
                 pd.image_streams.as_ref(),
-                config.text_to_outlines,
-                pd.fonts.as_ref(),
+                false,
+                None,
             )
         })
         .collect();
 
-    // Collect MRC/BW results
-    let mut successful_pages: Vec<ProcessedPage> = Vec::new();
+    // Collect all results
+    let mut successful_pages: Vec<ProcessedPage> = outlines_pages;
     for result in processed {
         successful_pages.push(result?);
     }
