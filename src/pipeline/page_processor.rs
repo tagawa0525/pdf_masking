@@ -37,16 +37,44 @@ pub fn process_page_outlines(
     image_streams: Option<&HashMap<String, lopdf::Stream>>,
     fonts: &HashMap<String, ParsedFont>,
 ) -> crate::error::Result<ProcessedPage> {
-    let _ = (
-        page_index,
-        content_stream,
-        cache_settings,
-        cache_store,
-        pdf_path,
-        image_streams,
+    let color_mode = cache_settings.color_mode;
+    let cache_key = compute_cache_key(content_stream, cache_settings, pdf_path, page_index);
+
+    // Check cache (no bitmap dimensions for outlines path)
+    if let Some(store) = cache_store
+        && let Some(cached) = store.retrieve(&cache_key, color_mode, None)?
+        && !matches!(&cached, PageOutput::Skip(_))
+    {
+        return Ok(ProcessedPage {
+            page_index,
+            output: cached,
+            cache_key,
+        });
+    }
+
+    // Run compose_text_outlines (no bitmap needed)
+    let empty_streams = HashMap::new();
+    let streams = image_streams.unwrap_or(&empty_streams);
+    let outlines_params = TextOutlinesParams {
+        content_bytes: content_stream,
         fonts,
-    );
-    todo!("process_page_outlines not yet implemented")
+        image_streams: streams,
+        color_mode,
+        page_index,
+    };
+    let data = compose_text_outlines(&outlines_params)?;
+    let output = PageOutput::TextMasked(data);
+
+    // Store in cache
+    if let Some(store) = cache_store {
+        store.store(&cache_key, &output, None)?;
+    }
+
+    Ok(ProcessedPage {
+        page_index,
+        output,
+        cache_key,
+    })
 }
 
 /// Process a single page: check cache -> MRC compose -> store in cache.
