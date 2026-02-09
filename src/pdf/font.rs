@@ -17,7 +17,7 @@ pub enum PathOp {
 /// フォントエンコーディング
 #[derive(Debug, Clone)]
 pub enum FontEncoding {
-    WinAnsi { differences: HashMap<u8, u16> },
+    WinAnsi { differences: HashMap<u8, String> },
     IdentityH,
 }
 
@@ -44,16 +44,18 @@ impl ParsedFont {
         let face = ttf_parser::Face::parse(&self.font_data, 0).ok()?;
         match &self.encoding {
             FontEncoding::WinAnsi { differences } => {
-                // Differences配列を先に確認
-                if let Some(&gid) = differences.get(&(code as u8)) {
-                    return Some(GlyphId(gid));
+                // Differences配列: グリフ名→cmapでUnicode→GID
+                if let Some(glyph_name) = differences.get(&(code as u8)) {
+                    if let Some(unicode) = glyph_name_to_unicode(glyph_name) {
+                        return face.glyph_index(unicode);
+                    }
                 }
                 // WinAnsi: char_code → Unicode → cmap lookup
                 let unicode_char = win_ansi_to_unicode(code as u8)?;
                 face.glyph_index(unicode_char)
             }
             FontEncoding::IdentityH => {
-                // Identity-H: CID = GID (CIDToGIDMap=Identity)
+                // Identity-H + CIDToGIDMap=Identity: CID = GID
                 Some(GlyphId(code))
             }
         }
@@ -117,6 +119,10 @@ pub fn parse_page_fonts(
     doc: &Document,
     page_num: u32,
 ) -> crate::error::Result<HashMap<String, ParsedFont>> {
+    if page_num == 0 {
+        return Err(PdfMaskError::pdf_read("page_num must be >= 1 (1-based)"));
+    }
+
     let page_id = doc
         .page_iter()
         .nth((page_num - 1) as usize)
@@ -131,9 +137,13 @@ pub fn parse_page_fonts(
             Ok(parsed) => {
                 fonts.insert(name, parsed);
             }
-            Err(_) => {
-                // 埋込データが無いフォントはスキップ
-                continue;
+            Err(e) => {
+                let msg = e.to_string();
+                if msg.contains("FontFile2") || msg.contains("FontDescriptor") {
+                    // 埋込フォントデータが無い場合はスキップ
+                    continue;
+                }
+                return Err(e);
             }
         }
     }
@@ -293,6 +303,25 @@ fn parse_type0_font(
         .as_dict()
         .map_err(|e| PdfMaskError::pdf_read(e.to_string()))?;
 
+    // CIDToGIDMapの検証: Identity以外は未対応
+    if let Ok(cid_to_gid) = cid_font_dict.get(b"CIDToGIDMap") {
+        let cid_to_gid = doc
+            .dereference(cid_to_gid)
+            .map_err(|e| PdfMaskError::pdf_read(e.to_string()))?
+            .1;
+        match cid_to_gid {
+            Object::Name(name) if name == b"Identity" => {
+                // OK: CID = GID
+            }
+            Object::Stream(_) => {
+                return Err(PdfMaskError::pdf_read(
+                    "CIDToGIDMap stream not supported (only Identity)",
+                ));
+            }
+            _ => {}
+        }
+    }
+
     let font_data = extract_font_file2(doc, cid_font_dict)?;
     let widths = parse_cid_widths(doc, cid_font_dict)?;
     let default_width = cid_font_dict
@@ -350,7 +379,9 @@ fn extract_font_file2(
     match stream_obj {
         Object::Stream(stream) => {
             let mut stream = stream.clone();
-            let _ = stream.decompress();
+            stream.decompress().map_err(|e| {
+                PdfMaskError::pdf_read(format!("FontFile2 decompress failed: {}", e))
+            })?;
             Ok(stream.content)
         }
         _ => Err(PdfMaskError::pdf_read("FontFile2 is not a stream")),
@@ -364,14 +395,20 @@ fn parse_truetype_widths(
 ) -> crate::error::Result<HashMap<u16, f64>> {
     let mut result = HashMap::new();
 
-    let first_char = font_dict
-        .get(b"FirstChar")
-        .ok()
-        .and_then(|o| match o {
-            Object::Integer(i) => Some(*i as u16),
-            _ => None,
-        })
-        .unwrap_or(0);
+    let first_char = match font_dict.get(b"FirstChar").ok() {
+        None => 0u16,
+        Some(Object::Integer(i)) => {
+            let v = *i;
+            if v < 0 || v > u16::MAX as i64 {
+                return Err(PdfMaskError::pdf_read(format!(
+                    "FirstChar out of range: {}",
+                    v
+                )));
+            }
+            v as u16
+        }
+        Some(_) => 0u16,
+    };
 
     let widths_obj = match font_dict.get(b"Widths") {
         Ok(obj) => {
@@ -539,6 +576,58 @@ fn parse_encoding_dict(
     Ok(FontEncoding::WinAnsi {
         differences: HashMap::new(),
     })
+}
+
+/// グリフ名→Unicode変換（Adobe Glyph Listの主要エントリ）
+fn glyph_name_to_unicode(name: &str) -> Option<char> {
+    // 主要なグリフ名のみ対応（完全なAGLは数千エントリ）
+    match name {
+        "space" => Some(' '),
+        "exclam" => Some('!'),
+        "quotedbl" => Some('"'),
+        "numbersign" => Some('#'),
+        "dollar" => Some('$'),
+        "percent" => Some('%'),
+        "ampersand" => Some('&'),
+        "quotesingle" => Some('\''),
+        "parenleft" => Some('('),
+        "parenright" => Some(')'),
+        "asterisk" => Some('*'),
+        "plus" => Some('+'),
+        "comma" => Some(','),
+        "hyphen" | "minus" => Some('-'),
+        "period" => Some('.'),
+        "slash" => Some('/'),
+        "zero" => Some('0'),
+        "one" => Some('1'),
+        "two" => Some('2'),
+        "three" => Some('3'),
+        "four" => Some('4'),
+        "five" => Some('5'),
+        "six" => Some('6'),
+        "seven" => Some('7'),
+        "eight" => Some('8'),
+        "nine" => Some('9'),
+        "colon" => Some(':'),
+        "semicolon" => Some(';'),
+        "less" => Some('<'),
+        "equal" => Some('='),
+        "greater" => Some('>'),
+        "question" => Some('?'),
+        "at" => Some('@'),
+        _ if name.len() == 1 => name.chars().next(),
+        _ if name.starts_with("uni") && name.len() == 7 => u32::from_str_radix(&name[3..], 16)
+            .ok()
+            .and_then(char::from_u32),
+        _ => {
+            // A-Z, a-z の名前は直接文字に対応
+            if name.len() == 1 {
+                name.chars().next()
+            } else {
+                None
+            }
+        }
+    }
 }
 
 /// WinAnsi文字コード→Unicode変換（基本ラテン文字のみ）

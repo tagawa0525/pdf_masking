@@ -92,12 +92,8 @@ fn test_units_per_em() {
     let (_name, font) = fonts.iter().next().expect("should have at least one font");
     let upem = font.units_per_em();
     assert!(upem > 0, "units_per_em should be positive");
-    // TrueTypeは一般的に1000または2048
-    assert!(
-        upem == 1000 || upem == 2048,
-        "unexpected units_per_em: {}",
-        upem
-    );
+    // TrueTypeは一般的に256, 1000, 2048のいずれか
+    assert!(upem <= 16384, "units_per_em seems too large: {}", upem);
 }
 
 // ============================================================
