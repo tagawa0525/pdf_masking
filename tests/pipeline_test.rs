@@ -37,6 +37,8 @@ fn test_process_page_cache_miss() {
         None,
         Path::new("test.pdf"),
         None,
+        false,
+        None,
     );
     assert!(
         result.is_ok(),
@@ -90,6 +92,8 @@ fn test_process_page_cache_hit() {
         Some(&cache_store),
         Path::new("test.pdf"),
         None,
+        false,
+        None,
     );
     assert!(result1.is_ok());
     let processed1 = result1.unwrap();
@@ -106,6 +110,8 @@ fn test_process_page_cache_hit() {
         &cache_settings,
         Some(&cache_store),
         Path::new("test.pdf"),
+        None,
+        false,
         None,
     );
     assert!(result2.is_ok());
@@ -167,6 +173,8 @@ fn test_process_page_text_masked_with_image_streams() {
         None,
         Path::new("test.pdf"),
         Some(&image_streams),
+        false,
+        None,
     );
     assert!(
         result.is_ok(),
@@ -216,6 +224,8 @@ fn test_process_page_text_masked_without_image_streams() {
         None,
         Path::new("test.pdf"),
         None, // image_streams=None でもTextMaskedモードになるべき
+        false,
+        None,
     );
     assert!(
         result.is_ok(),
@@ -263,6 +273,8 @@ fn test_process_page_mrc_when_preserve_images_false() {
         &cache_settings,
         None,
         Path::new("test.pdf"),
+        None,
+        false,
         None,
     );
     assert!(result.is_ok());
@@ -361,6 +373,8 @@ fn test_process_page_text_masked_cache_roundtrip() {
         Some(&cache_store),
         Path::new("test.pdf"),
         Some(&image_streams),
+        false,
+        None,
     );
     assert!(
         result1.is_ok(),
@@ -381,6 +395,8 @@ fn test_process_page_text_masked_cache_roundtrip() {
         Some(&cache_store),
         Path::new("test.pdf"),
         Some(&image_streams),
+        false,
+        None,
     );
     assert!(
         result2.is_ok(),
@@ -401,6 +417,118 @@ fn test_process_page_text_masked_cache_roundtrip() {
         }
         _ => panic!("expected TextMasked for both calls"),
     }
+}
+
+/// text_to_outlines=true かつフォントあり → テキストがパスに変換されること
+#[test]
+fn test_process_page_text_to_outlines_with_fonts() {
+    use pdf_masking::pdf::font::ParsedFont;
+    use std::collections::HashMap;
+
+    let doc = lopdf::Document::load("sample/pdf_test.pdf").expect("load PDF");
+    let fonts: HashMap<String, ParsedFont> =
+        pdf_masking::pdf::font::parse_page_fonts(&doc, 1).expect("parse fonts");
+
+    let img = DynamicImage::ImageRgba8(RgbaImage::new(100, 100));
+    // F4はWinAnsiEncoding（'A'のアウトラインあり）
+    let content_stream = b"BT /F4 12 Tf (A) Tj ET";
+    let mrc_config = MrcConfig {
+        bg_quality: 50,
+        fg_quality: 30,
+    };
+    let cache_settings = CacheSettings {
+        dpi: 300,
+        fg_dpi: 100,
+        bg_quality: 50,
+        fg_quality: 30,
+        preserve_images: true,
+        color_mode: ColorMode::Rgb,
+    };
+
+    let result = process_page(
+        0,
+        &img,
+        content_stream,
+        &mrc_config,
+        &cache_settings,
+        None,
+        Path::new("sample/pdf_test.pdf"),
+        None,
+        true,
+        Some(&fonts),
+    );
+    assert!(
+        result.is_ok(),
+        "process_page with outlines should succeed: {:?}",
+        result.err()
+    );
+
+    let processed = result.unwrap();
+    match &processed.output {
+        PageOutput::TextMasked(data) => {
+            // テキストがパスに変換されるのでtext_regionsは空
+            assert!(
+                data.text_regions.is_empty(),
+                "text_regions should be empty when text_to_outlines=true"
+            );
+            // コンテンツストリームにパス演算子が含まれること
+            let text = String::from_utf8_lossy(&data.stripped_content_stream);
+            assert!(text.contains(" m"), "should contain moveto operators");
+        }
+        other => panic!(
+            "expected PageOutput::TextMasked, got {:?}",
+            std::mem::discriminant(other)
+        ),
+    }
+}
+
+/// text_to_outlines=true でフォント変換失敗時 → compose_text_masked にフォールバック
+#[test]
+fn test_process_page_text_to_outlines_fallback_on_missing_font() {
+    use std::collections::HashMap;
+
+    // 空のフォントマップ（変換は失敗する）
+    let fonts: HashMap<String, pdf_masking::pdf::font::ParsedFont> = HashMap::new();
+
+    let img = DynamicImage::ImageRgba8(RgbaImage::new(100, 100));
+    let content_stream = b"BT /F99 12 Tf (Hello) Tj ET";
+    let mrc_config = MrcConfig {
+        bg_quality: 50,
+        fg_quality: 30,
+    };
+    let cache_settings = CacheSettings {
+        dpi: 300,
+        fg_dpi: 100,
+        bg_quality: 50,
+        fg_quality: 30,
+        preserve_images: true,
+        color_mode: ColorMode::Rgb,
+    };
+
+    let result = process_page(
+        0,
+        &img,
+        content_stream,
+        &mrc_config,
+        &cache_settings,
+        None,
+        Path::new("test.pdf"),
+        None,
+        true,
+        Some(&fonts),
+    );
+    assert!(
+        result.is_ok(),
+        "should succeed with fallback: {:?}",
+        result.err()
+    );
+
+    let processed = result.unwrap();
+    // フォールバックでTextMaskedモード（通常のcompose_text_masked）
+    assert!(
+        matches!(&processed.output, PageOutput::TextMasked(_)),
+        "should fall back to TextMasked"
+    );
 }
 
 #[test]

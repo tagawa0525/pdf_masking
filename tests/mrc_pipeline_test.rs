@@ -3,9 +3,17 @@
 // Tests for the MRC pipeline: segmenter, jbig2, jpeg, compositor.
 // Each test verifies a specific component of the MRC layer generation pipeline.
 
+use std::collections::HashMap;
+
 use pdf_masking::config::job::ColorMode;
 use pdf_masking::ffi::leptonica::Pix;
 use pdf_masking::mrc::{compositor, jbig2, jpeg, segmenter};
+use pdf_masking::pdf::font::ParsedFont;
+
+fn load_sample_fonts() -> HashMap<String, ParsedFont> {
+    let doc = lopdf::Document::load("sample/pdf_test.pdf").expect("load PDF");
+    pdf_masking::pdf::font::parse_page_fonts(&doc, 1).expect("parse fonts")
+}
 
 /// Generate a synthetic 200x200 RGBA test image.
 /// Upper half: black (text-like region), lower half: white (background).
@@ -587,4 +595,84 @@ fn test_compose_text_masked_valid_bboxes() {
             "y_max should > y_min"
         );
     }
+}
+
+// ---- compose_text_outlines tests ----
+
+/// テキスト→アウトライン変換: BT...ETがベクターパスに変換されること
+#[test]
+fn test_compose_text_outlines_replaces_text_with_paths() {
+    let fonts = load_sample_fonts();
+    // F4はWinAnsiEncoding（'A'のアウトラインあり）
+    let content = b"BT /F4 12 Tf (A) Tj ET";
+    let image_streams = HashMap::new();
+
+    let params = compositor::TextOutlinesParams {
+        content_bytes: content,
+        fonts: &fonts,
+        image_streams: &image_streams,
+        color_mode: ColorMode::Rgb,
+        page_index: 0,
+    };
+
+    let result = compositor::compose_text_outlines(&params);
+    assert!(result.is_ok(), "should succeed: {:?}", result.err());
+
+    let data = result.unwrap();
+    // text_regionsは空（テキストはパスとしてコンテンツストリーム内にある）
+    assert!(
+        data.text_regions.is_empty(),
+        "text_regions should be empty when text is converted to outlines"
+    );
+    // コンテンツストリームにパス演算子が含まれること
+    let text = String::from_utf8_lossy(&data.stripped_content_stream);
+    assert!(text.contains(" m"), "should contain moveto operators");
+    assert!(text.contains("\nf"), "should contain fill operators");
+    // 元のテキスト演算子が除去されていること
+    assert!(!text.contains(" BT"), "should not contain BT");
+    assert!(!text.contains(" Tf"), "should not contain Tf");
+}
+
+/// フォント未発見時はErrを返すこと
+#[test]
+fn test_compose_text_outlines_returns_err_on_missing_font() {
+    let fonts = HashMap::new(); // 空のフォントマップ
+    let content = b"BT /F99 12 Tf (Hello) Tj ET";
+    let image_streams = HashMap::new();
+
+    let params = compositor::TextOutlinesParams {
+        content_bytes: content,
+        fonts: &fonts,
+        image_streams: &image_streams,
+        color_mode: ColorMode::Rgb,
+        page_index: 0,
+    };
+
+    let result = compositor::compose_text_outlines(&params);
+    assert!(result.is_err(), "should fail with missing font");
+}
+
+/// テキストがない場合もOkを返すこと
+#[test]
+fn test_compose_text_outlines_no_text() {
+    let fonts = load_sample_fonts();
+    let content = b"q 1 0 0 1 0 0 cm /Im1 Do Q";
+    let image_streams = HashMap::new();
+
+    let params = compositor::TextOutlinesParams {
+        content_bytes: content,
+        fonts: &fonts,
+        image_streams: &image_streams,
+        color_mode: ColorMode::Rgb,
+        page_index: 0,
+    };
+
+    let result = compositor::compose_text_outlines(&params);
+    assert!(result.is_ok(), "should succeed: {:?}", result.err());
+
+    let data = result.unwrap();
+    assert!(data.text_regions.is_empty());
+    // Doオペレータが保持されること
+    let text = String::from_utf8_lossy(&data.stripped_content_stream);
+    assert!(text.contains("Do"), "should preserve Do operator");
 }

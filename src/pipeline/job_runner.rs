@@ -44,6 +44,7 @@ struct ContentStreamData {
     mode: ColorMode,
     content: Vec<u8>,
     image_streams: Option<std::collections::HashMap<String, lopdf::Stream>>,
+    fonts: Option<std::collections::HashMap<String, crate::pdf::font::ParsedFont>>,
 }
 
 /// Intermediate data for a page after rendering (Phase B).
@@ -53,6 +54,7 @@ struct PageRenderData {
     bitmap: image::DynamicImage,
     content: Vec<u8>,
     image_streams: Option<std::collections::HashMap<String, lopdf::Stream>>,
+    fonts: Option<std::collections::HashMap<String, crate::pdf::font::ParsedFont>>,
 }
 
 /// Run a single PDF masking job through the 4-phase pipeline.
@@ -110,11 +112,22 @@ pub fn run_job(config: &JobConfig) -> crate::error::Result<JobResult> {
             } else {
                 None
             };
+        // text_to_outlines=true かつ RGB/Grayscale → フォント解析
+        let fonts = if config.text_to_outlines
+            && config.preserve_images
+            && matches!(mode, ColorMode::Rgb | ColorMode::Grayscale)
+        {
+            crate::pdf::font::parse_page_fonts(reader.document(), page_num).ok()
+        } else {
+            None
+        };
+
         content_streams.push(ContentStreamData {
             page_idx,
             mode,
             content,
             image_streams,
+            fonts,
         });
     }
 
@@ -128,6 +141,7 @@ pub fn run_job(config: &JobConfig) -> crate::error::Result<JobResult> {
             bitmap,
             content: cs.content,
             image_streams: cs.image_streams,
+            fonts: cs.fonts,
         });
     }
 
@@ -158,6 +172,8 @@ pub fn run_job(config: &JobConfig) -> crate::error::Result<JobResult> {
                 cache_store.as_ref(),
                 &config.input_path,
                 pd.image_streams.as_ref(),
+                config.text_to_outlines,
+                pd.fonts.as_ref(),
             )
         })
         .collect();

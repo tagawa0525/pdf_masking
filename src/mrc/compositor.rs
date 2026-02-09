@@ -12,6 +12,7 @@ use crate::pdf::content_stream::{
     extract_white_fill_rects, extract_xobject_placements, pixel_to_page_coords,
     strip_text_operators,
 };
+use crate::pdf::font::ParsedFont;
 use crate::pdf::image_xobject::{bbox_overlaps, redact_image_regions};
 use image::{DynamicImage, RgbaImage};
 
@@ -269,6 +270,70 @@ pub fn compose_text_masked(params: &TextMaskedParams) -> crate::error::Result<Te
     Ok(TextMaskedData {
         stripped_content_stream,
         text_regions,
+        modified_images,
+        page_index: params.page_index,
+        color_mode: params.color_mode,
+    })
+}
+
+/// テキスト→アウトライン変換の入力パラメータ。
+pub struct TextOutlinesParams<'a> {
+    /// 元のコンテンツストリーム
+    pub content_bytes: &'a [u8],
+    /// ページのフォントマップ
+    pub fonts: &'a HashMap<String, ParsedFont>,
+    /// XObject名 → lopdf::Stream のマップ
+    pub image_streams: &'a HashMap<String, lopdf::Stream>,
+    /// RGB or Grayscale
+    pub color_mode: ColorMode,
+    /// ページ番号(0-based)
+    pub page_index: u32,
+}
+
+/// テキスト→アウトライン変換: BT...ETをベクターパスに変換し、画像リダクションも行う。
+///
+/// `compose_text_masked` と異なり、テキストをJPEG画像化せずベクターパスとして
+/// コンテンツストリームに残す。text_regionsは空になる。
+pub fn compose_text_outlines(params: &TextOutlinesParams) -> crate::error::Result<TextMaskedData> {
+    // 1. テキスト→アウトライン変換（フォント未発見時はErrをそのまま返す）
+    let outlines_content =
+        crate::pdf::text_to_outlines::convert_text_to_outlines(params.content_bytes, params.fonts)?;
+
+    // 2. 白色fill矩形を検出
+    let white_rects = extract_white_fill_rects(params.content_bytes)?;
+
+    // 3. 画像XObject配置を取得
+    let placements = extract_xobject_placements(params.content_bytes)?;
+
+    // 4. 白色矩形と重なる画像をリダクション
+    let mut modified_images: HashMap<String, ImageModification> = HashMap::new();
+    for placement in &placements {
+        if let Some(stream) = params.image_streams.get(&placement.name) {
+            let overlapping: Vec<_> = white_rects
+                .iter()
+                .filter(|wr| bbox_overlaps(wr, &placement.bbox))
+                .cloned()
+                .collect();
+
+            if !overlapping.is_empty()
+                && let Some(redacted) = redact_image_regions(stream, &overlapping, &placement.bbox)?
+            {
+                modified_images.insert(
+                    placement.name.clone(),
+                    ImageModification {
+                        data: redacted.data,
+                        filter: redacted.filter,
+                        color_space: redacted.color_space,
+                        bits_per_component: redacted.bits_per_component,
+                    },
+                );
+            }
+        }
+    }
+
+    Ok(TextMaskedData {
+        stripped_content_stream: outlines_content,
+        text_regions: Vec::new(), // テキストはパスとしてコンテンツストリームに含まれる
         modified_images,
         page_index: params.page_index,
         color_mode: params.color_mode,
