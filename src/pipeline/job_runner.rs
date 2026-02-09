@@ -158,6 +158,8 @@ pub fn run_job(config: &JobConfig) -> crate::error::Result<JobResult> {
                 cache_store.as_ref(),
                 &config.input_path,
                 pd.image_streams.as_ref(),
+                false, // TODO: GREEN phase で text_to_outlines 統合
+                None,  // TODO: GREEN phase でフォント渡し
             )
         })
         .collect();

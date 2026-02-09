@@ -12,6 +12,7 @@ use crate::mrc::compositor::{
     MrcConfig, TextMaskedParams, compose, compose_bw, compose_text_masked,
 };
 use crate::mrc::{PageOutput, SkipData};
+use crate::pdf::font::ParsedFont;
 
 /// Single page processing result.
 pub struct ProcessedPage {
@@ -37,7 +38,10 @@ pub fn process_page(
     cache_store: Option<&CacheStore>,
     pdf_path: &Path,
     image_streams: Option<&HashMap<String, lopdf::Stream>>,
+    text_to_outlines: bool,
+    fonts: Option<&HashMap<String, ParsedFont>>,
 ) -> crate::error::Result<ProcessedPage> {
+    let _ = (text_to_outlines, fonts); // TODO: GREEN phase で使用
     let color_mode = cache_settings.color_mode;
 
     // Skip モードはMRC処理不要

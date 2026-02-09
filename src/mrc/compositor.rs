@@ -12,6 +12,7 @@ use crate::pdf::content_stream::{
     extract_white_fill_rects, extract_xobject_placements, pixel_to_page_coords,
     strip_text_operators,
 };
+use crate::pdf::font::ParsedFont;
 use crate::pdf::image_xobject::{bbox_overlaps, redact_image_regions};
 use image::{DynamicImage, RgbaImage};
 
@@ -273,4 +274,26 @@ pub fn compose_text_masked(params: &TextMaskedParams) -> crate::error::Result<Te
         page_index: params.page_index,
         color_mode: params.color_mode,
     })
+}
+
+/// テキスト→アウトライン変換の入力パラメータ。
+pub struct TextOutlinesParams<'a> {
+    /// 元のコンテンツストリーム
+    pub content_bytes: &'a [u8],
+    /// ページのフォントマップ
+    pub fonts: &'a HashMap<String, ParsedFont>,
+    /// XObject名 → lopdf::Stream のマップ
+    pub image_streams: &'a HashMap<String, lopdf::Stream>,
+    /// RGB or Grayscale
+    pub color_mode: ColorMode,
+    /// ページ番号(0-based)
+    pub page_index: u32,
+}
+
+/// テキスト→アウトライン変換: BT...ETをベクターパスに変換し、画像リダクションも行う。
+///
+/// `compose_text_masked` と異なり、テキストをJPEG画像化せずベクターパスとして
+/// コンテンツストリームに残す。text_regionsは空になる。
+pub fn compose_text_outlines(_params: &TextOutlinesParams) -> crate::error::Result<TextMaskedData> {
+    todo!("compose_text_outlines: GREEN phase で実装")
 }
