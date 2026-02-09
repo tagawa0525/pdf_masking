@@ -50,10 +50,14 @@ fn test_simple_outline_produces_pdf_operators() {
     });
 
     let text = String::from_utf8_lossy(&result);
-    assert!(text.contains(" m"), "should contain moveto");
-    assert!(text.contains(" l"), "should contain lineto");
-    assert!(text.contains("\nh"), "should contain closepath");
-    assert!(text.contains("\nf"), "should contain fill");
+    let has_moveto = text.split_whitespace().any(|token| token == "m");
+    assert!(has_moveto, "should contain moveto (m)");
+    let has_lineto = text.split_whitespace().any(|token| token == "l");
+    assert!(has_lineto, "should contain lineto (l)");
+    let has_closepath = text.split_whitespace().any(|token| token == "h");
+    assert!(has_closepath, "should contain closepath (h)");
+    let has_fill = text.split_whitespace().any(|token| token == "f");
+    assert!(has_fill, "should contain fill (f)");
 }
 
 #[test]
