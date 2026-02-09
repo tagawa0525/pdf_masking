@@ -5,4 +5,5 @@ pub mod image_xobject;
 pub mod optimizer;
 pub mod reader;
 pub mod text_state;
+pub mod text_to_outlines;
 pub mod writer;
