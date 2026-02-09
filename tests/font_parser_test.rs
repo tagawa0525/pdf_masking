@@ -1,6 +1,6 @@
 // 埋込フォント解析テスト (RED phase)
 
-use pdf_masking::pdf::font::{FontEncoding, ParsedFont};
+use pdf_masking::pdf::font::FontEncoding;
 
 // ============================================================
 // 1. サンプルPDFからのフォント解析
@@ -24,13 +24,13 @@ fn test_parsed_font_has_glyph_outlines() {
 
     // 少なくとも1つのフォントでグリフアウトラインが取得できる
     let mut found_outline = false;
-    for (_name, font) in &fonts {
+    for font in fonts.values() {
         // 'A' (0x41) のグリフを試す
-        if let Some(gid) = font.char_code_to_glyph_id(0x41) {
-            if font.glyph_outline(gid).is_some() {
-                found_outline = true;
-                break;
-            }
+        if let Some(gid) = font.char_code_to_glyph_id(0x41)
+            && font.glyph_outline(gid).is_some()
+        {
+            found_outline = true;
+            break;
         }
     }
     assert!(
@@ -49,7 +49,7 @@ fn test_winansii_char_code_to_glyph() {
     let fonts = pdf_masking::pdf::font::parse_page_fonts(&doc, 1).expect("parse fonts");
 
     // WinAnsiEncoding のフォントを探す
-    for (_name, font) in &fonts {
+    for font in fonts.values() {
         if matches!(font.encoding(), FontEncoding::WinAnsi { .. }) {
             // 'A' = 0x41 はWinAnsiで有効な文字コード
             let gid = font.char_code_to_glyph_id(0x41);
@@ -69,7 +69,7 @@ fn test_glyph_width_positive() {
     let doc = lopdf::Document::load("sample/pdf_test.pdf").expect("load PDF");
     let fonts = pdf_masking::pdf::font::parse_page_fonts(&doc, 1).expect("parse fonts");
 
-    for (_name, font) in &fonts {
+    for font in fonts.values() {
         // 何らかの文字コードの幅が正の値であること
         let width = font.glyph_width(0x41); // 'A'
         if width > 0.0 {
@@ -89,17 +89,15 @@ fn test_units_per_em() {
     let doc = lopdf::Document::load("sample/pdf_test.pdf").expect("load PDF");
     let fonts = pdf_masking::pdf::font::parse_page_fonts(&doc, 1).expect("parse fonts");
 
-    for (_name, font) in &fonts {
-        let upem = font.units_per_em();
-        assert!(upem > 0, "units_per_em should be positive");
-        // TrueTypeは一般的に1000または2048
-        assert!(
-            upem == 1000 || upem == 2048,
-            "unexpected units_per_em: {}",
-            upem
-        );
-        return;
-    }
+    let (_name, font) = fonts.iter().next().expect("should have at least one font");
+    let upem = font.units_per_em();
+    assert!(upem > 0, "units_per_em should be positive");
+    // TrueTypeは一般的に1000または2048
+    assert!(
+        upem == 1000 || upem == 2048,
+        "unexpected units_per_em: {}",
+        upem
+    );
 }
 
 // ============================================================
@@ -111,13 +109,13 @@ fn test_glyph_outline_contains_path_ops() {
     let doc = lopdf::Document::load("sample/pdf_test.pdf").expect("load PDF");
     let fonts = pdf_masking::pdf::font::parse_page_fonts(&doc, 1).expect("parse fonts");
 
-    for (_name, font) in &fonts {
-        if let Some(gid) = font.char_code_to_glyph_id(0x41) {
-            if let Some(ops) = font.glyph_outline(gid) {
-                // アウトラインにはMoveTo, LineTo/QuadTo, Closeが含まれるはず
-                assert!(!ops.is_empty(), "outline should not be empty for 'A'");
-                return;
-            }
+    for font in fonts.values() {
+        if let Some(gid) = font.char_code_to_glyph_id(0x41)
+            && let Some(ops) = font.glyph_outline(gid)
+        {
+            // アウトラインにはMoveTo, LineTo/QuadTo, Closeが含まれるはず
+            assert!(!ops.is_empty(), "outline should not be empty for 'A'");
+            return;
         }
     }
 }
