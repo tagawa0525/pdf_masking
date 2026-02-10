@@ -594,13 +594,17 @@ fn test_process_page_outlines_produces_text_masked() {
     }
 }
 
-/// process_page_outlines: Bwモードでエラーを返す
+/// process_page_outlines: Bwモードでテキストがパス変換される（force_bw=true）
 #[test]
-fn test_process_page_outlines_rejects_bw_mode() {
+fn test_process_page_outlines_accepts_bw_mode() {
     use pdf_masking::pdf::font::ParsedFont;
     use std::collections::HashMap;
 
-    let fonts: HashMap<String, ParsedFont> = HashMap::new();
+    let doc = lopdf::Document::load("sample/pdf_test.pdf").expect("load PDF");
+    let fonts: HashMap<String, ParsedFont> =
+        pdf_masking::pdf::font::parse_page_fonts(&doc, 1).expect("parse fonts");
+
+    // F4はWinAnsiEncoding（'A'のアウトラインあり）
     let content_stream = b"BT /F4 12 Tf (A) Tj ET";
     let cache_settings = CacheSettings {
         dpi: 300,
@@ -616,19 +620,34 @@ fn test_process_page_outlines_rejects_bw_mode() {
         content_stream,
         &cache_settings,
         None,
-        Path::new("test.pdf"),
+        Path::new("sample/pdf_test.pdf"),
         None,
         &fonts,
     );
-    match result {
-        Err(err) => {
-            let err_msg = err.to_string();
+    assert!(
+        result.is_ok(),
+        "Bw mode should be accepted for text_to_outlines: {:?}",
+        result.err()
+    );
+
+    let processed = result.unwrap();
+    match &processed.output {
+        PageOutput::TextMasked(data) => {
+            let text = String::from_utf8_lossy(&data.stripped_content_stream);
+            // BW モードではテキストがパスに変換される
+            let has_moveto = text.split_whitespace().any(|token| token == "m");
+            assert!(has_moveto, "BW mode should produce glyph paths");
+            // BW モードでは色が gray (0 g) になる
             assert!(
-                err_msg.contains("color mode") && err_msg.contains("Bw"),
-                "expected ColorMode/Bw unsupported error, got: {err_msg}"
+                text.contains("0 g"),
+                "BW mode should force black color, got: {}",
+                text
             );
         }
-        Ok(_) => panic!("Bw mode should be rejected"),
+        other => panic!(
+            "expected PageOutput::TextMasked, got {:?}",
+            std::mem::discriminant(other)
+        ),
     }
 }
 

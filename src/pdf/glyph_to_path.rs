@@ -16,6 +16,8 @@ pub struct GlyphPathParams<'a> {
     pub horizontal_scaling: f64,
     /// Ts演算子の値（0.0 = デフォルト、上付き/下付きのオフセット量）
     pub text_rise: f64,
+    /// BW強制モード: trueの場合、fill colorを輝度→閾値0.5で0/1に変換
+    pub force_bw: bool,
 }
 
 /// グリフアウトラインをPDFパス演算子のバイト列に変換する。
