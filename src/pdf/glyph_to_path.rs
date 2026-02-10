@@ -49,30 +49,37 @@ pub fn glyph_to_pdf_path(params: &GlyphPathParams) -> Vec<u8> {
     writeln!(buf, "q").unwrap();
 
     // 塗り色を設定
-    match params.fill_color {
-        FillColor::Gray(g) => {
-            writeln!(buf, "{} g", format_f64(*g)).unwrap();
-        }
-        FillColor::Rgb(r, g, b) => {
-            writeln!(
-                buf,
-                "{} {} {} rg",
-                format_f64(*r),
-                format_f64(*g),
-                format_f64(*b)
-            )
-            .unwrap();
-        }
-        FillColor::Cmyk(c, m, y, k) => {
-            writeln!(
-                buf,
-                "{} {} {} {} k",
-                format_f64(*c),
-                format_f64(*m),
-                format_f64(*y),
-                format_f64(*k)
-            )
-            .unwrap();
+    if params.force_bw {
+        // BWモード: 輝度→閾値0.5で0/1に変換
+        let luminance = fill_color_luminance(params.fill_color);
+        let bw = if luminance >= 0.5 { 1.0 } else { 0.0 };
+        writeln!(buf, "{} g", format_f64(bw)).unwrap();
+    } else {
+        match params.fill_color {
+            FillColor::Gray(g) => {
+                writeln!(buf, "{} g", format_f64(*g)).unwrap();
+            }
+            FillColor::Rgb(r, g, b) => {
+                writeln!(
+                    buf,
+                    "{} {} {} rg",
+                    format_f64(*r),
+                    format_f64(*g),
+                    format_f64(*b)
+                )
+                .unwrap();
+            }
+            FillColor::Cmyk(c, m, y, k) => {
+                writeln!(
+                    buf,
+                    "{} {} {} {} k",
+                    format_f64(*c),
+                    format_f64(*m),
+                    format_f64(*y),
+                    format_f64(*k)
+                )
+                .unwrap();
+            }
         }
     }
 
@@ -155,6 +162,21 @@ pub fn glyph_to_pdf_path(params: &GlyphPathParams) -> Vec<u8> {
     writeln!(buf, "Q").unwrap();
 
     buf.into_bytes()
+}
+
+/// FillColor の輝度を計算する (BW閾値判定用)
+fn fill_color_luminance(color: &FillColor) -> f64 {
+    match color {
+        FillColor::Gray(g) => *g,
+        FillColor::Rgb(r, g, b) => 0.299 * r + 0.587 * g + 0.114 * b,
+        FillColor::Cmyk(c, m, y, k) => {
+            // CMYK → RGB → 輝度
+            let r = (1.0 - c) * (1.0 - k);
+            let g = (1.0 - m) * (1.0 - k);
+            let b = (1.0 - y) * (1.0 - k);
+            0.299 * r + 0.587 * g + 0.114 * b
+        }
+    }
 }
 
 fn format_f64(v: f64) -> String {

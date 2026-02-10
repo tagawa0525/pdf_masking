@@ -23,7 +23,7 @@ fn load_sample_fonts() -> HashMap<String, ParsedFont> {
 #[test]
 fn test_empty_content() {
     let fonts = HashMap::new();
-    let result = convert_text_to_outlines(&[], &fonts);
+    let result = convert_text_to_outlines(&[], &fonts, false);
     assert!(result.is_ok());
     assert!(
         result.unwrap().is_empty(),
@@ -37,7 +37,7 @@ fn test_no_text_blocks() {
     let content = b"q 1 0 0 1 0 0 cm /Im0 Do Q";
     let fonts = HashMap::new();
 
-    let result = convert_text_to_outlines(content, &fonts).unwrap();
+    let result = convert_text_to_outlines(content, &fonts, false).unwrap();
     let text = String::from_utf8_lossy(&result);
 
     // 元のオペレータが保持される
@@ -54,7 +54,7 @@ fn test_missing_font_returns_error() {
     let content = b"BT /F99 12 Tf (Hello) Tj ET";
     let fonts = HashMap::new();
 
-    let result = convert_text_to_outlines(content, &fonts);
+    let result = convert_text_to_outlines(content, &fonts, false);
     assert!(
         result.is_err(),
         "missing font should return error for fallback"
@@ -70,7 +70,7 @@ fn test_sample_pdf_missing_embedded_font_returns_error() {
     let page_id = doc.page_iter().next().expect("at least one page");
     let content = doc.get_page_content(page_id).expect("get content");
 
-    let result = convert_text_to_outlines(&content, &fonts);
+    let result = convert_text_to_outlines(&content, &fonts, false);
     // F1に埋め込みフォントがないためエラーになる（pdfiumフォールバック用）
     assert!(
         result.is_err(),
@@ -170,7 +170,7 @@ fn test_text_replaced_with_paths() {
     // F4のみを使うコンテンツストリームを構築
     let content = b"q BT /F4 12 Tf (A) Tj ET Q";
 
-    let result = convert_text_to_outlines(content, &fonts);
+    let result = convert_text_to_outlines(content, &fonts, false);
     assert!(result.is_ok(), "should succeed: {:?}", result.err());
 
     let output = result.unwrap();
@@ -190,7 +190,7 @@ fn test_output_contains_path_operators() {
     let fonts = load_sample_fonts();
     let content = b"BT /F4 12 Tf (A) Tj ET";
 
-    let result = convert_text_to_outlines(content, &fonts).unwrap();
+    let result = convert_text_to_outlines(content, &fonts, false).unwrap();
     let text = String::from_utf8_lossy(&result);
 
     // パス演算子が含まれること
@@ -208,7 +208,7 @@ fn test_non_text_operators_preserved() {
     let fonts = load_sample_fonts();
     let content = b"q 1 0 0 1 0 0 cm BT /F4 12 Tf (A) Tj ET Q";
 
-    let result = convert_text_to_outlines(content, &fonts).unwrap();
+    let result = convert_text_to_outlines(content, &fonts, false).unwrap();
     let text = String::from_utf8_lossy(&result);
 
     // q/Q（グラフィックス状態保存/復元）が保持される
@@ -222,7 +222,7 @@ fn test_output_is_valid_content_stream() {
     let fonts = load_sample_fonts();
     let content = b"q BT /F4 10 Tf (A) Tj ET Q";
 
-    let result = convert_text_to_outlines(content, &fonts).unwrap();
+    let result = convert_text_to_outlines(content, &fonts, false).unwrap();
 
     // 出力が空でないこと（q/Qとパスバイト列が含まれる）
     assert!(!result.is_empty(), "output should not be empty");
@@ -242,7 +242,7 @@ fn test_multiple_text_blocks() {
     // 複数のBT...ETブロック（F4で同じ文字'A'を異なるサイズで描画）
     let content = b"BT /F4 12 Tf (A) Tj ET BT /F4 10 Tf (A) Tj ET";
 
-    let result = convert_text_to_outlines(content, &fonts).unwrap();
+    let result = convert_text_to_outlines(content, &fonts, false).unwrap();
     let text = String::from_utf8_lossy(&result);
 
     // 複数のグリフパスが生成される
