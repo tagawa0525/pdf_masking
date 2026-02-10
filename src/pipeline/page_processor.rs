@@ -41,8 +41,8 @@ pub fn process_page_outlines(
 
     // text_to_outlinesはRGB/Grayscaleのみ対応
     if !matches!(color_mode, ColorMode::Rgb | ColorMode::Grayscale) {
-        return Err(crate::error::PdfMaskError::content_stream(format!(
-            "process_page_outlines does not support {:?} color mode",
+        return Err(crate::error::PdfMaskError::config(format!(
+            "unsupported color mode for process_page_outlines: {:?} (supported: Rgb, Grayscale)",
             color_mode
         )));
     }
