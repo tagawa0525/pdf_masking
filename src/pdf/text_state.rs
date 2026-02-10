@@ -1,6 +1,9 @@
+use std::collections::HashMap;
+
 use lopdf::content::Content;
 
 use crate::pdf::content_stream::{Matrix, operand_to_f64};
+use crate::pdf::font::{FontEncoding, ParsedFont};
 
 /// fill colorの状態（テキスト描画用）
 #[derive(Debug, Clone)]
@@ -92,7 +95,14 @@ impl TextState {
 }
 
 /// コンテンツストリームを解析し、テキスト描画コマンドと非テキストオペレータに分離する。
-pub fn parse_content_operations(content_bytes: &[u8]) -> crate::error::Result<ContentOperations> {
+///
+/// `fonts` を指定すると、フォントエンコーディングに応じた文字コード抽出を行う
+/// （IdentityH CIDフォントの2バイトペア解釈など）。
+/// `None` の場合は従来の1バイト=1文字コード変換を使用する。
+pub fn parse_content_operations(
+    content_bytes: &[u8],
+    fonts: Option<&HashMap<String, ParsedFont>>,
+) -> crate::error::Result<ContentOperations> {
     if content_bytes.is_empty() {
         return Ok(ContentOperations {
             text_commands: Vec::new(),
@@ -349,14 +359,16 @@ pub fn parse_content_operations(content_bytes: &[u8]) -> crate::error::Result<Co
             // --- テキスト描画オペレータ ---
             "Tj" if in_text => {
                 if let Some(operand) = op.operands.first() {
-                    let codes = extract_char_codes(operand);
+                    let encoding = lookup_encoding(&ts.font_name, fonts);
+                    let codes = extract_char_codes_for_encoding(operand, encoding);
                     let cmd = build_text_command(&ts, codes, None, &ctm_stack, &fill_color_stack);
                     text_commands.push(cmd);
                 }
             }
             "TJ" if in_text => {
                 if let Some(operand) = op.operands.first() {
-                    let (codes, tj_array) = extract_tj_array(operand);
+                    let encoding = lookup_encoding(&ts.font_name, fonts);
+                    let (codes, tj_array) = extract_tj_array_for_encoding(operand, encoding);
                     let cmd = build_text_command(
                         &ts,
                         codes,
@@ -371,7 +383,8 @@ pub fn parse_content_operations(content_bytes: &[u8]) -> crate::error::Result<Co
                 // ' = T* string Tj
                 ts.apply_t_star();
                 if let Some(operand) = op.operands.first() {
-                    let codes = extract_char_codes(operand);
+                    let encoding = lookup_encoding(&ts.font_name, fonts);
+                    let codes = extract_char_codes_for_encoding(operand, encoding);
                     let cmd = build_text_command(&ts, codes, None, &ctm_stack, &fill_color_stack);
                     text_commands.push(cmd);
                 }
@@ -386,7 +399,8 @@ pub fn parse_content_operations(content_bytes: &[u8]) -> crate::error::Result<Co
                         ts.char_spacing = ac;
                     }
                     ts.apply_t_star();
-                    let codes = extract_char_codes(&op.operands[2]);
+                    let encoding = lookup_encoding(&ts.font_name, fonts);
+                    let codes = extract_char_codes_for_encoding(&op.operands[2], encoding);
                     let cmd = build_text_command(&ts, codes, None, &ctm_stack, &fill_color_stack);
                     text_commands.push(cmd);
                 }
@@ -433,16 +447,35 @@ fn build_text_command(
     }
 }
 
-/// lopdf::Object からバイト列を取得し、u16の文字コード列に変換する。
-fn extract_char_codes(obj: &lopdf::Object) -> Vec<u16> {
+/// フォント名からエンコーディングを取得する。フォントマップが None または
+/// フォントが見つからない場合は WinAnsi をデフォルトとする。
+fn lookup_encoding<'a>(
+    font_name: &str,
+    fonts: Option<&'a HashMap<String, ParsedFont>>,
+) -> &'a FontEncoding {
+    static DEFAULT: std::sync::LazyLock<FontEncoding> =
+        std::sync::LazyLock::new(|| FontEncoding::WinAnsi {
+            differences: HashMap::new(),
+        });
+    fonts
+        .and_then(|f| f.get(font_name))
+        .map(|f| f.encoding())
+        .unwrap_or(&DEFAULT)
+}
+
+/// エンコーディングに応じて lopdf::Object からバイト列を文字コード列に変換する。
+fn extract_char_codes_for_encoding(obj: &lopdf::Object, encoding: &FontEncoding) -> Vec<u16> {
     match obj {
-        lopdf::Object::String(bytes, _) => bytes.iter().map(|&b| b as u16).collect(),
+        lopdf::Object::String(bytes, _) => bytes_to_char_codes(bytes, encoding),
         _ => Vec::new(),
     }
 }
 
-/// TJ配列を解析し、全文字コードとTjArrayEntryの列を返す。
-fn extract_tj_array(obj: &lopdf::Object) -> (Vec<u16>, Vec<TjArrayEntry>) {
+/// TJ配列をエンコーディングに応じて解析し、全文字コードとTjArrayEntryの列を返す。
+fn extract_tj_array_for_encoding(
+    obj: &lopdf::Object,
+    encoding: &FontEncoding,
+) -> (Vec<u16>, Vec<TjArrayEntry>) {
     let mut all_codes = Vec::new();
     let mut entries = Vec::new();
 
@@ -450,7 +483,7 @@ fn extract_tj_array(obj: &lopdf::Object) -> (Vec<u16>, Vec<TjArrayEntry>) {
         for item in arr {
             match item {
                 lopdf::Object::String(bytes, _) => {
-                    let codes: Vec<u16> = bytes.iter().map(|&b| b as u16).collect();
+                    let codes = bytes_to_char_codes(bytes, encoding);
                     all_codes.extend_from_slice(&codes);
                     entries.push(TjArrayEntry::Text(codes));
                 }
@@ -466,4 +499,15 @@ fn extract_tj_array(obj: &lopdf::Object) -> (Vec<u16>, Vec<TjArrayEntry>) {
     }
 
     (all_codes, entries)
+}
+
+/// バイト列をエンコーディングに応じて文字コード列に変換する。
+fn bytes_to_char_codes(bytes: &[u8], encoding: &FontEncoding) -> Vec<u16> {
+    match encoding {
+        FontEncoding::IdentityH => bytes
+            .chunks_exact(2)
+            .map(|pair| ((pair[0] as u16) << 8) | pair[1] as u16)
+            .collect(),
+        FontEncoding::WinAnsi { .. } => bytes.iter().map(|&b| b as u16).collect(),
+    }
 }

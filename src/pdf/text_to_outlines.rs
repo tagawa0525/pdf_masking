@@ -4,7 +4,7 @@ use lopdf::content::Content;
 
 use crate::error::{PdfMaskError, Result};
 use crate::pdf::content_stream::{Matrix, operand_to_f64};
-use crate::pdf::font::ParsedFont;
+use crate::pdf::font::{FontEncoding, ParsedFont};
 use crate::pdf::glyph_to_path::{GlyphPathParams, glyph_to_pdf_path};
 use crate::pdf::text_state::{FillColor, TjArrayEntry};
 
@@ -273,7 +273,8 @@ pub fn convert_text_to_outlines(
             // --- テキスト描画オペレータ ---
             "Tj" if in_text => {
                 if let Some(operand) = op.operands.first() {
-                    let codes = extract_char_codes(operand);
+                    let encoding = font_encoding(&ts.font_name, fonts);
+                    let codes = extract_char_codes_for_encoding(operand, encoding);
                     let ctm = ctm_stack.last().cloned().unwrap_or_else(Matrix::identity);
                     let fill_color = fill_color_stack
                         .last()
@@ -291,25 +292,37 @@ pub fn convert_text_to_outlines(
             }
             "TJ" if in_text => {
                 if let Some(operand) = op.operands.first() {
+                    let encoding = font_encoding(&ts.font_name, fonts);
+                    let entries = parse_tj_entries_for_encoding(operand, encoding);
                     let ctm = ctm_stack.last().cloned().unwrap_or_else(Matrix::identity);
                     let fill_color = fill_color_stack
                         .last()
                         .cloned()
                         .unwrap_or(FillColor::Gray(0.0));
-                    render_tj_array(
-                        operand,
-                        &mut ts,
-                        &ctm,
-                        &fill_color,
-                        fonts,
-                        &mut text_path_buf,
-                    )?;
+                    for entry in &entries {
+                        match entry {
+                            TjArrayEntry::Text(codes) => {
+                                render_text_codes(
+                                    codes,
+                                    &mut ts,
+                                    &ctm,
+                                    &fill_color,
+                                    fonts,
+                                    &mut text_path_buf,
+                                )?;
+                            }
+                            TjArrayEntry::Adjustment(val) => {
+                                ts.advance_by_tj_adjustment(*val, ts.font_size);
+                            }
+                        }
+                    }
                 }
             }
             "'" if in_text => {
                 ts.apply_t_star();
                 if let Some(operand) = op.operands.first() {
-                    let codes = extract_char_codes(operand);
+                    let encoding = font_encoding(&ts.font_name, fonts);
+                    let codes = extract_char_codes_for_encoding(operand, encoding);
                     let ctm = ctm_stack.last().cloned().unwrap_or_else(Matrix::identity);
                     let fill_color = fill_color_stack
                         .last()
@@ -334,7 +347,8 @@ pub fn convert_text_to_outlines(
                         ts.char_spacing = ac;
                     }
                     ts.apply_t_star();
-                    let codes = extract_char_codes(&op.operands[2]);
+                    let encoding = font_encoding(&ts.font_name, fonts);
+                    let codes = extract_char_codes_for_encoding(&op.operands[2], encoding);
                     let ctm = ctm_stack.last().cloned().unwrap_or_else(Matrix::identity);
                     let fill_color = fill_color_stack
                         .last()
@@ -502,39 +516,46 @@ fn render_text_codes(
     Ok(())
 }
 
-/// TJ配列を処理して出力バッファに追加
-fn render_tj_array(
-    obj: &lopdf::Object,
-    ts: &mut TextState,
-    ctm: &Matrix,
-    fill_color: &FillColor,
-    fonts: &HashMap<String, ParsedFont>,
-    output: &mut Vec<u8>,
-) -> Result<()> {
-    let entries = parse_tj_entries(obj);
-
-    for entry in &entries {
-        match entry {
-            TjArrayEntry::Text(codes) => {
-                render_text_codes(codes, ts, ctm, fill_color, fonts, output)?;
-            }
-            TjArrayEntry::Adjustment(val) => {
-                ts.advance_by_tj_adjustment(*val, ts.font_size);
-            }
-        }
-    }
-
-    Ok(())
+/// フォント名からエンコーディングを取得するヘルパー。
+/// フォントが見つからない場合はWinAnsiをデフォルトとする。
+fn font_encoding<'a>(font_name: &str, fonts: &'a HashMap<String, ParsedFont>) -> &'a FontEncoding {
+    // WinAnsiのデフォルト値。FontEncoding::WinAnsiのdifferencesが空の場合と同等。
+    // フォントが見つからない場合（後続のrender_text_codesでエラーになる）のフォールバック。
+    static DEFAULT: std::sync::LazyLock<FontEncoding> =
+        std::sync::LazyLock::new(|| FontEncoding::WinAnsi {
+            differences: HashMap::new(),
+        });
+    fonts
+        .get(font_name)
+        .map(|f| f.encoding())
+        .unwrap_or(&DEFAULT)
 }
 
-/// TJ配列をパースしてTjArrayEntryの列を返す
-fn parse_tj_entries(obj: &lopdf::Object) -> Vec<TjArrayEntry> {
+/// エンコーディングに応じて lopdf::Object からバイト列を文字コード列に変換する。
+///
+/// - IdentityH: 2バイトBEペアとして解釈（CIDフォント）
+/// - WinAnsi: 1バイト→u16変換（従来動作）
+pub fn extract_char_codes_for_encoding(
+    obj: &lopdf::Object,
+    encoding: &crate::pdf::font::FontEncoding,
+) -> Vec<u16> {
+    match obj {
+        lopdf::Object::String(bytes, _) => bytes_to_char_codes(bytes, encoding),
+        _ => Vec::new(),
+    }
+}
+
+/// TJ配列をエンコーディングに応じてパースしてTjArrayEntryの列を返す。
+pub fn parse_tj_entries_for_encoding(
+    obj: &lopdf::Object,
+    encoding: &crate::pdf::font::FontEncoding,
+) -> Vec<TjArrayEntry> {
     let mut entries = Vec::new();
     if let lopdf::Object::Array(arr) = obj {
         for item in arr {
             match item {
                 lopdf::Object::String(bytes, _) => {
-                    let codes: Vec<u16> = bytes.iter().map(|&b| b as u16).collect();
+                    let codes = bytes_to_char_codes(bytes, encoding);
                     entries.push(TjArrayEntry::Text(codes));
                 }
                 lopdf::Object::Integer(n) => {
@@ -550,33 +571,14 @@ fn parse_tj_entries(obj: &lopdf::Object) -> Vec<TjArrayEntry> {
     entries
 }
 
-/// lopdf::Object からバイト列を取得し、u16の文字コード列に変換する。
-fn extract_char_codes(obj: &lopdf::Object) -> Vec<u16> {
-    match obj {
-        lopdf::Object::String(bytes, _) => bytes.iter().map(|&b| b as u16).collect(),
-        _ => Vec::new(),
+/// バイト列をエンコーディングに応じて文字コード列に変換する。
+fn bytes_to_char_codes(bytes: &[u8], encoding: &crate::pdf::font::FontEncoding) -> Vec<u16> {
+    use crate::pdf::font::FontEncoding;
+    match encoding {
+        FontEncoding::IdentityH => bytes
+            .chunks_exact(2)
+            .map(|pair| ((pair[0] as u16) << 8) | pair[1] as u16)
+            .collect(),
+        FontEncoding::WinAnsi { .. } => bytes.iter().map(|&b| b as u16).collect(),
     }
-}
-
-/// エンコーディングに応じて lopdf::Object からバイト列を文字コード列に変換する。
-///
-/// - IdentityH: 2バイトBEペアとして解釈（CIDフォント）
-/// - WinAnsi: 1バイト→u16変換（従来動作）
-pub fn extract_char_codes_for_encoding(
-    obj: &lopdf::Object,
-    encoding: &crate::pdf::font::FontEncoding,
-) -> Vec<u16> {
-    // TODO: エンコーディング分岐は GREEN フェーズで実装
-    let _ = encoding;
-    extract_char_codes(obj)
-}
-
-/// TJ配列をエンコーディングに応じてパースしてTjArrayEntryの列を返す。
-pub fn parse_tj_entries_for_encoding(
-    obj: &lopdf::Object,
-    encoding: &crate::pdf::font::FontEncoding,
-) -> Vec<TjArrayEntry> {
-    // TODO: エンコーディング分岐は GREEN フェーズで実装
-    let _ = encoding;
-    parse_tj_entries(obj)
 }
