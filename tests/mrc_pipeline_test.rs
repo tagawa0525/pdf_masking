@@ -626,8 +626,13 @@ fn test_compose_text_outlines_replaces_text_with_paths() {
     );
     // コンテンツストリームにパス演算子が含まれること
     let text = String::from_utf8_lossy(&data.stripped_content_stream);
-    assert!(text.contains(" m"), "should contain moveto operators");
-    assert!(text.contains("\nf"), "should contain fill operators");
+    let has_moveto = text.split_whitespace().any(|token| token == "m");
+    assert!(
+        has_moveto,
+        "should contain moveto (m) operators as PDF tokens"
+    );
+    let has_fill = text.split_whitespace().any(|token| token == "f");
+    assert!(has_fill, "should contain fill (f) operators as PDF tokens");
     // 元のテキスト演算子が除去されていること
     assert!(!text.contains(" BT"), "should not contain BT");
     assert!(!text.contains(" Tf"), "should not contain Tf");

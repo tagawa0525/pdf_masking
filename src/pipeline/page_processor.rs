@@ -38,6 +38,15 @@ pub fn process_page_outlines(
     fonts: &HashMap<String, ParsedFont>,
 ) -> crate::error::Result<ProcessedPage> {
     let color_mode = cache_settings.color_mode;
+
+    // text_to_outlinesはRGB/Grayscaleのみ対応
+    if !matches!(color_mode, ColorMode::Rgb | ColorMode::Grayscale) {
+        return Err(crate::error::PdfMaskError::config(format!(
+            "unsupported color mode for process_page_outlines: {:?} (supported: Rgb, Grayscale)",
+            color_mode
+        )));
+    }
+
     let cache_key = compute_cache_key(content_stream, cache_settings, pdf_path, page_index);
 
     // Check cache (no bitmap dimensions for outlines path)

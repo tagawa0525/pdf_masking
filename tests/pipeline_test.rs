@@ -473,7 +473,11 @@ fn test_process_page_text_to_outlines_with_fonts() {
             );
             // コンテンツストリームにパス演算子が含まれること
             let text = String::from_utf8_lossy(&data.stripped_content_stream);
-            assert!(text.contains(" m"), "should contain moveto operators");
+            let has_moveto = text.split_whitespace().any(|token| token == "m");
+            assert!(
+                has_moveto,
+                "should contain moveto (m) operators as PDF tokens"
+            );
         }
         other => panic!(
             "expected PageOutput::TextMasked, got {:?}",
@@ -576,13 +580,55 @@ fn test_process_page_outlines_produces_text_masked() {
             assert!(data.text_regions.is_empty());
             // コンテンツストリームにパス演算子が含まれること
             let text = String::from_utf8_lossy(&data.stripped_content_stream);
-            assert!(text.contains(" m"), "should contain moveto operators");
+            let has_moveto = text.split_whitespace().any(|token| token == "m");
+            assert!(
+                has_moveto,
+                "should contain moveto (m) operators as PDF tokens"
+            );
             assert_eq!(data.color_mode, ColorMode::Rgb);
         }
         other => panic!(
             "expected PageOutput::TextMasked, got {:?}",
             std::mem::discriminant(other)
         ),
+    }
+}
+
+/// process_page_outlines: Bwモードでエラーを返す
+#[test]
+fn test_process_page_outlines_rejects_bw_mode() {
+    use pdf_masking::pdf::font::ParsedFont;
+    use std::collections::HashMap;
+
+    let fonts: HashMap<String, ParsedFont> = HashMap::new();
+    let content_stream = b"BT /F4 12 Tf (A) Tj ET";
+    let cache_settings = CacheSettings {
+        dpi: 300,
+        fg_dpi: 100,
+        bg_quality: 50,
+        fg_quality: 30,
+        preserve_images: true,
+        color_mode: ColorMode::Bw,
+    };
+
+    let result = process_page_outlines(
+        0,
+        content_stream,
+        &cache_settings,
+        None,
+        Path::new("test.pdf"),
+        None,
+        &fonts,
+    );
+    match result {
+        Err(err) => {
+            let err_msg = err.to_string();
+            assert!(
+                err_msg.contains("color mode") && err_msg.contains("Bw"),
+                "expected ColorMode/Bw unsupported error, got: {err_msg}"
+            );
+        }
+        Ok(_) => panic!("Bw mode should be rejected"),
     }
 }
 

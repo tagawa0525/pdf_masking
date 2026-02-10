@@ -25,6 +25,15 @@ fn first_moveto_coords(text: &str) -> (f32, f32) {
     (x, y)
 }
 
+/// PDFテキストに指定されたオペレータが含まれているかチェックするヘルパー
+fn assert_has_pdf_operator(text: &str, operator: &str) {
+    assert!(
+        text.split_whitespace().any(|token| token == operator),
+        "should contain PDF operator: {}",
+        operator
+    );
+}
+
 // ============================================================
 // 1. 基本的なパス変換
 // ============================================================
@@ -50,10 +59,10 @@ fn test_simple_outline_produces_pdf_operators() {
     });
 
     let text = String::from_utf8_lossy(&result);
-    assert!(text.contains(" m"), "should contain moveto");
-    assert!(text.contains(" l"), "should contain lineto");
-    assert!(text.contains("\nh"), "should contain closepath");
-    assert!(text.contains("\nf"), "should contain fill");
+    assert_has_pdf_operator(&text, "m");
+    assert_has_pdf_operator(&text, "l");
+    assert_has_pdf_operator(&text, "h");
+    assert_has_pdf_operator(&text, "f");
 }
 
 #[test]

@@ -114,8 +114,13 @@ fn test_output_contains_path_operators() {
     let text = String::from_utf8_lossy(&result);
 
     // パス演算子が含まれること
-    assert!(text.contains(" m"), "should contain moveto operators");
-    assert!(text.contains("\nf"), "should contain fill operators");
+    let has_moveto = text.split_whitespace().any(|token| token == "m");
+    assert!(
+        has_moveto,
+        "should contain moveto (m) operators as PDF tokens"
+    );
+    let has_fill = text.split_whitespace().any(|token| token == "f");
+    assert!(has_fill, "should contain fill (f) operators as PDF tokens");
 }
 
 #[test]
@@ -144,7 +149,11 @@ fn test_output_is_valid_content_stream() {
 
     let text = String::from_utf8_lossy(&result);
     // パスが生成されていること
-    assert!(text.contains(" m"), "should contain path operators");
+    let has_moveto = text.split_whitespace().any(|token| token == "m");
+    assert!(
+        has_moveto,
+        "should contain moveto (m) operators as PDF tokens"
+    );
 }
 
 #[test]
