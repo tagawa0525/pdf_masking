@@ -117,7 +117,44 @@ fn test_glyph_outline_contains_path_ops() {
 }
 
 // ============================================================
-// 6. エッジケース
+// 6. CIDフォントの文字コード→グリフID
+// ============================================================
+
+#[test]
+fn test_cid_font_char_code_to_glyph_id() {
+    // IdentityH CIDフォント: char_code = CID = GlyphId
+    let doc = lopdf::Document::load("sample/pdf_test.pdf").expect("load PDF");
+    let fonts = pdf_masking::pdf::font::parse_page_fonts(&doc, 1).expect("parse fonts");
+
+    // IdentityHフォントを探す
+    let mut found = false;
+    for (name, font) in &fonts {
+        if matches!(font.encoding(), FontEncoding::IdentityH) {
+            // 日本語CID: 0x30C6(テ) → GlyphId(0x30C6)
+            let gid = font.char_code_to_glyph_id(0x30C6);
+            assert!(
+                gid.is_some(),
+                "IdentityH font '{}' should resolve CID 0x30C6 to GlyphId",
+                name
+            );
+            // GlyphIdの値がCIDと一致すること
+            assert_eq!(
+                gid.unwrap().0,
+                0x30C6,
+                "IdentityH: GlyphId should equal CID"
+            );
+            found = true;
+            break;
+        }
+    }
+    assert!(
+        found,
+        "sample PDF should contain at least one IdentityH CID font"
+    );
+}
+
+// ============================================================
+// 7. エッジケース
 // ============================================================
 
 #[test]

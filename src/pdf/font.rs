@@ -11,6 +11,8 @@ pub enum PathOp {
     MoveTo(f64, f64),
     LineTo(f64, f64),
     QuadTo(f64, f64, f64, f64),
+    /// 3次ベジェ曲線（CFF/CFF2フォント用）: (x1, y1, x2, y2, x, y)
+    CubicTo(f64, f64, f64, f64, f64, f64),
     Close,
 }
 

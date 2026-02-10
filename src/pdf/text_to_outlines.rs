@@ -557,3 +557,26 @@ fn extract_char_codes(obj: &lopdf::Object) -> Vec<u16> {
         _ => Vec::new(),
     }
 }
+
+/// エンコーディングに応じて lopdf::Object からバイト列を文字コード列に変換する。
+///
+/// - IdentityH: 2バイトBEペアとして解釈（CIDフォント）
+/// - WinAnsi: 1バイト→u16変換（従来動作）
+pub fn extract_char_codes_for_encoding(
+    obj: &lopdf::Object,
+    encoding: &crate::pdf::font::FontEncoding,
+) -> Vec<u16> {
+    // TODO: エンコーディング分岐は GREEN フェーズで実装
+    let _ = encoding;
+    extract_char_codes(obj)
+}
+
+/// TJ配列をエンコーディングに応じてパースしてTjArrayEntryの列を返す。
+pub fn parse_tj_entries_for_encoding(
+    obj: &lopdf::Object,
+    encoding: &crate::pdf::font::FontEncoding,
+) -> Vec<TjArrayEntry> {
+    // TODO: エンコーディング分岐は GREEN フェーズで実装
+    let _ = encoding;
+    parse_tj_entries(obj)
+}

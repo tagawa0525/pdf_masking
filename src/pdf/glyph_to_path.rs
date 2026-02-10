@@ -121,6 +121,9 @@ pub fn glyph_to_pdf_path(params: &GlyphPathParams) -> Vec<u8> {
                 )
                 .unwrap();
             }
+            PathOp::CubicTo(_x1, _y1, _x2, _y2, _x, _y) => {
+                // TODO: CubicTo rendering not yet implemented
+            }
             PathOp::Close => {
                 writeln!(buf, "h").unwrap();
             }

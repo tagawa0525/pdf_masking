@@ -2,8 +2,10 @@
 
 use std::collections::HashMap;
 
-use pdf_masking::pdf::font::ParsedFont;
-use pdf_masking::pdf::text_to_outlines::convert_text_to_outlines;
+use pdf_masking::pdf::font::{FontEncoding, ParsedFont};
+use pdf_masking::pdf::text_to_outlines::{
+    convert_text_to_outlines, extract_char_codes_for_encoding, parse_tj_entries_for_encoding,
+};
 
 // ============================================================
 // ヘルパー: サンプルPDFからフォントを取得
@@ -77,7 +79,85 @@ fn test_sample_pdf_missing_embedded_font_returns_error() {
 }
 
 // ============================================================
-// 3. 合成テストケースで基本変換をテスト
+// 3. CIDフォント（IdentityH）の2バイト文字コード
+// ============================================================
+
+#[test]
+fn test_extract_char_codes_identity_h_two_byte_pairs() {
+    // IdentityH CIDフォント: バイト列 [0x30, 0xC6] → CID 0x30C6 の1文字
+    let obj = lopdf::Object::String(vec![0x30, 0xC6], lopdf::StringFormat::Hexadecimal);
+    let codes = extract_char_codes_for_encoding(&obj, &FontEncoding::IdentityH);
+
+    assert_eq!(codes.len(), 1, "2 bytes should produce 1 CID code");
+    assert_eq!(codes[0], 0x30C6, "CID should be 0x30C6 (テ)");
+}
+
+#[test]
+fn test_extract_char_codes_identity_h_multi_chars() {
+    // テスト = CID 0x30C6, 0x30B9, 0x30C8
+    let obj = lopdf::Object::String(
+        vec![0x30, 0xC6, 0x30, 0xB9, 0x30, 0xC8],
+        lopdf::StringFormat::Hexadecimal,
+    );
+    let codes = extract_char_codes_for_encoding(&obj, &FontEncoding::IdentityH);
+
+    assert_eq!(codes.len(), 3, "6 bytes should produce 3 CID codes");
+    assert_eq!(codes[0], 0x30C6);
+    assert_eq!(codes[1], 0x30B9);
+    assert_eq!(codes[2], 0x30C8);
+}
+
+#[test]
+fn test_extract_char_codes_winansi_unchanged() {
+    // WinAnsi: 各バイトが1つの文字コード（従来動作）
+    use std::collections::HashMap;
+    let obj = lopdf::Object::String(vec![0x41, 0x42], lopdf::StringFormat::Literal);
+    let encoding = FontEncoding::WinAnsi {
+        differences: HashMap::new(),
+    };
+    let codes = extract_char_codes_for_encoding(&obj, &encoding);
+
+    assert_eq!(codes.len(), 2, "2 bytes should produce 2 codes for WinAnsi");
+    assert_eq!(codes[0], 0x41);
+    assert_eq!(codes[1], 0x42);
+}
+
+#[test]
+fn test_parse_tj_entries_identity_h_two_byte_pairs() {
+    // TJ配列内の文字列もIdentityHでは2バイトペアとして解釈される
+    use pdf_masking::pdf::text_state::TjArrayEntry;
+
+    let arr = lopdf::Object::Array(vec![
+        lopdf::Object::String(vec![0x30, 0xC6], lopdf::StringFormat::Hexadecimal),
+        lopdf::Object::Integer(-100),
+        lopdf::Object::String(vec![0x30, 0xB9], lopdf::StringFormat::Hexadecimal),
+    ]);
+
+    let entries = parse_tj_entries_for_encoding(&arr, &FontEncoding::IdentityH);
+    assert_eq!(entries.len(), 3, "should have 3 entries (text, adj, text)");
+
+    match &entries[0] {
+        TjArrayEntry::Text(codes) => {
+            assert_eq!(codes.len(), 1, "first text entry: 2 bytes → 1 CID");
+            assert_eq!(codes[0], 0x30C6);
+        }
+        _ => panic!("expected Text entry"),
+    }
+    match &entries[1] {
+        TjArrayEntry::Adjustment(val) => assert_eq!(*val, -100.0),
+        _ => panic!("expected Adjustment entry"),
+    }
+    match &entries[2] {
+        TjArrayEntry::Text(codes) => {
+            assert_eq!(codes.len(), 1, "second text entry: 2 bytes → 1 CID");
+            assert_eq!(codes[0], 0x30B9);
+        }
+        _ => panic!("expected Text entry"),
+    }
+}
+
+// ============================================================
+// 4. 合成テストケースで基本変換をテスト
 // ============================================================
 // 注: F4はWinAnsiEncoding（'A'=0x41のアウトラインあり）
 //     F2/F3/F5はIdentityH（CIDフォント、単バイトではアウトライン取得不可）
