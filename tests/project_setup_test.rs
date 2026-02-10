@@ -20,8 +20,7 @@ fn test_cargo_dependencies_present() {
         let found = manifest.lines().any(|line| {
             let trimmed = line.trim();
             trimmed.starts_with(dep_trimmed)
-                && trimmed[dep_trimmed.len()..]
-                    .starts_with(|c: char| c == ' ' || c == '=' || c == '.')
+                && trimmed[dep_trimmed.len()..].starts_with([' ', '=', '.'])
         });
         assert!(
             found,
