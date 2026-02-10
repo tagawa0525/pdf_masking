@@ -620,7 +620,16 @@ fn test_process_page_outlines_rejects_bw_mode() {
         None,
         &fonts,
     );
-    assert!(result.is_err(), "Bw mode should be rejected");
+    match result {
+        Err(err) => {
+            let err_msg = err.to_string();
+            assert!(
+                err_msg.contains("color mode") && err_msg.contains("Bw"),
+                "expected ColorMode/Bw unsupported error, got: {err_msg}"
+            );
+        }
+        Ok(_) => panic!("Bw mode should be rejected"),
+    }
 }
 
 /// process_page_outlines: フォント不足でエラーを返す
