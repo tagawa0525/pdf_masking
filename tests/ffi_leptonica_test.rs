@@ -13,25 +13,13 @@ fn test_pix_from_raw_rgba() {
     // Create a simple RGBA image: 2x2, 32-bit color
     let width = 2;
     let height = 2;
-    let mut data = Vec::new();
-
-    // Generate RGBA data: red, green, blue, white
-    data.push(255);
-    data.push(0);
-    data.push(0);
-    data.push(255); // Red
-    data.push(0);
-    data.push(255);
-    data.push(0);
-    data.push(255); // Green
-    data.push(0);
-    data.push(0);
-    data.push(255);
-    data.push(255); // Blue
-    data.push(255);
-    data.push(255);
-    data.push(255);
-    data.push(255); // White
+    // RGBA data: red, green, blue, white
+    let data = vec![
+        255, 0, 0, 255, // Red
+        0, 255, 0, 255, // Green
+        0, 0, 255, 255, // Blue
+        255, 255, 255, 255, // White
+    ];
 
     let pix = Pix::from_raw_rgba(width, height, &data);
     assert!(pix.is_ok());
@@ -108,10 +96,7 @@ fn test_pix_from_raw_rgba_length_mismatch() {
     let expected_bytes = width * height * 4;
 
     // Provide only half the expected data
-    let mut data = Vec::new();
-    for _ in 0..(expected_bytes / 2) {
-        data.push(255);
-    }
+    let data = vec![255; (expected_bytes / 2) as usize];
 
     let pix = Pix::from_raw_rgba(width, height, &data);
     assert!(pix.is_err());
