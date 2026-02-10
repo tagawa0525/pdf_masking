@@ -490,6 +490,7 @@ fn render_text_codes(
                 fill_color,
                 horizontal_scaling: ts.horizontal_scaling,
                 text_rise: ts.text_rise,
+                force_bw: false, // TODO: BW mode support in GREEN phase
             });
             output.extend_from_slice(&path_bytes);
         }

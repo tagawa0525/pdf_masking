@@ -56,6 +56,7 @@ fn test_simple_outline_produces_pdf_operators() {
         fill_color: &FillColor::Gray(0.0),
         horizontal_scaling: 100.0,
         text_rise: 0.0,
+        force_bw: false,
     });
 
     let text = String::from_utf8_lossy(&result);
@@ -82,6 +83,7 @@ fn test_quad_to_cubic_conversion() {
         fill_color: &FillColor::Gray(0.0),
         horizontal_scaling: 100.0,
         text_rise: 0.0,
+        force_bw: false,
     });
 
     let text = String::from_utf8_lossy(&result);
@@ -114,6 +116,7 @@ fn test_font_units_scaled_by_font_size() {
         fill_color: &FillColor::Gray(0.0),
         horizontal_scaling: 100.0,
         text_rise: 0.0,
+        force_bw: false,
     });
 
     let text = String::from_utf8_lossy(&result);
@@ -158,6 +161,7 @@ fn test_text_matrix_applied() {
         fill_color: &FillColor::Gray(0.0),
         horizontal_scaling: 100.0,
         text_rise: 0.0,
+        force_bw: false,
     });
 
     let text = String::from_utf8_lossy(&result);
@@ -196,6 +200,7 @@ fn test_fill_color_rgb() {
         fill_color: &FillColor::Rgb(1.0, 0.0, 0.0),
         horizontal_scaling: 100.0,
         text_rise: 0.0,
+        force_bw: false,
     });
 
     let text = String::from_utf8_lossy(&result);
@@ -219,6 +224,7 @@ fn test_fill_color_gray() {
         fill_color: &FillColor::Gray(0.5),
         horizontal_scaling: 100.0,
         text_rise: 0.0,
+        force_bw: false,
     });
 
     let text = String::from_utf8_lossy(&result);
@@ -240,6 +246,7 @@ fn test_empty_outline() {
         fill_color: &FillColor::Gray(0.0),
         horizontal_scaling: 100.0,
         text_rise: 0.0,
+        force_bw: false,
     });
 
     assert!(
@@ -270,6 +277,7 @@ fn test_cubic_to_produces_c_operator() {
         fill_color: &FillColor::Gray(0.0),
         horizontal_scaling: 100.0,
         text_rise: 0.0,
+        force_bw: false,
     });
 
     let text = String::from_utf8_lossy(&result);
@@ -299,6 +307,7 @@ fn test_cubic_to_coordinates_transformed() {
         fill_color: &FillColor::Gray(0.0),
         horizontal_scaling: 100.0,
         text_rise: 0.0,
+        force_bw: false,
     });
 
     let text = String::from_utf8_lossy(&result);
@@ -312,7 +321,135 @@ fn test_cubic_to_coordinates_transformed() {
 }
 
 // ============================================================
-// 6. horizontal_scaling / text_rise
+// 6. force_bw (BW モード)
+// ============================================================
+
+#[test]
+fn test_force_bw_black_text_stays_black() {
+    // force_bw=true: 黒テキスト(Gray(0.0)) → "0 g" (黒)
+    let outline = vec![
+        PathOp::MoveTo(0.0, 0.0),
+        PathOp::LineTo(500.0, 0.0),
+        PathOp::Close,
+    ];
+
+    let result = glyph_to_pdf_path(&GlyphPathParams {
+        outline: &outline,
+        font_size: 12.0,
+        units_per_em: 1000,
+        text_matrix: &Matrix::identity(),
+        ctm: &Matrix::identity(),
+        fill_color: &FillColor::Gray(0.0),
+        horizontal_scaling: 100.0,
+        text_rise: 0.0,
+        force_bw: true,
+    });
+
+    let text = String::from_utf8_lossy(&result);
+    assert!(
+        text.contains("0 g"),
+        "black text should remain '0 g' in BW mode, got: {}",
+        text
+    );
+}
+
+#[test]
+fn test_force_bw_white_text_stays_white() {
+    // force_bw=true: 白テキスト(Gray(1.0)) → "1 g" (白)
+    let outline = vec![
+        PathOp::MoveTo(0.0, 0.0),
+        PathOp::LineTo(500.0, 0.0),
+        PathOp::Close,
+    ];
+
+    let result = glyph_to_pdf_path(&GlyphPathParams {
+        outline: &outline,
+        font_size: 12.0,
+        units_per_em: 1000,
+        text_matrix: &Matrix::identity(),
+        ctm: &Matrix::identity(),
+        fill_color: &FillColor::Gray(1.0),
+        horizontal_scaling: 100.0,
+        text_rise: 0.0,
+        force_bw: true,
+    });
+
+    let text = String::from_utf8_lossy(&result);
+    assert!(
+        text.contains("1 g"),
+        "white text should become '1 g' in BW mode, got: {}",
+        text
+    );
+}
+
+#[test]
+fn test_force_bw_rgb_dark_becomes_black() {
+    // force_bw=true: 暗いRGB → 輝度 < 0.5 → "0 g" (黒)
+    let outline = vec![
+        PathOp::MoveTo(0.0, 0.0),
+        PathOp::LineTo(500.0, 0.0),
+        PathOp::Close,
+    ];
+
+    // 暗い赤: 輝度 = 0.299*0.3 + 0.587*0.0 + 0.114*0.0 = 0.0897 < 0.5
+    let result = glyph_to_pdf_path(&GlyphPathParams {
+        outline: &outline,
+        font_size: 12.0,
+        units_per_em: 1000,
+        text_matrix: &Matrix::identity(),
+        ctm: &Matrix::identity(),
+        fill_color: &FillColor::Rgb(0.3, 0.0, 0.0),
+        horizontal_scaling: 100.0,
+        text_rise: 0.0,
+        force_bw: true,
+    });
+
+    let text = String::from_utf8_lossy(&result);
+    // BW化: gray "0 g" になるはず（rg ではなく g）
+    assert!(
+        text.contains("0 g"),
+        "dark RGB should become '0 g' in BW mode, got: {}",
+        text
+    );
+    assert!(
+        !text.contains("rg"),
+        "BW mode should not use rg operator, got: {}",
+        text
+    );
+}
+
+#[test]
+fn test_force_bw_rgb_light_becomes_white() {
+    // force_bw=true: 明るいRGB → 輝度 >= 0.5 → "1 g" (白)
+    let outline = vec![
+        PathOp::MoveTo(0.0, 0.0),
+        PathOp::LineTo(500.0, 0.0),
+        PathOp::Close,
+    ];
+
+    // 明るい黄色: 輝度 = 0.299*1.0 + 0.587*1.0 + 0.114*0.0 = 0.886 >= 0.5
+    let result = glyph_to_pdf_path(&GlyphPathParams {
+        outline: &outline,
+        font_size: 12.0,
+        units_per_em: 1000,
+        text_matrix: &Matrix::identity(),
+        ctm: &Matrix::identity(),
+        fill_color: &FillColor::Rgb(1.0, 1.0, 0.0),
+        horizontal_scaling: 100.0,
+        text_rise: 0.0,
+        force_bw: true,
+    });
+
+    let text = String::from_utf8_lossy(&result);
+    assert!(
+        text.contains("1 g"),
+        "light RGB should become '1 g' in BW mode, got: {}",
+        text
+    );
+}
+
+// ============================================================
+// 7. horizontal_scaling / text_rise
 // ============================================================
 
 #[test]
@@ -333,6 +470,7 @@ fn test_horizontal_scaling_applies() {
         fill_color: &FillColor::Gray(0.0),
         horizontal_scaling: 50.0,
         text_rise: 0.0,
+        force_bw: false,
     });
 
     let text = String::from_utf8_lossy(&result);
@@ -363,6 +501,7 @@ fn test_text_rise_applies() {
         fill_color: &FillColor::Gray(0.0),
         horizontal_scaling: 100.0,
         text_rise: 3.0,
+        force_bw: false,
     });
 
     let text = String::from_utf8_lossy(&result);
