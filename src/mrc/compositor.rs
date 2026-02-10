@@ -296,8 +296,11 @@ pub struct TextOutlinesParams<'a> {
 /// コンテンツストリームに残す。text_regionsは空になる。
 pub fn compose_text_outlines(params: &TextOutlinesParams) -> crate::error::Result<TextMaskedData> {
     // 1. テキスト→アウトライン変換（フォント未発見時はErrをそのまま返す）
-    let outlines_content =
-        crate::pdf::text_to_outlines::convert_text_to_outlines(params.content_bytes, params.fonts)?;
+    let outlines_content = crate::pdf::text_to_outlines::convert_text_to_outlines(
+        params.content_bytes,
+        params.fonts,
+        params.color_mode == ColorMode::Bw,
+    )?;
 
     // 2. 白色fill矩形を検出
     let white_rects = extract_white_fill_rects(params.content_bytes)?;

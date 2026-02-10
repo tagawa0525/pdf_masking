@@ -39,10 +39,13 @@ pub fn process_page_outlines(
 ) -> crate::error::Result<ProcessedPage> {
     let color_mode = cache_settings.color_mode;
 
-    // text_to_outlinesはRGB/Grayscaleのみ対応
-    if !matches!(color_mode, ColorMode::Rgb | ColorMode::Grayscale) {
+    // text_to_outlinesはRGB/Grayscale/Bwに対応
+    if !matches!(
+        color_mode,
+        ColorMode::Rgb | ColorMode::Grayscale | ColorMode::Bw
+    ) {
         return Err(crate::error::PdfMaskError::config(format!(
-            "unsupported color mode for process_page_outlines: {:?} (supported: Rgb, Grayscale)",
+            "unsupported color mode for process_page_outlines: {:?} (supported: Rgb, Grayscale, Bw)",
             color_mode
         )));
     }
