@@ -6,15 +6,16 @@ preserving visual appearance. Two processing modes are available:
 - **MRC mode** (default): Renders pages as bitmaps and decomposes them into
   three layers (ITU-T T.44 MRC compression)
 - **Text-to-outlines mode**: Converts text to vector path outlines directly
-  from font data, without rendering. Faster and smaller output, but requires
-  embedded fonts (falls back to pdfium rendering when fonts are not embedded)
+  from font data, without rendering. Faster and smaller output. Works with
+  embedded fonts or system fonts; falls back to pdfium rendering when fonts
+  cannot be resolved.
 
 In both modes, text becomes non-searchable and non-selectable while document
 quality is maintained.
 
 ## How It Works
 
-Each page is processed through a 4-phase pipeline:
+Each page is processed through a processing pipeline:
 
 1. **Content analysis** - Analyze PDF structure, extract fonts and image
    XObjects, determine color mode per page
