@@ -39,50 +39,46 @@ pub enum PdfMaskError {
     IoError(#[from] std::io::Error),
 }
 
-impl PdfMaskError {
-    pub fn config(msg: impl Into<String>) -> Self {
-        Self::ConfigError(msg.into())
-    }
+/// Generates factory methods for [`PdfMaskError`] variants that wrap a `String`.
+macro_rules! error_constructors {
+    ($(
+        $(#[doc = $doc:expr])*
+        $method:ident => $variant:ident
+    ),* $(,)?) => {
+        impl PdfMaskError {
+            $(
+                $(#[doc = $doc])*
+                pub fn $method(msg: impl Into<String>) -> Self {
+                    Self::$variant(msg.into())
+                }
+            )*
+        }
+    };
+}
 
-    pub fn pdf_read(msg: impl Into<String>) -> Self {
-        Self::PdfReadError(msg.into())
-    }
-
-    pub fn pdf_write(msg: impl Into<String>) -> Self {
-        Self::PdfWriteError(msg.into())
-    }
-
-    pub fn content_stream(msg: impl Into<String>) -> Self {
-        Self::ContentStreamError(msg.into())
-    }
-
-    pub fn render(msg: impl Into<String>) -> Self {
-        Self::RenderError(msg.into())
-    }
-
-    pub fn segmentation(msg: impl Into<String>) -> Self {
-        Self::SegmentationError(msg.into())
-    }
-
-    pub fn jbig2_encode(msg: impl Into<String>) -> Self {
-        Self::Jbig2EncodeError(msg.into())
-    }
-
-    pub fn jpeg_encode(msg: impl Into<String>) -> Self {
-        Self::JpegEncodeError(msg.into())
-    }
-
-    pub fn image_xobject(msg: impl Into<String>) -> Self {
-        Self::ImageXObjectError(msg.into())
-    }
-
-    pub fn cache(msg: impl Into<String>) -> Self {
-        Self::CacheError(msg.into())
-    }
-
-    pub fn linearize(msg: impl Into<String>) -> Self {
-        Self::LinearizeError(msg.into())
-    }
+error_constructors! {
+    /// Create a configuration error.
+    config => ConfigError,
+    /// Create a PDF read error.
+    pdf_read => PdfReadError,
+    /// Create a PDF write error.
+    pdf_write => PdfWriteError,
+    /// Create a content stream error.
+    content_stream => ContentStreamError,
+    /// Create a render error.
+    render => RenderError,
+    /// Create a segmentation error.
+    segmentation => SegmentationError,
+    /// Create a JBIG2 encode error.
+    jbig2_encode => Jbig2EncodeError,
+    /// Create a JPEG encode error.
+    jpeg_encode => JpegEncodeError,
+    /// Create an image XObject error.
+    image_xobject => ImageXObjectError,
+    /// Create a cache error.
+    cache => CacheError,
+    /// Create a linearize error.
+    linearize => LinearizeError,
 }
 
 impl From<lopdf::Error> for PdfMaskError {

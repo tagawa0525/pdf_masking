@@ -16,6 +16,9 @@ use crate::pdf::font::ParsedFont;
 use crate::pdf::image_xobject::{bbox_overlaps, redact_image_regions};
 use image::{DynamicImage, RgbaImage};
 
+/// テキスト領域のマージ距離（px）。近接する矩形を結合してXObject数を削減する。
+const TEXT_BBOX_MERGE_DISTANCE: u32 = 5;
+
 /// Configuration for MRC layer generation.
 pub struct MrcConfig {
     /// JPEG quality for the background layer (1-100)
@@ -95,6 +98,9 @@ pub fn compose_bw(rgba_data: &[u8], width: u32, height: u32) -> crate::error::Re
     })
 }
 
+/// JBIG2エンコードされたテキスト領域クロップ結果: `(jbig2_data, pixel_bbox)`.
+pub type CroppedJbig2Region = (Vec<u8>, PixelBBox);
+
 /// テキスト領域をJBIG2マスクからクロップし、各領域をJBIG2エンコードする。
 ///
 /// 1ビットのテキストマスクから複数の矩形領域を抽出し、それぞれをJBIG2エンコードする。
@@ -104,11 +110,11 @@ pub fn compose_bw(rgba_data: &[u8], width: u32, height: u32) -> crate::error::Re
 /// * `bboxes` - クロップ対象の矩形リスト（ピクセル座標）
 ///
 /// # Returns
-/// `(jbig2_data, bbox)` のペアリスト
+/// 各領域のJBIG2データとピクセルBBoxのペアリスト
 pub fn crop_text_regions_jbig2(
     text_mask: &crate::ffi::leptonica::Pix,
     bboxes: &[PixelBBox],
-) -> crate::error::Result<Vec<(Vec<u8>, PixelBBox)>> {
+) -> crate::error::Result<Vec<CroppedJbig2Region>> {
     let mut results = Vec::with_capacity(bboxes.len());
 
     for bbox in bboxes {
@@ -147,28 +153,17 @@ pub struct TextMaskedParams<'a> {
     pub page_index: u32,
 }
 
-/// テキスト選択的ラスタライズ: テキストのみ画像化し、画像XObjectは保持。
-///
-/// # Pipeline
-/// 1. コンテンツストリームからBT...ETブロックを除去
-/// 2. 白色fill矩形を検出
-/// 3. 画像XObject配置を取得
-/// 4. 白色矩形と重なる画像をリダクション
-/// 5. ビットマップからテキスト領域を抽出・JPEG化
-pub fn compose_text_masked(params: &TextMaskedParams) -> crate::error::Result<TextMaskedData> {
-    // 1. テキスト除去済みコンテンツストリーム
-    let stripped_content_stream = strip_text_operators(params.content_bytes)?;
+/// 白色fill矩形と重なる画像XObjectを検出し、リダクションを適用する。
+fn detect_and_redact_images(
+    content_bytes: &[u8],
+    image_streams: &HashMap<String, lopdf::Stream>,
+) -> crate::error::Result<HashMap<String, ImageModification>> {
+    let white_rects = extract_white_fill_rects(content_bytes)?;
+    let placements = extract_xobject_placements(content_bytes)?;
 
-    // 2. 白色fill矩形を検出
-    let white_rects = extract_white_fill_rects(params.content_bytes)?;
-
-    // 3. 画像XObject配置を取得
-    let placements = extract_xobject_placements(params.content_bytes)?;
-
-    // 4. 白色矩形と重なる画像をリダクション
     let mut modified_images: HashMap<String, ImageModification> = HashMap::new();
     for placement in &placements {
-        if let Some(stream) = params.image_streams.get(&placement.name) {
+        if let Some(stream) = image_streams.get(&placement.name) {
             let overlapping: Vec<_> = white_rects
                 .iter()
                 .filter(|wr| bbox_overlaps(wr, &placement.bbox))
@@ -191,10 +186,23 @@ pub fn compose_text_masked(params: &TextMaskedParams) -> crate::error::Result<Te
         }
     }
 
-    // 5. ビットマップからテキスト領域を抽出・JBIG2化
-    /// テキスト領域のマージ距離（px）。近接する矩形を結合してXObject数を削減する。
-    const TEXT_BBOX_MERGE_DISTANCE: u32 = 5;
+    Ok(modified_images)
+}
 
+/// テキスト選択的ラスタライズ: テキストのみ画像化し、画像XObjectは保持。
+///
+/// # Pipeline
+/// 1. コンテンツストリームからBT...ETブロックを除去
+/// 2. 白色fill矩形と重なる画像をリダクション
+/// 3. ビットマップからテキスト領域を抽出・JBIG2化
+pub fn compose_text_masked(params: &TextMaskedParams) -> crate::error::Result<TextMaskedData> {
+    // 1. テキスト除去済みコンテンツストリーム
+    let stripped_content_stream = strip_text_operators(params.content_bytes)?;
+
+    // 2. 白色fill矩形と重なる画像をリダクション
+    let modified_images = detect_and_redact_images(params.content_bytes, params.image_streams)?;
+
+    // 3. ビットマップからテキスト領域を抽出・JBIG2化
     let text_mask =
         segmenter::segment_text_mask(params.rgba_data, params.bitmap_width, params.bitmap_height)?;
     let bboxes = segmenter::extract_text_bboxes(&text_mask, TEXT_BBOX_MERGE_DISTANCE)?;
@@ -267,37 +275,8 @@ pub fn compose_text_outlines(params: &TextOutlinesParams) -> crate::error::Resul
         params.color_mode == ColorMode::Bw,
     )?;
 
-    // 2. 白色fill矩形を検出
-    let white_rects = extract_white_fill_rects(params.content_bytes)?;
-
-    // 3. 画像XObject配置を取得
-    let placements = extract_xobject_placements(params.content_bytes)?;
-
-    // 4. 白色矩形と重なる画像をリダクション
-    let mut modified_images: HashMap<String, ImageModification> = HashMap::new();
-    for placement in &placements {
-        if let Some(stream) = params.image_streams.get(&placement.name) {
-            let overlapping: Vec<_> = white_rects
-                .iter()
-                .filter(|wr| bbox_overlaps(wr, &placement.bbox))
-                .cloned()
-                .collect();
-
-            if !overlapping.is_empty()
-                && let Some(redacted) = redact_image_regions(stream, &overlapping, &placement.bbox)?
-            {
-                modified_images.insert(
-                    placement.name.clone(),
-                    ImageModification {
-                        data: redacted.data,
-                        filter: redacted.filter,
-                        color_space: redacted.color_space,
-                        bits_per_component: redacted.bits_per_component,
-                    },
-                );
-            }
-        }
-    }
+    // 2. 白色fill矩形と重なる画像をリダクション
+    let modified_images = detect_and_redact_images(params.content_bytes, params.image_streams)?;
 
     Ok(TextMaskedData {
         stripped_content_stream: outlines_content,

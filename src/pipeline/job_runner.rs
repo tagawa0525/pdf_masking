@@ -12,7 +12,9 @@ use crate::mrc::compositor::MrcConfig;
 use crate::mrc::{PageOutput, SkipData};
 use crate::pdf::reader::PdfReader;
 use crate::pdf::writer::MrcPageWriter;
-use crate::pipeline::page_processor::{ProcessedPage, process_page, process_page_outlines};
+use crate::pipeline::page_processor::{
+    ProcessPageOutlinesParams, ProcessPageParams, ProcessedPage,
+};
 use crate::render::pdfium::render_page;
 
 /// Configuration for a single job.
@@ -37,7 +39,7 @@ pub struct JobResult {
 }
 
 /// Intermediate data for a page after content stream analysis (Phase A).
-struct ContentStreamData {
+struct AnalysisResult {
     page_idx: u32,
     mode: ColorMode,
     content: Vec<u8>,
@@ -46,7 +48,7 @@ struct ContentStreamData {
 }
 
 /// Intermediate data for a page after rendering (Phase B).
-struct PageRenderData {
+struct RenderResult {
     page_idx: u32,
     mode: ColorMode,
     bitmap: image::DynamicImage,
@@ -57,8 +59,8 @@ struct PageRenderData {
 /// Run a single PDF masking job through the 4-phase pipeline.
 ///
 /// Phase A: Content stream analysis (sequential, skip Skip pages)
-/// Phase B: Page rendering (sequential, skip Skip pages)
-/// Phase C: MRC processing (rayon parallel)
+/// Phase A2: Text-to-outlines conversion (skip if not eligible)
+/// Phase B+C: Page rendering + MRC processing (rayon parallel)
 /// Phase D: PDF assembly + optimization (sequential)
 pub fn run_job(config: &JobConfig) -> crate::error::Result<JobResult> {
     let reader = PdfReader::open(&config.input_path)?;
@@ -86,15 +88,44 @@ pub fn run_job(config: &JobConfig) -> crate::error::Result<JobResult> {
         })
         .collect();
 
-    // --- Phase A: Content stream analysis (sequential) ---
-    // Skip pages don't need content streams or rendering.
+    let cache_store = config.cache_dir.as_ref().map(CacheStore::new);
+
+    // Phase A: Content stream analysis
+    let content_streams = phase_a_analyze(&reader, &page_modes)?;
+
+    // Phase A2: Text-to-outlines conversion
+    let (outlines_pages, needs_rendering) =
+        phase_a2_text_to_outlines(content_streams, config, cache_store.as_ref())?;
+
+    // Phase B+C: Rendering and MRC composition
+    let successful_pages = phase_bc_render_and_mrc(
+        needs_rendering,
+        outlines_pages,
+        &page_modes,
+        config,
+        cache_store.as_ref(),
+    )?;
+
+    let pages_processed = successful_pages.len();
+
+    // Phase D: PDF output assembly
+    phase_d_write(&reader, &successful_pages, config, pages_processed)
+}
+
+/// Phase A: Content stream analysis (sequential).
+///
+/// Reads content streams, image streams, and fonts for all non-Skip pages.
+fn phase_a_analyze(
+    reader: &PdfReader,
+    page_modes: &[(u32, ColorMode)],
+) -> crate::error::Result<Vec<AnalysisResult>> {
     let non_skip: Vec<(u32, ColorMode)> = page_modes
         .iter()
         .filter(|(_, mode)| *mode != ColorMode::Skip)
         .copied()
         .collect();
 
-    let mut content_streams: Vec<ContentStreamData> = Vec::new();
+    let mut content_streams: Vec<AnalysisResult> = Vec::new();
     for &(page_idx, mode) in &non_skip {
         let page_num = page_idx + 1;
         let content = reader.page_content_stream(page_num)?;
@@ -115,7 +146,7 @@ pub fn run_job(config: &JobConfig) -> crate::error::Result<JobResult> {
             None
         };
 
-        content_streams.push(ContentStreamData {
+        content_streams.push(AnalysisResult {
             page_idx,
             mode,
             content,
@@ -123,11 +154,20 @@ pub fn run_job(config: &JobConfig) -> crate::error::Result<JobResult> {
             fonts,
         });
     }
+    Ok(content_streams)
+}
 
-    // --- Phase A2: Text-to-outlines (no rendering required) ---
-    let cache_store = config.cache_dir.as_ref().map(CacheStore::new);
+/// Phase A2: Text-to-outlines conversion.
+///
+/// Attempts text-to-outlines for eligible pages. Pages that fail or are
+/// ineligible are returned in `needs_rendering` for bitmap-based processing.
+fn phase_a2_text_to_outlines(
+    content_streams: Vec<AnalysisResult>,
+    config: &JobConfig,
+    cache_store: Option<&CacheStore>,
+) -> crate::error::Result<(Vec<ProcessedPage>, Vec<AnalysisResult>)> {
     let mut outlines_pages: Vec<ProcessedPage> = Vec::new();
-    let mut needs_rendering: Vec<ContentStreamData> = Vec::new();
+    let mut needs_rendering: Vec<AnalysisResult> = Vec::new();
 
     for cs in content_streams {
         let eligible = matches!(
@@ -143,15 +183,16 @@ pub fn run_job(config: &JobConfig) -> crate::error::Result<JobResult> {
                 fg_quality: config.fg_quality,
                 color_mode: cs.mode,
             };
-            let result = process_page_outlines(
-                cs.page_idx,
-                &cs.content,
-                &cache_settings,
-                cache_store.as_ref(),
-                &config.input_path,
-                cs.image_streams.as_ref(),
-                cs.fonts.as_ref().unwrap(),
-            );
+            let params = ProcessPageOutlinesParams {
+                page_index: cs.page_idx,
+                content_stream: &cs.content,
+                cache_settings: &cache_settings,
+                cache_store,
+                pdf_path: &config.input_path,
+                image_streams: cs.image_streams.as_ref(),
+                fonts: cs.fonts.as_ref().unwrap(),
+            };
+            let result = params.process();
             match result {
                 Ok(page) => {
                     outlines_pages.push(page);
@@ -165,12 +206,25 @@ pub fn run_job(config: &JobConfig) -> crate::error::Result<JobResult> {
             needs_rendering.push(cs);
         }
     }
+    Ok((outlines_pages, needs_rendering))
+}
 
+/// Phase B+C: Page rendering (sequential) and MRC processing (rayon parallel).
+///
+/// Renders pages that need bitmaps, then runs MRC composition in parallel.
+/// Skip pages are appended with no processing.
+fn phase_bc_render_and_mrc(
+    needs_rendering: Vec<AnalysisResult>,
+    outlines_pages: Vec<ProcessedPage>,
+    page_modes: &[(u32, ColorMode)],
+    config: &JobConfig,
+    cache_store: Option<&CacheStore>,
+) -> crate::error::Result<Vec<ProcessedPage>> {
     // --- Phase B: Page rendering (sequential, only pages needing bitmap) ---
-    let mut pages_data: Vec<PageRenderData> = Vec::new();
+    let mut pages_data: Vec<RenderResult> = Vec::new();
     for cs in needs_rendering {
         let bitmap = render_page(&config.input_path, cs.page_idx, config.dpi)?;
-        pages_data.push(PageRenderData {
+        pages_data.push(RenderResult {
             page_idx: cs.page_idx,
             mode: cs.mode,
             bitmap,
@@ -195,16 +249,17 @@ pub fn run_job(config: &JobConfig) -> crate::error::Result<JobResult> {
                 fg_quality: config.fg_quality,
                 color_mode: pd.mode,
             };
-            process_page(
-                pd.page_idx,
-                &pd.bitmap,
-                &pd.content,
-                &mrc_config,
-                &cache_settings,
-                cache_store.as_ref(),
-                &config.input_path,
-                pd.image_streams.as_ref(),
-            )
+            let params = ProcessPageParams {
+                page_index: pd.page_idx,
+                bitmap: &pd.bitmap,
+                content_stream: &pd.content,
+                mrc_config: &mrc_config,
+                cache_settings: &cache_settings,
+                cache_store,
+                pdf_path: &config.input_path,
+                image_streams: pd.image_streams.as_ref(),
+            };
+            params.process()
         })
         .collect();
 
@@ -215,7 +270,7 @@ pub fn run_job(config: &JobConfig) -> crate::error::Result<JobResult> {
     }
 
     // Add skip pages directly (no rendering or MRC processing needed)
-    for &(page_idx, mode) in &page_modes {
+    for &(page_idx, mode) in page_modes {
         if mode == ColorMode::Skip {
             successful_pages.push(ProcessedPage {
                 page_index: page_idx,
@@ -230,12 +285,21 @@ pub fn run_job(config: &JobConfig) -> crate::error::Result<JobResult> {
     // Sort by page index for deterministic output
     successful_pages.sort_by_key(|p| p.page_index);
 
-    let pages_processed = successful_pages.len();
+    Ok(successful_pages)
+}
 
-    // --- Phase D: PDF assembly + optimization (sequential) ---
+/// Phase D: PDF assembly + optimization (sequential).
+///
+/// Writes all processed pages into a new PDF document and optimizes it.
+fn phase_d_write(
+    reader: &PdfReader,
+    successful_pages: &[ProcessedPage],
+    config: &JobConfig,
+    pages_processed: usize,
+) -> crate::error::Result<JobResult> {
     let mut writer = MrcPageWriter::new();
     let mut masked_page_ids: Vec<lopdf::ObjectId> = Vec::new();
-    for page in &successful_pages {
+    for page in successful_pages {
         match &page.output {
             PageOutput::Mrc(layers) => {
                 let page_id = writer.write_mrc_page(layers)?;

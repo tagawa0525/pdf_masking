@@ -17,6 +17,19 @@ use serde_json;
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use super::{color_mode_to_str, str_to_color_mode};
+
+/// `std::io::Error` を `PdfMaskError::CacheError` に変換するための拡張トレイト。
+trait CacheResultExt<T> {
+    fn cache_err(self) -> crate::error::Result<T>;
+}
+
+impl<T, E: std::fmt::Display> CacheResultExt<T> for std::result::Result<T, E> {
+    fn cache_err(self) -> crate::error::Result<T> {
+        self.map_err(|e| PdfMaskError::cache(e.to_string()))
+    }
+}
+
 /// MRC用キャッシュエントリの必須ファイル。
 const MRC_CACHE_FILES: &[&str] = &[
     "mask.jbig2",
@@ -93,25 +106,6 @@ fn validate_cache_key(key: &str) -> crate::error::Result<()> {
     }
 }
 
-fn color_mode_to_str(mode: ColorMode) -> &'static str {
-    match mode {
-        ColorMode::Rgb => "rgb",
-        ColorMode::Grayscale => "grayscale",
-        ColorMode::Bw => "bw",
-        ColorMode::Skip => "skip",
-    }
-}
-
-fn str_to_color_mode(s: &str) -> Option<ColorMode> {
-    match s {
-        "rgb" => Some(ColorMode::Rgb),
-        "grayscale" => Some(ColorMode::Grayscale),
-        "bw" => Some(ColorMode::Bw),
-        "skip" => Some(ColorMode::Skip),
-        _ => None,
-    }
-}
-
 /// XObject名をファイル名として安全な文字列にエンコードする。
 /// 英数字と `_`, `-` 以外は `%XX` (hex) に変換。
 fn sanitize_xobject_name(name: &str) -> String {
@@ -154,14 +148,17 @@ impl CacheStore {
         validate_cache_key(key)?;
 
         match output {
-            PageOutput::Skip(_) => return Ok(()),
+            PageOutput::Skip(_) => Ok(()),
             PageOutput::TextMasked(data) => {
                 let (w, h) = bitmap_dims.unwrap_or((0, 0));
-                return self.store_text_masked(key, data, w, h);
+                self.store_text_masked(key, data, w, h)
             }
-            _ => {}
+            PageOutput::Mrc(_) | PageOutput::BwMask(_) => self.store_mrc_or_bw(key, output),
         }
+    }
 
+    /// MRC または BW の PageOutput をキャッシュに保存する。
+    fn store_mrc_or_bw(&self, key: &str, output: &PageOutput) -> crate::error::Result<()> {
         let (mask_jbig2, fg, bg, width, height, mode) = match output {
             PageOutput::Mrc(layers) => (
                 &layers.mask_jbig2,
@@ -179,7 +176,7 @@ impl CacheStore {
                 layers.height,
                 ColorMode::Bw,
             ),
-            PageOutput::Skip(_) | PageOutput::TextMasked(_) => unreachable!(),
+            _ => unreachable!(),
         };
 
         let dir = self.key_dir(key)?;
@@ -188,18 +185,15 @@ impl CacheStore {
         if tmp_dir.exists() {
             let _ = fs::remove_dir_all(&tmp_dir);
         }
-        fs::create_dir_all(&tmp_dir).map_err(|e| PdfMaskError::cache(e.to_string()))?;
+        fs::create_dir_all(&tmp_dir).cache_err()?;
 
-        fs::write(tmp_dir.join("mask.jbig2"), mask_jbig2)
-            .map_err(|e| PdfMaskError::cache(e.to_string()))?;
+        fs::write(tmp_dir.join("mask.jbig2"), mask_jbig2).cache_err()?;
 
         if let Some(fg_data) = fg {
-            fs::write(tmp_dir.join("foreground.jpg"), fg_data)
-                .map_err(|e| PdfMaskError::cache(e.to_string()))?;
+            fs::write(tmp_dir.join("foreground.jpg"), fg_data).cache_err()?;
         }
         if let Some(bg_data) = bg {
-            fs::write(tmp_dir.join("background.jpg"), bg_data)
-                .map_err(|e| PdfMaskError::cache(e.to_string()))?;
+            fs::write(tmp_dir.join("background.jpg"), bg_data).cache_err()?;
         }
 
         let cache_type = match output {
@@ -217,14 +211,13 @@ impl CacheStore {
             modified_images: vec![],
         };
         let metadata_json = serde_json::to_string(&metadata)?;
-        fs::write(tmp_dir.join("metadata.json"), metadata_json.as_bytes())
-            .map_err(|e| PdfMaskError::cache(e.to_string()))?;
+        fs::write(tmp_dir.join("metadata.json"), metadata_json.as_bytes()).cache_err()?;
 
         if dir.exists() {
             let _ = fs::remove_dir_all(&dir);
         }
 
-        fs::rename(&tmp_dir, &dir).map_err(|e| PdfMaskError::cache(e.to_string()))?;
+        fs::rename(&tmp_dir, &dir).cache_err()?;
 
         Ok(())
     }
@@ -243,21 +236,20 @@ impl CacheStore {
         if tmp_dir.exists() {
             let _ = fs::remove_dir_all(&tmp_dir);
         }
-        fs::create_dir_all(&tmp_dir).map_err(|e| PdfMaskError::cache(e.to_string()))?;
+        fs::create_dir_all(&tmp_dir).cache_err()?;
 
         // stripped_content.bin
         fs::write(
             tmp_dir.join("stripped_content.bin"),
             &data.stripped_content_stream,
         )
-        .map_err(|e| PdfMaskError::cache(e.to_string()))?;
+        .cache_err()?;
 
         // region_*.jbig2
         let mut region_metas = Vec::with_capacity(data.text_regions.len());
         for (i, region) in data.text_regions.iter().enumerate() {
             let filename = format!("region_{}.jbig2", i);
-            fs::write(tmp_dir.join(&filename), &region.jbig2_data)
-                .map_err(|e| PdfMaskError::cache(e.to_string()))?;
+            fs::write(tmp_dir.join(&filename), &region.jbig2_data).cache_err()?;
             region_metas.push(TextRegionMeta {
                 bbox: region.bbox_points.clone(),
                 pixel_width: region.pixel_width,
@@ -271,8 +263,7 @@ impl CacheStore {
         for (name, modification) in &data.modified_images {
             let safe_name = sanitize_xobject_name(name);
             let filename = format!("modified_{}.bin", safe_name);
-            fs::write(tmp_dir.join(&filename), &modification.data)
-                .map_err(|e| PdfMaskError::cache(e.to_string()))?;
+            fs::write(tmp_dir.join(&filename), &modification.data).cache_err()?;
             modified_metas.push(ModifiedImageMeta {
                 name: name.clone(),
                 filter: modification.filter.clone(),
@@ -293,14 +284,13 @@ impl CacheStore {
             modified_images: modified_metas,
         };
         let metadata_json = serde_json::to_string(&metadata)?;
-        fs::write(tmp_dir.join("metadata.json"), metadata_json.as_bytes())
-            .map_err(|e| PdfMaskError::cache(e.to_string()))?;
+        fs::write(tmp_dir.join("metadata.json"), metadata_json.as_bytes()).cache_err()?;
 
         if dir.exists() {
             let _ = fs::remove_dir_all(&dir);
         }
 
-        fs::rename(&tmp_dir, &dir).map_err(|e| PdfMaskError::cache(e.to_string()))?;
+        fs::rename(&tmp_dir, &dir).cache_err()?;
 
         Ok(())
     }
@@ -320,8 +310,28 @@ impl CacheStore {
             return Ok(None);
         }
 
-        let metadata_str = fs::read_to_string(dir.join("metadata.json"))
-            .map_err(|e| PdfMaskError::cache(e.to_string()))?;
+        let metadata = self.read_cache_metadata(key, &dir, expected_mode, bitmap_dims)?;
+        let Some(metadata) = metadata else {
+            return Ok(None);
+        };
+
+        if metadata.cache_type == "text_masked" {
+            return self.retrieve_text_masked(&dir, &metadata);
+        }
+
+        self.retrieve_mrc_or_bw(&dir, &metadata, expected_mode)
+    }
+
+    /// メタデータを読み取り、キー・カラーモード・寸法の検証を行う。
+    /// 不一致の場合は None を返す。
+    fn read_cache_metadata(
+        &self,
+        key: &str,
+        dir: &Path,
+        expected_mode: ColorMode,
+        bitmap_dims: Option<(u32, u32)>,
+    ) -> crate::error::Result<Option<CacheMetadata>> {
+        let metadata_str = fs::read_to_string(dir.join("metadata.json")).cache_err()?;
         let metadata: CacheMetadata = serde_json::from_str(&metadata_str)?;
 
         if metadata.cache_key != key {
@@ -343,13 +353,17 @@ impl CacheStore {
             return Ok(None);
         }
 
-        // TextMasked エントリの場合
-        if metadata.cache_type == "text_masked" {
-            return self.retrieve_text_masked(&dir, &metadata);
-        }
+        Ok(Some(metadata))
+    }
 
-        let mask_jbig2 =
-            fs::read(dir.join("mask.jbig2")).map_err(|e| PdfMaskError::cache(e.to_string()))?;
+    /// MRC または BW キャッシュエントリを読み込む。
+    fn retrieve_mrc_or_bw(
+        &self,
+        dir: &Path,
+        metadata: &CacheMetadata,
+        expected_mode: ColorMode,
+    ) -> crate::error::Result<Option<PageOutput>> {
+        let mask_jbig2 = fs::read(dir.join("mask.jbig2")).cache_err()?;
 
         match expected_mode {
             ColorMode::Bw => Ok(Some(PageOutput::BwMask(BwLayers {
@@ -358,10 +372,8 @@ impl CacheStore {
                 height: metadata.height,
             }))),
             mode => {
-                let foreground_jpeg = fs::read(dir.join("foreground.jpg"))
-                    .map_err(|e| PdfMaskError::cache(e.to_string()))?;
-                let background_jpeg = fs::read(dir.join("background.jpg"))
-                    .map_err(|e| PdfMaskError::cache(e.to_string()))?;
+                let foreground_jpeg = fs::read(dir.join("foreground.jpg")).cache_err()?;
+                let background_jpeg = fs::read(dir.join("background.jpg")).cache_err()?;
 
                 Ok(Some(PageOutput::Mrc(MrcLayers {
                     mask_jbig2,
@@ -381,13 +393,11 @@ impl CacheStore {
         dir: &Path,
         metadata: &CacheMetadata,
     ) -> crate::error::Result<Option<PageOutput>> {
-        let stripped_content_stream = fs::read(dir.join("stripped_content.bin"))
-            .map_err(|e| PdfMaskError::cache(e.to_string()))?;
+        let stripped_content_stream = fs::read(dir.join("stripped_content.bin")).cache_err()?;
 
         let mut text_regions = Vec::with_capacity(metadata.regions.len());
         for region_meta in &metadata.regions {
-            let jbig2_data = fs::read(dir.join(&region_meta.file))
-                .map_err(|e| PdfMaskError::cache(e.to_string()))?;
+            let jbig2_data = fs::read(dir.join(&region_meta.file)).cache_err()?;
             text_regions.push(TextRegionCrop {
                 jbig2_data,
                 bbox_points: region_meta.bbox.clone(),
@@ -398,8 +408,7 @@ impl CacheStore {
 
         let mut modified_images = HashMap::with_capacity(metadata.modified_images.len());
         for img_meta in &metadata.modified_images {
-            let data = fs::read(dir.join(&img_meta.file))
-                .map_err(|e| PdfMaskError::cache(e.to_string()))?;
+            let data = fs::read(dir.join(&img_meta.file)).cache_err()?;
             modified_images.insert(
                 img_meta.name.clone(),
                 ImageModification {

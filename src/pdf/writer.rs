@@ -1,10 +1,12 @@
 // Phase 7: MRC XObject構築、SMask参照、コンテンツストリーム組立
 
+use std::collections::HashMap;
+
 use lopdf::{Document, Object, Stream, dictionary};
 
 use crate::config::job::ColorMode;
 use crate::error::PdfMaskError;
-use crate::mrc::{BwLayers, MrcLayers, TextMaskedData};
+use crate::mrc::{BwLayers, ImageModification, MrcLayers, TextMaskedData, TextRegionCrop};
 
 /// PDF Name仕様 (PDF Reference 7.3.5) に従い、名前をエスケープする。
 ///
@@ -349,33 +351,14 @@ impl MrcPageWriter {
         }
 
         // テキスト領域XObjectを作成（ImageMaskとして）
-        let mut text_xobjects: Vec<(String, lopdf::ObjectId)> = Vec::new();
-        for (i, region) in data.text_regions.iter().enumerate() {
-            let name = format!("TxtRgn{}", i);
-            let xobj_id = self.add_text_mask_xobject(
-                &region.jbig2_data,
-                region.pixel_width,
-                region.pixel_height,
-            );
-            text_xobjects.push((name, xobj_id));
-        }
+        let text_xobjects = self.create_text_region_xobjects(&data.text_regions);
 
-        // 新しいコンテンツストリームを構築（テキスト除去済み + テキストImageMask Do）
-        // ImageMaskは色を指定して描画するため、'0 g'（黒）を設定してからDoを実行
-        let mut content = data.stripped_content_stream.clone();
-        for (i, (name, _)) in text_xobjects.iter().enumerate() {
-            let region = &data.text_regions[i];
-            let w = region.bbox_points.x_max - region.bbox_points.x_min;
-            let h = region.bbox_points.y_max - region.bbox_points.y_min;
-            let x = region.bbox_points.x_min;
-            let y = region.bbox_points.y_min;
-            let escaped = escape_pdf_name(name);
-            content.extend_from_slice(
-                format!("\nq 0 g {w} 0 0 {h} {x} {y} cm /{escaped} Do Q").as_bytes(),
-            );
-        }
-
-        // コンテンツストリームを差し替え
+        // 新しいコンテンツストリームを構築して差し替え
+        let content = Self::build_text_masked_content(
+            &data.stripped_content_stream,
+            &data.text_regions,
+            &text_xobjects,
+        );
         let content_stream = Stream::new(dictionary! {}, content);
         let content_id = self.doc.add_object(Object::Stream(content_stream));
         if let Some(Object::Dictionary(page_dict)) = self.doc.objects.get_mut(&new_page_id) {
@@ -394,7 +377,60 @@ impl MrcPageWriter {
         }
 
         // リダクション済み画像のストリームデータを差し替え
-        for (name, modification) in &data.modified_images {
+        self.replace_modified_images(xobj_dict_id, &data.modified_images);
+
+        self.append_page_to_kids(pages_id, new_page_id);
+        Ok(new_page_id)
+    }
+
+    /// テキスト領域ごとにImageMask XObjectを作成し、名前とIDのペアを返す。
+    fn create_text_region_xobjects(
+        &mut self,
+        text_regions: &[TextRegionCrop],
+    ) -> Vec<(String, lopdf::ObjectId)> {
+        text_regions
+            .iter()
+            .enumerate()
+            .map(|(i, region)| {
+                let name = format!("TxtRgn{}", i);
+                let xobj_id = self.add_text_mask_xobject(
+                    &region.jbig2_data,
+                    region.pixel_width,
+                    region.pixel_height,
+                );
+                (name, xobj_id)
+            })
+            .collect()
+    }
+
+    /// テキスト除去済みコンテンツにImageMask描画オペレータを追加して最終コンテンツを構築する。
+    fn build_text_masked_content(
+        stripped: &[u8],
+        text_regions: &[TextRegionCrop],
+        text_xobjects: &[(String, lopdf::ObjectId)],
+    ) -> Vec<u8> {
+        let mut content = stripped.to_vec();
+        for (i, (name, _)) in text_xobjects.iter().enumerate() {
+            let region = &text_regions[i];
+            let w = region.bbox_points.x_max - region.bbox_points.x_min;
+            let h = region.bbox_points.y_max - region.bbox_points.y_min;
+            let x = region.bbox_points.x_min;
+            let y = region.bbox_points.y_min;
+            let escaped = escape_pdf_name(name);
+            content.extend_from_slice(
+                format!("\nq 0 g {w} 0 0 {h} {x} {y} cm /{escaped} Do Q").as_bytes(),
+            );
+        }
+        content
+    }
+
+    /// XObject辞書内の画像ストリームデータをリダクション済みデータに差し替える。
+    fn replace_modified_images(
+        &mut self,
+        xobj_dict_id: lopdf::ObjectId,
+        modified_images: &HashMap<String, ImageModification>,
+    ) {
+        for (name, modification) in modified_images {
             let img_obj_id = {
                 if let Some(Object::Dictionary(dict)) = self.doc.objects.get(&xobj_dict_id) {
                     dict.get(name.as_bytes())
@@ -429,50 +465,54 @@ impl MrcPageWriter {
                 stream.dict.remove(b"Length");
             }
         }
-
-        self.append_page_to_kids(pages_id, new_page_id);
-        Ok(new_page_id)
     }
 
-    /// ページのResourcesをインライン辞書から独立オブジェクトに昇格させる。
+    /// 親オブジェクト内の辞書エントリをインラインから独立オブジェクトに昇格させる。
     /// 既に参照の場合はそのIDを返す。
-    fn ensure_resources_as_object(
+    fn ensure_dict_entry_as_object(
         &mut self,
-        page_id: lopdf::ObjectId,
+        parent_id: lopdf::ObjectId,
+        key: &[u8],
     ) -> crate::error::Result<lopdf::ObjectId> {
-        // まず現在の状態を確認
         let is_reference = {
-            let page_dict = self
+            let parent_dict = self
                 .doc
-                .get_dictionary(page_id)
+                .get_dictionary(parent_id)
                 .map_err(|e| PdfMaskError::pdf_write(e.to_string()))?;
-            matches!(page_dict.get(b"Resources"), Ok(Object::Reference(_)))
+            matches!(parent_dict.get(key), Ok(Object::Reference(_)))
         };
 
         if is_reference {
-            let page_dict = self
+            let parent_dict = self
                 .doc
-                .get_dictionary(page_id)
+                .get_dictionary(parent_id)
                 .map_err(|e| PdfMaskError::pdf_write(e.to_string()))?;
-            Ok(page_dict.get(b"Resources").unwrap().as_reference().unwrap())
+            Ok(parent_dict.get(key).unwrap().as_reference().unwrap())
         } else {
-            // インライン辞書を抽出して独立オブジェクトにする
-            let resources_dict = {
-                let page_dict = self
+            let dict = {
+                let parent_dict = self
                     .doc
-                    .get_dictionary(page_id)
+                    .get_dictionary(parent_id)
                     .map_err(|e| PdfMaskError::pdf_write(e.to_string()))?;
-                match page_dict.get(b"Resources") {
+                match parent_dict.get(key) {
                     Ok(Object::Dictionary(d)) => d.clone(),
                     _ => lopdf::Dictionary::new(),
                 }
             };
-            let id = self.doc.add_object(Object::Dictionary(resources_dict));
-            if let Some(Object::Dictionary(page_dict)) = self.doc.objects.get_mut(&page_id) {
-                page_dict.set("Resources", Object::Reference(id));
+            let id = self.doc.add_object(Object::Dictionary(dict));
+            if let Some(Object::Dictionary(parent_dict)) = self.doc.objects.get_mut(&parent_id) {
+                parent_dict.set(key.to_vec(), Object::Reference(id));
             }
             Ok(id)
         }
+    }
+
+    /// ページのResourcesをインライン辞書から独立オブジェクトに昇格させる。
+    fn ensure_resources_as_object(
+        &mut self,
+        page_id: lopdf::ObjectId,
+    ) -> crate::error::Result<lopdf::ObjectId> {
+        self.ensure_dict_entry_as_object(page_id, b"Resources")
     }
 
     /// Resources内のXObject辞書をインラインから独立オブジェクトに昇格させる。
@@ -480,37 +520,7 @@ impl MrcPageWriter {
         &mut self,
         resources_id: lopdf::ObjectId,
     ) -> crate::error::Result<lopdf::ObjectId> {
-        let is_reference = {
-            let res_dict = self
-                .doc
-                .get_dictionary(resources_id)
-                .map_err(|e| PdfMaskError::pdf_write(e.to_string()))?;
-            matches!(res_dict.get(b"XObject"), Ok(Object::Reference(_)))
-        };
-
-        if is_reference {
-            let res_dict = self
-                .doc
-                .get_dictionary(resources_id)
-                .map_err(|e| PdfMaskError::pdf_write(e.to_string()))?;
-            Ok(res_dict.get(b"XObject").unwrap().as_reference().unwrap())
-        } else {
-            let xobj_dict = {
-                let res_dict = self
-                    .doc
-                    .get_dictionary(resources_id)
-                    .map_err(|e| PdfMaskError::pdf_write(e.to_string()))?;
-                match res_dict.get(b"XObject") {
-                    Ok(Object::Dictionary(d)) => d.clone(),
-                    _ => lopdf::Dictionary::new(),
-                }
-            };
-            let id = self.doc.add_object(Object::Dictionary(xobj_dict));
-            if let Some(Object::Dictionary(res_dict)) = self.doc.objects.get_mut(&resources_id) {
-                res_dict.set("XObject", Object::Reference(id));
-            }
-            Ok(id)
-        }
+        self.ensure_dict_entry_as_object(resources_id, b"XObject")
     }
 
     /// ソースPDFからページをコピーする（Skipモード用）。

@@ -45,40 +45,41 @@ pub fn glyph_to_pdf_path(params: &GlyphPathParams) -> Vec<u8> {
 
     let mut buf = String::new();
 
+    // NOTE: `String` への `fmt::Write` は失敗しないため、以下の `.unwrap()` は安全。
+
     // q: グラフィックス状態を保存
-    writeln!(buf, "q").unwrap();
+    buf.push_str("q\n");
 
     // 塗り色を設定
     if params.force_bw {
         // BWモード: 輝度→閾値0.5で0/1に変換
         let luminance = fill_color_luminance(params.fill_color);
         let bw = if luminance >= 0.5 { 1.0 } else { 0.0 };
-        writeln!(buf, "{} g", format_f64(bw)).unwrap();
+        write_f64(&mut buf, bw);
+        buf.push_str(" g\n");
     } else {
         match params.fill_color {
             FillColor::Gray(g) => {
-                writeln!(buf, "{} g", format_f64(*g)).unwrap();
+                write_f64(&mut buf, *g);
+                buf.push_str(" g\n");
             }
             FillColor::Rgb(r, g, b) => {
-                writeln!(
-                    buf,
-                    "{} {} {} rg",
-                    format_f64(*r),
-                    format_f64(*g),
-                    format_f64(*b)
-                )
-                .unwrap();
+                write_f64(&mut buf, *r);
+                buf.push(' ');
+                write_f64(&mut buf, *g);
+                buf.push(' ');
+                write_f64(&mut buf, *b);
+                buf.push_str(" rg\n");
             }
             FillColor::Cmyk(c, m, y, k) => {
-                writeln!(
-                    buf,
-                    "{} {} {} {} k",
-                    format_f64(*c),
-                    format_f64(*m),
-                    format_f64(*y),
-                    format_f64(*k)
-                )
-                .unwrap();
+                write_f64(&mut buf, *c);
+                buf.push(' ');
+                write_f64(&mut buf, *m);
+                buf.push(' ');
+                write_f64(&mut buf, *y);
+                buf.push(' ');
+                write_f64(&mut buf, *k);
+                buf.push_str(" k\n");
             }
         }
     }
@@ -93,13 +94,13 @@ pub fn glyph_to_pdf_path(params: &GlyphPathParams) -> Vec<u8> {
                 current_x = *x;
                 current_y = *y;
                 let (px, py) = transform(*x, *y);
-                writeln!(buf, "{} {} m", format_f64(px), format_f64(py)).unwrap();
+                write_point_op(&mut buf, px, py, "m");
             }
             PathOp::LineTo(x, y) => {
                 current_x = *x;
                 current_y = *y;
                 let (px, py) = transform(*x, *y);
-                writeln!(buf, "{} {} l", format_f64(px), format_f64(py)).unwrap();
+                write_point_op(&mut buf, px, py, "l");
             }
             PathOp::QuadTo(x1, y1, x2, y2) => {
                 // 二次ベジェ(p0, p1, p2) → 三次ベジェ(p0, cp1, cp2, p2)
@@ -118,17 +119,7 @@ pub fn glyph_to_pdf_path(params: &GlyphPathParams) -> Vec<u8> {
                 let (px1, py1) = transform(cp1x, cp1y);
                 let (px2, py2) = transform(cp2x, cp2y);
                 let (px3, py3) = transform(*x2, *y2);
-                writeln!(
-                    buf,
-                    "{} {} {} {} {} {} c",
-                    format_f64(px1),
-                    format_f64(py1),
-                    format_f64(px2),
-                    format_f64(py2),
-                    format_f64(px3),
-                    format_f64(py3)
-                )
-                .unwrap();
+                write_curve_op(&mut buf, px1, py1, px2, py2, px3, py3, "c");
             }
             PathOp::CubicTo(x1, y1, x2, y2, x, y) => {
                 // CFF/CFF2の3次ベジェ: そのままPDF `c` 演算子に出力（変換不要）
@@ -137,29 +128,19 @@ pub fn glyph_to_pdf_path(params: &GlyphPathParams) -> Vec<u8> {
                 let (px3, py3) = transform(*x, *y);
                 current_x = *x;
                 current_y = *y;
-                writeln!(
-                    buf,
-                    "{} {} {} {} {} {} c",
-                    format_f64(px1),
-                    format_f64(py1),
-                    format_f64(px2),
-                    format_f64(py2),
-                    format_f64(px3),
-                    format_f64(py3)
-                )
-                .unwrap();
+                write_curve_op(&mut buf, px1, py1, px2, py2, px3, py3, "c");
             }
             PathOp::Close => {
-                writeln!(buf, "h").unwrap();
+                buf.push_str("h\n");
             }
         }
     }
 
     // fill
-    writeln!(buf, "f").unwrap();
+    buf.push_str("f\n");
 
     // Q: グラフィックス状態を復元
-    writeln!(buf, "Q").unwrap();
+    buf.push_str("Q\n");
 
     buf.into_bytes()
 }
@@ -179,15 +160,60 @@ fn fill_color_luminance(color: &FillColor) -> f64 {
     }
 }
 
-fn format_f64(v: f64) -> String {
-    // 不要な末尾ゼロを除去しつつ適切な精度で出力
-    let s = format!("{:.4}", v);
-    let s = s.trim_end_matches('0');
-    let s = s.trim_end_matches('.');
+/// `v` を小数4桁でフォーマットし、末尾ゼロを除去して `buf` に直接書き込む。
+///
+/// `String` への `fmt::Write` は失敗しないため `.unwrap()` は安全。
+fn write_f64(buf: &mut String, v: f64) {
+    let start = buf.len();
+    write!(buf, "{v:.4}").unwrap();
+    // 末尾の不要なゼロと小数点を除去
+    let trimmed_len = buf[start..]
+        .trim_end_matches('0')
+        .trim_end_matches('.')
+        .len();
     // -0 を 0 に正規化
-    if s == "-0" {
-        "0".to_string()
+    if buf[start..start + trimmed_len] == *"-0" {
+        buf.truncate(start);
+        buf.push('0');
     } else {
-        s.to_string()
+        buf.truncate(start + trimmed_len);
     }
+}
+
+/// 2つの座標値とPDF演算子を `buf` に書き込むヘルパー。
+fn write_point_op(buf: &mut String, x: f64, y: f64, op: &str) {
+    write_f64(buf, x);
+    buf.push(' ');
+    write_f64(buf, y);
+    buf.push(' ');
+    buf.push_str(op);
+    buf.push('\n');
+}
+
+/// 6つの座標値とPDF演算子を `buf` に書き込むヘルパー。
+#[allow(clippy::too_many_arguments)]
+fn write_curve_op(
+    buf: &mut String,
+    x1: f64,
+    y1: f64,
+    x2: f64,
+    y2: f64,
+    x3: f64,
+    y3: f64,
+    op: &str,
+) {
+    write_f64(buf, x1);
+    buf.push(' ');
+    write_f64(buf, y1);
+    buf.push(' ');
+    write_f64(buf, x2);
+    buf.push(' ');
+    write_f64(buf, y2);
+    buf.push(' ');
+    write_f64(buf, x3);
+    buf.push(' ');
+    write_f64(buf, y3);
+    buf.push(' ');
+    buf.push_str(op);
+    buf.push('\n');
 }

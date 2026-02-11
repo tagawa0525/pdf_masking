@@ -54,16 +54,19 @@ impl PdfReader {
         Ok(names)
     }
 
-    /// リソース辞書からXObject/Image名を収集する。
-    fn collect_image_names_from_dict(
-        &self,
-        dict: &lopdf::Dictionary,
-    ) -> crate::error::Result<Vec<String>> {
-        let mut names = Vec::new();
-
+    /// リソース辞書のXObjectエントリからSubtype=Imageのストリームを列挙し、
+    /// 各画像に対してコールバックを呼び出す共通ヘルパー。
+    fn for_each_image_xobject<'a, F>(
+        &'a self,
+        dict: &'a lopdf::Dictionary,
+        mut f: F,
+    ) -> crate::error::Result<()>
+    where
+        F: FnMut(String, &'a lopdf::Stream),
+    {
         let xobject_entry = match dict.get(b"XObject") {
             Ok(entry) => entry,
-            Err(_) => return Ok(names), // XObjectエントリがない場合は空を返す
+            Err(_) => return Ok(()), // XObjectエントリがない場合は何もしない
         };
 
         let xobject_dict = match xobject_entry {
@@ -71,31 +74,39 @@ impl PdfReader {
             lopdf::Object::Reference(id) => {
                 self.doc.get_object(*id).and_then(lopdf::Object::as_dict)?
             }
-            _ => return Ok(names),
+            _ => return Ok(()),
         };
 
         for (name_bytes, value) in xobject_dict.iter() {
-            // XObjectの実体を取得してSubtype=Imageかチェック
-            let obj_dict = match value {
-                lopdf::Object::Reference(id) => {
-                    &self
-                        .doc
-                        .get_object(*id)
-                        .and_then(lopdf::Object::as_stream)?
-                        .dict
-                }
-                lopdf::Object::Stream(s) => &s.dict,
+            let stream = match value {
+                lopdf::Object::Reference(id) => self
+                    .doc
+                    .get_object(*id)
+                    .and_then(lopdf::Object::as_stream)?,
+                lopdf::Object::Stream(s) => s,
                 _ => continue,
             };
-            #[allow(clippy::collapsible_if)]
-            if let Ok(subtype) = obj_dict.get(b"Subtype").and_then(lopdf::Object::as_name) {
-                if subtype == b"Image" {
-                    let name = String::from_utf8_lossy(name_bytes);
-                    names.push(name.into_owned());
-                }
+
+            if let Ok(subtype) = stream.dict.get(b"Subtype").and_then(lopdf::Object::as_name)
+                && subtype == b"Image"
+            {
+                let name = String::from_utf8_lossy(name_bytes).into_owned();
+                f(name, stream);
             }
         }
 
+        Ok(())
+    }
+
+    /// リソース辞書からXObject/Image名を収集する。
+    fn collect_image_names_from_dict(
+        &self,
+        dict: &lopdf::Dictionary,
+    ) -> crate::error::Result<Vec<String>> {
+        let mut names = Vec::new();
+        self.for_each_image_xobject(dict, |name, _stream| {
+            names.push(name);
+        })?;
         Ok(names)
     }
 
@@ -129,37 +140,9 @@ impl PdfReader {
         dict: &lopdf::Dictionary,
         streams: &mut HashMap<String, lopdf::Stream>,
     ) -> crate::error::Result<()> {
-        let xobject_entry = match dict.get(b"XObject") {
-            Ok(entry) => entry,
-            Err(_) => return Ok(()),
-        };
-
-        let xobject_dict = match xobject_entry {
-            lopdf::Object::Dictionary(d) => d,
-            lopdf::Object::Reference(id) => {
-                self.doc.get_object(*id).and_then(lopdf::Object::as_dict)?
-            }
-            _ => return Ok(()),
-        };
-
-        for (name_bytes, value) in xobject_dict.iter() {
-            let stream = match value {
-                lopdf::Object::Reference(id) => self
-                    .doc
-                    .get_object(*id)
-                    .and_then(lopdf::Object::as_stream)?,
-                lopdf::Object::Stream(s) => s,
-                _ => continue,
-            };
-
-            if let Ok(subtype) = stream.dict.get(b"Subtype").and_then(lopdf::Object::as_name)
-                && subtype == b"Image"
-            {
-                let name = String::from_utf8_lossy(name_bytes).into_owned();
-                streams.insert(name, stream.clone());
-            }
-        }
-
+        self.for_each_image_xobject(dict, |name, stream| {
+            streams.insert(name, stream.clone());
+        })?;
         Ok(())
     }
 
