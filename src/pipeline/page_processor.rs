@@ -89,17 +89,15 @@ pub fn process_page_outlines(
     })
 }
 
-/// Process a single page: check cache -> MRC compose -> store in cache.
+/// Process a single page: check cache -> mode-specific composition -> store in cache.
 ///
-/// `content_stream` is used with settings to compute the cache key.
-/// `pdf_path` and `page_index` are included in the cache key to prevent
-/// collisions across different PDFs.
-/// If cache hits and dimensions match the bitmap, return cached layers.
-/// Otherwise run MRC compose.
-/// Process a single page: check cache -> compose_text_masked -> fallback to compose.
+/// Cache key is computed from content_stream, settings, pdf_path, and page_index.
+/// If cache hits and dimensions match the bitmap, return cached output.
+/// Otherwise, perform mode-specific composition:
 ///
-/// Rgb/Grayscale: compose_text_masked を試行し、失敗時は compose (全面MRC) にフォールバック。
-/// Bw: compose_bw で全面 JBIG2。
+/// - Skip: Return empty ProcessedPage without MRC encoding
+/// - Bw: Full-page JBIG2 encoding via compose_bw
+/// - Rgb/Grayscale: Try compose_text_masked (text-only JPEG); fallback to compose (full-page MRC) on failure
 #[allow(clippy::too_many_arguments)]
 pub fn process_page(
     page_index: u32,
