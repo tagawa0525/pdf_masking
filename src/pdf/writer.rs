@@ -7,7 +7,9 @@ use tracing::debug;
 
 use crate::config::job::ColorMode;
 use crate::error::PdfMaskError;
-use crate::mrc::{BwLayers, ImageModification, MrcLayers, TextMaskedData, TextRegionCrop};
+#[cfg(feature = "mrc")]
+use crate::mrc::{BwLayers, MrcLayers};
+use crate::mrc::{ImageModification, TextMaskedData, TextRegionCrop};
 
 /// PDF Name仕様 (PDF Reference 7.3.5) に従い、名前をエスケープする。
 ///
@@ -229,6 +231,7 @@ impl MrcPageWriter {
     }
 
     /// MrcLayersからPDFページを構築する。
+    #[cfg(feature = "mrc")]
     pub fn write_mrc_page(&mut self, layers: &MrcLayers) -> crate::error::Result<lopdf::ObjectId> {
         let width = layers.width;
         let height = layers.height;
@@ -285,6 +288,7 @@ impl MrcPageWriter {
     }
 
     /// BwLayersからPDFページを構築する（JBIG2マスクのみ）。
+    #[cfg(feature = "mrc")]
     pub fn write_bw_page(&mut self, layers: &BwLayers) -> crate::error::Result<lopdf::ObjectId> {
         let width = layers.width;
         let height = layers.height;

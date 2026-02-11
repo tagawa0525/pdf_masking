@@ -1,7 +1,9 @@
+#[cfg(feature = "mrc")]
 use std::env;
 
 /// Helper to read a required environment variable, emitting a clear
 /// `cargo:warning` before panicking so the user sees actionable guidance.
+#[cfg(feature = "mrc")]
 fn require_env(name: &str) -> String {
     match env::var(name) {
         Ok(v) => v,
@@ -18,7 +20,8 @@ fn require_env(name: &str) -> String {
     }
 }
 
-fn main() {
+#[cfg(feature = "mrc")]
+fn build_jbig2enc_shim() {
     // --- jbig2enc C++ shim ---
     let jbig2enc_include = require_env("JBIG2ENC_INCLUDE_PATH");
     let jbig2enc_lib = require_env("JBIG2ENC_LIB_PATH");
@@ -56,4 +59,9 @@ fn main() {
     println!("cargo:rerun-if-env-changed=JBIG2ENC_INCLUDE_PATH");
     println!("cargo:rerun-if-env-changed=JBIG2ENC_LIB_PATH");
     println!("cargo:rerun-if-env-changed=LEPTONICA_INCLUDE_PATH");
+}
+
+fn main() {
+    #[cfg(feature = "mrc")]
+    build_jbig2enc_shim();
 }

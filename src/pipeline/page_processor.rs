@@ -3,16 +3,18 @@
 use std::collections::HashMap;
 use std::path::Path;
 
+#[cfg(feature = "mrc")]
 use image::DynamicImage;
 use tracing::{debug, warn};
 
 use crate::cache::hash::{CacheSettings, compute_cache_key};
 use crate::cache::store::CacheStore;
 use crate::config::job::ColorMode;
+#[cfg(feature = "mrc")]
 use crate::mrc::compositor::{
-    MrcConfig, TextMaskedParams, TextOutlinesParams, compose, compose_bw, compose_text_masked,
-    compose_text_outlines,
+    MrcConfig, TextMaskedParams, compose, compose_bw, compose_text_masked,
 };
+use crate::mrc::compositor::{TextOutlinesParams, compose_text_outlines};
 use crate::mrc::{PageOutput, SkipData};
 use crate::pdf::font::ParsedFont;
 
@@ -137,6 +139,7 @@ pub fn process_page_outlines(
 }
 
 /// Parameters for [`process_page`].
+#[cfg(feature = "mrc")]
 pub struct ProcessPageParams<'a> {
     pub page_index: u32,
     pub bitmap: &'a DynamicImage,
@@ -150,6 +153,7 @@ pub struct ProcessPageParams<'a> {
     pub page_height_pts: f64,
 }
 
+#[cfg(feature = "mrc")]
 impl ProcessPageParams<'_> {
     /// Process a single page: check cache -> mode-specific composition -> store in cache.
     ///
@@ -272,6 +276,7 @@ impl ProcessPageParams<'_> {
 /// Process a single page (backward-compatible wrapper).
 ///
 /// Prefer constructing [`ProcessPageParams`] and calling [`ProcessPageParams::process`].
+#[cfg(feature = "mrc")]
 #[allow(clippy::too_many_arguments)]
 pub fn process_page(
     page_index: u32,

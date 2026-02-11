@@ -1,3 +1,5 @@
+#![cfg(feature = "mrc")]
+
 use pdf_masking::ffi::leptonica::Pix;
 
 #[test]

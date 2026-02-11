@@ -292,6 +292,7 @@ pub fn strip_text_operators(content_bytes: &[u8]) -> crate::error::Result<Vec<u8
 ///
 /// # Returns
 /// PDFポイント座標のBBox
+#[cfg(feature = "mrc")]
 pub fn pixel_to_page_coords(
     pixel_bbox: &crate::mrc::segmenter::PixelBBox,
     page_width_pts: f64,

@@ -4,18 +4,24 @@ use std::collections::HashMap;
 
 use tracing::debug;
 
-use super::{
-    BwLayers, ImageModification, MrcLayers, TextMaskedData, TextRegionCrop, jbig2, jpeg, segmenter,
-};
+// 常時有効
+use super::{ImageModification, TextMaskedData, TextRegionCrop, jpeg};
 use crate::config::job::ColorMode;
 use crate::error::PdfMaskError;
-use crate::mrc::segmenter::PixelBBox;
 use crate::pdf::content_stream::{
-    extract_white_fill_rects, extract_xobject_placements, pixel_to_page_coords,
-    strip_text_operators,
+    extract_white_fill_rects, extract_xobject_placements, strip_text_operators,
 };
 use crate::pdf::font::ParsedFont;
 use crate::pdf::image_xobject::{bbox_overlaps, redact_image_regions};
+
+// MRC専用
+#[cfg(feature = "mrc")]
+use super::{BwLayers, MrcLayers, jbig2, segmenter};
+#[cfg(feature = "mrc")]
+use crate::mrc::segmenter::PixelBBox;
+#[cfg(feature = "mrc")]
+use crate::pdf::content_stream::pixel_to_page_coords;
+#[cfg(feature = "mrc")]
 use image::{DynamicImage, RgbaImage};
 
 /// テキスト領域のマージ距離（px）。近接する矩形を結合してXObject数を削減する。
@@ -46,6 +52,7 @@ pub struct MrcConfig {
 /// * `page_height_pts` - Original page height in PDF points
 /// * `config`    - Quality settings for the output layers
 /// * `color_mode` - RGB, Grayscale, or Bw
+#[cfg(feature = "mrc")]
 pub fn compose(
     rgba_data: &[u8],
     width: u32,
@@ -101,6 +108,7 @@ pub fn compose(
 }
 
 /// BWモード: segmenter + JBIG2のみ。JPEG層なし。
+#[cfg(feature = "mrc")]
 pub fn compose_bw(
     rgba_data: &[u8],
     width: u32,
@@ -122,6 +130,7 @@ pub fn compose_bw(
 }
 
 /// JBIG2エンコードされたテキスト領域クロップ結果: `(jbig2_data, pixel_bbox)`.
+#[cfg(feature = "mrc")]
 pub type CroppedJbig2Region = (Vec<u8>, PixelBBox);
 
 /// テキスト領域をJBIG2マスクからクロップし、各領域をJBIG2エンコードする。
@@ -134,6 +143,7 @@ pub type CroppedJbig2Region = (Vec<u8>, PixelBBox);
 ///
 /// # Returns
 /// 各領域のJBIG2データとピクセルBBoxのペアリスト
+#[cfg(feature = "mrc")]
 pub fn crop_text_regions_jbig2(
     text_mask: &crate::ffi::leptonica::Pix,
     bboxes: &[PixelBBox],
@@ -155,6 +165,7 @@ pub fn crop_text_regions_jbig2(
 }
 
 /// テキスト選択的ラスタライズの入力パラメータ。
+#[cfg(feature = "mrc")]
 pub struct TextMaskedParams<'a> {
     /// 元のコンテンツストリーム
     pub content_bytes: &'a [u8],
@@ -218,6 +229,7 @@ fn detect_and_redact_images(
 /// 1. コンテンツストリームからBT...ETブロックを除去
 /// 2. 白色fill矩形と重なる画像をリダクション
 /// 3. ビットマップからテキスト領域を抽出・JBIG2化
+#[cfg(feature = "mrc")]
 pub fn compose_text_masked(params: &TextMaskedParams) -> crate::error::Result<TextMaskedData> {
     // 1. テキスト除去済みコンテンツストリーム
     let stripped_content_stream = strip_text_operators(params.content_bytes)?;

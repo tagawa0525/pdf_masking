@@ -99,6 +99,7 @@ impl From<serde_yml::Error> for PdfMaskError {
     }
 }
 
+#[cfg(feature = "mrc")]
 impl From<pdfium_render::prelude::PdfiumError> for PdfMaskError {
     fn from(e: pdfium_render::prelude::PdfiumError) -> Self {
         Self::RenderError(e.to_string())

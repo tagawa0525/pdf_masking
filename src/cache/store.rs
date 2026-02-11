@@ -11,9 +11,9 @@ use tracing::debug;
 
 use crate::config::job::ColorMode;
 use crate::error::PdfMaskError;
-use crate::mrc::{
-    BwLayers, ImageModification, MrcLayers, PageOutput, TextMaskedData, TextRegionCrop,
-};
+#[cfg(feature = "mrc")]
+use crate::mrc::{BwLayers, MrcLayers};
+use crate::mrc::{ImageModification, PageOutput, TextMaskedData, TextRegionCrop};
 use crate::pdf::content_stream::BBox;
 use serde_json;
 use std::fs;
@@ -33,6 +33,7 @@ impl<T, E: std::fmt::Display> CacheResultExt<T> for std::result::Result<T, E> {
 }
 
 /// MRC用キャッシュエントリの必須ファイル。
+#[cfg(feature = "mrc")]
 const MRC_CACHE_FILES: &[&str] = &[
     "mask.jbig2",
     "foreground.jpg",
@@ -41,6 +42,7 @@ const MRC_CACHE_FILES: &[&str] = &[
 ];
 
 /// BW用キャッシュエントリの必須ファイル。
+#[cfg(feature = "mrc")]
 const BW_CACHE_FILES: &[&str] = &["mask.jbig2", "metadata.json"];
 
 /// ファイルシステムベースのキャッシュストア。
@@ -167,11 +169,13 @@ impl CacheStore {
                 let (w, h) = bitmap_dims.unwrap_or((0, 0));
                 self.store_text_masked(key, data, w, h)
             }
+            #[cfg(feature = "mrc")]
             PageOutput::Mrc(_) | PageOutput::BwMask(_) => self.store_mrc_or_bw(key, output),
         }
     }
 
     /// MRC または BW の PageOutput をキャッシュに保存する。
+    #[cfg(feature = "mrc")]
     fn store_mrc_or_bw(&self, key: &str, output: &PageOutput) -> crate::error::Result<()> {
         let (mask_jbig2, fg, bg, width, height, page_width_pts, page_height_pts, mode) =
             match output {
@@ -352,7 +356,14 @@ impl CacheStore {
             return self.retrieve_text_masked(&dir, &metadata);
         }
 
-        self.retrieve_mrc_or_bw(&dir, &metadata, expected_mode)
+        #[cfg(feature = "mrc")]
+        {
+            self.retrieve_mrc_or_bw(&dir, &metadata, expected_mode)
+        }
+        #[cfg(not(feature = "mrc"))]
+        {
+            Ok(None)
+        }
     }
 
     /// メタデータを読み取り、キー・カラーモード・寸法の検証を行う。
@@ -390,6 +401,7 @@ impl CacheStore {
     }
 
     /// MRC または BW キャッシュエントリを読み込む。
+    #[cfg(feature = "mrc")]
     fn retrieve_mrc_or_bw(
         &self,
         dir: &Path,
@@ -510,13 +522,20 @@ impl CacheStore {
             return true;
         }
 
-        let required_files = if metadata.color_mode == "bw" {
-            BW_CACHE_FILES
-        } else {
-            MRC_CACHE_FILES
-        };
+        #[cfg(feature = "mrc")]
+        {
+            let required_files = if metadata.color_mode == "bw" {
+                BW_CACHE_FILES
+            } else {
+                MRC_CACHE_FILES
+            };
 
-        required_files.iter().all(|f| dir.join(f).exists())
+            required_files.iter().all(|f| dir.join(f).exists())
+        }
+        #[cfg(not(feature = "mrc"))]
+        {
+            false
+        }
     }
 }
 

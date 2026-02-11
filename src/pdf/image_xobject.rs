@@ -1,7 +1,9 @@
 // Phase 7: 画像XObjectのデコード/再エンコード、重なり検出・塗りつぶし
 
 use crate::error::PdfMaskError;
-use crate::mrc::{jbig2, jpeg};
+#[cfg(feature = "mrc")]
+use crate::mrc::jbig2;
+use crate::mrc::jpeg;
 use crate::pdf::content_stream::BBox;
 use flate2::read::ZlibDecoder;
 use image::{DynamicImage, GrayImage, RgbImage};
@@ -421,6 +423,7 @@ fn flate_encode(data: &[u8]) -> crate::error::Result<Vec<u8>> {
 /// # Returns
 /// * `None` - 元のサイズより小さくならない
 /// * `Some(OptimizedImage)` - 最適圧縮済みデータ
+#[cfg(feature = "mrc")]
 pub fn optimize_image_encoding(
     decoded: &DynamicImage,
     original_size: usize,
@@ -498,7 +501,7 @@ pub fn optimize_image_encoding(
     Ok(result)
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "mrc"))]
 mod tests {
     use super::*;
     use lopdf::{Stream, dictionary};
