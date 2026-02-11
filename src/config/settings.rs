@@ -13,9 +13,7 @@ pub struct Settings {
     pub fg_quality: u8,
     pub parallel_workers: usize,
     pub cache_dir: PathBuf,
-    pub preserve_images: bool,
     pub linearize: bool,
-    pub text_to_outlines: bool,
 }
 
 impl Default for Settings {
@@ -28,9 +26,7 @@ impl Default for Settings {
             fg_quality: 30,
             parallel_workers: 0,
             cache_dir: PathBuf::from(".cache"),
-            preserve_images: true,
             linearize: true,
-            text_to_outlines: false,
         }
     }
 }

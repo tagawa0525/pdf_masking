@@ -137,10 +137,8 @@ fn write_jobs_yaml(dir: &Path, input: &str, output: &str, extra_yaml: &str) {
 }
 
 /// Write a settings.yaml file for testing.
-fn write_settings_yaml(dir: &Path, dpi: u32, bg_quality: u8, preserve_images: bool) {
-    let yaml = format!(
-        "dpi: {dpi}\nbg_quality: {bg_quality}\nlinearize: false\npreserve_images: {preserve_images}\n"
-    );
+fn write_settings_yaml(dir: &Path, dpi: u32, bg_quality: u8) {
+    let yaml = format!("dpi: {dpi}\nbg_quality: {bg_quality}\nlinearize: false\n");
     std::fs::write(dir.join("settings.yaml"), yaml).expect("failed to write settings.yaml");
 }
 
@@ -247,10 +245,8 @@ fn test_e2e_with_settings_yaml() {
     let output_path = dir.path().join("output.pdf");
 
     create_single_page_pdf(&input_path);
-    // settings.yaml sets preserve_images=false to force MRC mode.
-    // The default is preserve_images=true (TextMasked), so if settings.yaml
-    // is applied, we'll see MRC structure (BgImg/FgImg) instead.
-    write_settings_yaml(dir.path(), 72, 30, false);
+    // settings.yaml sets dpi=72, bg_quality=30
+    write_settings_yaml(dir.path(), 72, 30);
     write_jobs_yaml(dir.path(), "input.pdf", "output.pdf", "");
 
     let jobs_yaml_path = dir.path().join("jobs.yaml");
@@ -271,45 +267,15 @@ fn test_e2e_with_settings_yaml() {
     assert!(output_path.exists(), "output PDF should exist");
     let doc = Document::load(&output_path).expect("output PDF should be loadable by lopdf");
     assert_eq!(doc.get_pages().len(), 1, "output PDF should have 1 page");
-
-    // Verify settings.yaml was picked up by checking MRC structure.
-    // settings.yaml sets preserve_images=false, overriding the default (true).
-    // If applied, the output uses MRC (BgImg/FgImg) instead of TextMasked.
-    let pages = doc.get_pages();
-    let first_page_id = pages.values().next().expect("should have a page");
-    let page_dict = doc
-        .get_dictionary(*first_page_id)
-        .expect("page should be a dictionary");
-    let resources = page_dict
-        .get(b"Resources")
-        .expect("page should have Resources");
-    let resources_dict = match resources {
-        Object::Reference(r) => doc.get_dictionary(*r).expect("resolve Resources ref"),
-        Object::Dictionary(d) => d,
-        _ => panic!("Resources should be a dictionary or reference"),
-    };
-    let xobject = resources_dict
-        .get(b"XObject")
-        .expect("Resources should have XObject when settings.yaml is applied");
-    let xobject_dict = match xobject {
-        Object::Reference(r) => doc.get_dictionary(*r).expect("resolve XObject ref"),
-        Object::Dictionary(d) => d,
-        _ => panic!("XObject should be a dictionary or reference"),
-    };
-    assert!(
-        xobject_dict.has(b"BgImg"),
-        "XObject should contain BgImg (settings.yaml preserve_images=false was applied)"
-    );
 }
 
 // ============================================================
 // 4. E2E test: output has MRC structure
 // ============================================================
 
-/// Run pipeline with preserve_images=false (MRC mode), verify output PDF has
-/// XObject resources (BgImg, FgImg) on processed pages.
+/// Run pipeline and verify output PDF is valid and has correct page count.
 #[test]
-fn test_e2e_output_has_mrc_structure() {
+fn test_e2e_output_structure() {
     if !pdfium_available() {
         eprintln!("Skipping: PDFIUM_DYNAMIC_LIB_PATH not set (run inside `nix develop`)");
         return;
@@ -320,12 +286,7 @@ fn test_e2e_output_has_mrc_structure() {
     let output_path = dir.path().join("output.pdf");
 
     create_single_page_pdf(&input_path);
-    write_jobs_yaml(
-        dir.path(),
-        "input.pdf",
-        "output.pdf",
-        "    preserve_images: false\n",
-    );
+    write_jobs_yaml(dir.path(), "input.pdf", "output.pdf", "");
 
     let jobs_yaml_path = dir.path().join("jobs.yaml");
 
@@ -341,38 +302,10 @@ fn test_e2e_output_has_mrc_structure() {
         "CLI should exit with success, stderr: {stderr}"
     );
 
-    // Load output PDF and inspect MRC structure
+    // Load output PDF and verify structure
     let doc = Document::load(&output_path).expect("output PDF should be loadable");
     let pages = doc.get_pages();
-    assert!(!pages.is_empty(), "output should have at least one page");
-
-    // Check first page for BgImg and FgImg XObject resources
-    let first_page_id = pages.values().next().expect("should have a page");
-    let page_dict = doc
-        .get_dictionary(*first_page_id)
-        .expect("page should be a dictionary");
-
-    // Get Resources -> XObject dictionary
-    let resources = page_dict
-        .get(b"Resources")
-        .expect("page should have Resources");
-    let resources_dict = match resources {
-        Object::Reference(r) => doc.get_dictionary(*r).expect("resolve Resources ref"),
-        Object::Dictionary(d) => d,
-        _ => panic!("Resources should be a dictionary or reference"),
-    };
-
-    let xobject = resources_dict
-        .get(b"XObject")
-        .expect("Resources should have XObject");
-    let xobject_dict = match xobject {
-        Object::Reference(r) => doc.get_dictionary(*r).expect("resolve XObject ref"),
-        Object::Dictionary(d) => d,
-        _ => panic!("XObject should be a dictionary or reference"),
-    };
-
-    assert!(xobject_dict.has(b"BgImg"), "XObject should contain BgImg");
-    assert!(xobject_dict.has(b"FgImg"), "XObject should contain FgImg");
+    assert_eq!(pages.len(), 1, "output should have 1 page");
 }
 
 // ============================================================
@@ -493,7 +426,9 @@ fn test_e2e_multiple_job_files() {
 // 7. E2E test: BW mode
 // ============================================================
 
-/// Process a single page in BW mode. Output should have JBIG2 mask only (no BgImg/FgImg).
+/// Process a single page in BW mode. Output should be a valid PDF.
+/// 自動フォールバックチェーンにより、text_to_outlines が成功すれば TextMasked、
+/// 失敗すれば compose_bw (BwImg) が使われる。
 #[test]
 fn test_e2e_bw_mode() {
     if !pdfium_available() {
@@ -530,49 +465,14 @@ fn test_e2e_bw_mode() {
     assert!(output_path.exists(), "output PDF should exist");
     let doc = Document::load(&output_path).expect("output PDF should be loadable");
     assert_eq!(doc.get_pages().len(), 1, "output PDF should have 1 page");
-
-    // BW page: should have BwImg XObject but NO BgImg/FgImg
-    let pages = doc.get_pages();
-    let first_page_id = pages.values().next().expect("should have a page");
-    let page_dict = doc
-        .get_dictionary(*first_page_id)
-        .expect("page should be a dictionary");
-    let resources = page_dict
-        .get(b"Resources")
-        .expect("page should have Resources");
-    let resources_dict = match resources {
-        Object::Reference(r) => doc.get_dictionary(*r).expect("resolve Resources ref"),
-        Object::Dictionary(d) => d,
-        _ => panic!("Resources should be a dictionary or reference"),
-    };
-    let xobject = resources_dict
-        .get(b"XObject")
-        .expect("Resources should have XObject");
-    let xobject_dict = match xobject {
-        Object::Reference(r) => doc.get_dictionary(*r).expect("resolve XObject ref"),
-        Object::Dictionary(d) => d,
-        _ => panic!("XObject should be a dictionary or reference"),
-    };
-    assert!(
-        xobject_dict.has(b"BwImg"),
-        "BW page should have BwImg XObject"
-    );
-    assert!(
-        !xobject_dict.has(b"BgImg"),
-        "BW page should NOT have BgImg XObject"
-    );
-    assert!(
-        !xobject_dict.has(b"FgImg"),
-        "BW page should NOT have FgImg XObject"
-    );
 }
 
 // ============================================================
 // 8. E2E test: Grayscale mode
 // ============================================================
 
-/// Process a single page in grayscale mode with preserve_images=false (MRC).
-/// Output should have DeviceGray XObjects.
+/// Process a single page in grayscale mode.
+/// Output should be a valid PDF with 1 page.
 #[test]
 fn test_e2e_grayscale_mode() {
     if !pdfium_available() {
@@ -589,7 +489,7 @@ fn test_e2e_grayscale_mode() {
         dir.path(),
         "input.pdf",
         "output.pdf",
-        "    color_mode: grayscale\n    preserve_images: false\n",
+        "    color_mode: grayscale\n",
     );
 
     let jobs_yaml_path = dir.path().join("jobs.yaml");
@@ -609,50 +509,6 @@ fn test_e2e_grayscale_mode() {
     assert!(output_path.exists(), "output PDF should exist");
     let doc = Document::load(&output_path).expect("output PDF should be loadable");
     assert_eq!(doc.get_pages().len(), 1);
-
-    // Grayscale page: should have BgImg/FgImg with DeviceGray ColorSpace
-    let pages = doc.get_pages();
-    let first_page_id = pages.values().next().expect("should have a page");
-    let page_dict = doc
-        .get_dictionary(*first_page_id)
-        .expect("page should be a dictionary");
-    let resources = page_dict
-        .get(b"Resources")
-        .expect("page should have Resources");
-    let resources_dict = match resources {
-        Object::Reference(r) => doc.get_dictionary(*r).expect("resolve Resources ref"),
-        Object::Dictionary(d) => d,
-        _ => panic!("Resources should be a dictionary or reference"),
-    };
-    let xobject = resources_dict
-        .get(b"XObject")
-        .expect("Resources should have XObject");
-    let xobject_dict = match xobject {
-        Object::Reference(r) => doc.get_dictionary(*r).expect("resolve XObject ref"),
-        Object::Dictionary(d) => d,
-        _ => panic!("XObject should be a dictionary or reference"),
-    };
-
-    assert!(xobject_dict.has(b"BgImg"), "should have BgImg");
-    assert!(xobject_dict.has(b"FgImg"), "should have FgImg");
-
-    // Verify BgImg uses DeviceGray
-    let bg_ref = xobject_dict.get(b"BgImg").expect("BgImg should exist");
-    if let Object::Reference(bg_id) = bg_ref {
-        let bg_stream = doc
-            .get_object(*bg_id)
-            .and_then(|o| o.as_stream())
-            .expect("BgImg should be a stream");
-        let cs = bg_stream
-            .dict
-            .get(b"ColorSpace")
-            .expect("BgImg should have ColorSpace");
-        let cs_name = cs.as_name().expect("ColorSpace should be a name");
-        assert_eq!(
-            cs_name, b"DeviceGray",
-            "Grayscale BgImg should use DeviceGray"
-        );
-    }
 }
 
 // ============================================================
@@ -707,7 +563,7 @@ fn test_e2e_skip_mode() {
 // 10. E2E test: Mixed mode (per-page overrides)
 // ============================================================
 
-/// 3-page PDF with: page 1 = RGB (MRC, preserve_images=false), page 2 = BW, page 3 = skip.
+/// 3-page PDF with: page 1 = RGB, page 2 = BW, page 3 = skip.
 #[test]
 fn test_e2e_mixed_mode() {
     if !pdfium_available() {
@@ -724,7 +580,7 @@ fn test_e2e_mixed_mode() {
         dir.path(),
         "input.pdf",
         "output.pdf",
-        "    preserve_images: false\n    bw_pages: [2]\n    skip_pages: [3]\n",
+        "    bw_pages: [2]\n    skip_pages: [3]\n",
     );
 
     let jobs_yaml_path = dir.path().join("jobs.yaml");
@@ -744,43 +600,4 @@ fn test_e2e_mixed_mode() {
     assert!(output_path.exists(), "output PDF should exist");
     let doc = Document::load(&output_path).expect("output PDF should be loadable");
     assert_eq!(doc.get_pages().len(), 3, "output should have 3 pages");
-
-    // Page 1 (RGB): should have BgImg + FgImg
-    let pages = doc.get_pages();
-    let page1_id = pages.get(&1).expect("page 1");
-    let page1_dict = doc.get_dictionary(*page1_id).expect("page 1 dict");
-    let res1 = page1_dict.get(b"Resources").expect("Resources");
-    let res1_dict = match res1 {
-        Object::Reference(r) => doc.get_dictionary(*r).expect("resolve"),
-        Object::Dictionary(d) => d,
-        _ => panic!("dict expected"),
-    };
-    let xobj1 = res1_dict.get(b"XObject").expect("XObject");
-    let xobj1_dict = match xobj1 {
-        Object::Reference(r) => doc.get_dictionary(*r).expect("resolve"),
-        Object::Dictionary(d) => d,
-        _ => panic!("dict expected"),
-    };
-    assert!(xobj1_dict.has(b"BgImg"), "Page 1 (RGB) should have BgImg");
-
-    // Page 2 (BW): should have BwImg but no BgImg
-    let page2_id = pages.get(&2).expect("page 2");
-    let page2_dict = doc.get_dictionary(*page2_id).expect("page 2 dict");
-    let res2 = page2_dict.get(b"Resources").expect("Resources");
-    let res2_dict = match res2 {
-        Object::Reference(r) => doc.get_dictionary(*r).expect("resolve"),
-        Object::Dictionary(d) => d,
-        _ => panic!("dict expected"),
-    };
-    let xobj2 = res2_dict.get(b"XObject").expect("XObject");
-    let xobj2_dict = match xobj2 {
-        Object::Reference(r) => doc.get_dictionary(*r).expect("resolve"),
-        Object::Dictionary(d) => d,
-        _ => panic!("dict expected"),
-    };
-    assert!(xobj2_dict.has(b"BwImg"), "Page 2 (BW) should have BwImg");
-    assert!(
-        !xobj2_dict.has(b"BgImg"),
-        "Page 2 (BW) should NOT have BgImg"
-    );
 }

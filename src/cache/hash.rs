@@ -18,7 +18,6 @@ pub struct CacheSettings {
     pub fg_dpi: u32,
     pub bg_quality: u8,
     pub fg_quality: u8,
-    pub preserve_images: bool,
     pub color_mode: ColorMode,
 }
 
@@ -36,10 +35,6 @@ fn settings_to_canonical_json(settings: &CacheSettings) -> String {
     map.insert("dpi", serde_json::json!(settings.dpi));
     map.insert("fg_dpi", serde_json::json!(settings.fg_dpi));
     map.insert("fg_quality", serde_json::json!(settings.fg_quality));
-    map.insert(
-        "preserve_images",
-        serde_json::json!(settings.preserve_images),
-    );
     serde_json::to_string(&map).expect("serializing primitive cache settings to JSON must not fail")
 }
 
@@ -77,7 +72,6 @@ mod tests {
             fg_dpi: 150,
             bg_quality: 50,
             fg_quality: 30,
-            preserve_images: false,
             color_mode: ColorMode::Rgb,
         };
 
@@ -86,7 +80,7 @@ mod tests {
         // Verify the exact JSON output
         assert_eq!(
             json,
-            "{\"bg_quality\":50,\"color_mode\":\"rgb\",\"dpi\":300,\"fg_dpi\":150,\"fg_quality\":30,\"preserve_images\":false}"
+            "{\"bg_quality\":50,\"color_mode\":\"rgb\",\"dpi\":300,\"fg_dpi\":150,\"fg_quality\":30}"
         );
 
         // Verify keys are in alphabetical order by extracting them
@@ -111,7 +105,6 @@ mod tests {
             fg_dpi: 300,
             bg_quality: 80,
             fg_quality: 60,
-            preserve_images: true,
             color_mode: ColorMode::Rgb,
         };
 
@@ -119,7 +112,7 @@ mod tests {
 
         assert_eq!(
             json,
-            "{\"bg_quality\":80,\"color_mode\":\"rgb\",\"dpi\":600,\"fg_dpi\":300,\"fg_quality\":60,\"preserve_images\":true}"
+            "{\"bg_quality\":80,\"color_mode\":\"rgb\",\"dpi\":600,\"fg_dpi\":300,\"fg_quality\":60}"
         );
     }
 }

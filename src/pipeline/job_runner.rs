@@ -26,9 +26,7 @@ pub struct JobConfig {
     pub dpi: u32,
     pub bg_quality: u8,
     pub fg_quality: u8,
-    pub preserve_images: bool,
     pub cache_dir: Option<PathBuf>,
-    pub text_to_outlines: bool,
 }
 
 /// Result of processing a single job.
@@ -100,8 +98,7 @@ pub fn run_job(config: &JobConfig) -> crate::error::Result<JobResult> {
     for &(page_idx, mode) in &non_skip {
         let page_num = page_idx + 1;
         let content = reader.page_content_stream(page_num)?;
-        let image_streams = if config.preserve_images
-            && matches!(mode, ColorMode::Rgb | ColorMode::Grayscale | ColorMode::Bw)
+        let image_streams = if matches!(mode, ColorMode::Rgb | ColorMode::Grayscale | ColorMode::Bw)
         {
             let streams = reader.page_image_streams(page_num)?;
             if streams.is_empty() {
@@ -112,11 +109,7 @@ pub fn run_job(config: &JobConfig) -> crate::error::Result<JobResult> {
         } else {
             None
         };
-        // text_to_outlines=true かつ RGB/Grayscale/Bw → フォント解析
-        let fonts = if config.text_to_outlines
-            && config.preserve_images
-            && matches!(mode, ColorMode::Rgb | ColorMode::Grayscale | ColorMode::Bw)
-        {
+        let fonts = if matches!(mode, ColorMode::Rgb | ColorMode::Grayscale | ColorMode::Bw) {
             crate::pdf::font::parse_page_fonts(reader.document(), page_num).ok()
         } else {
             None
@@ -137,13 +130,10 @@ pub fn run_job(config: &JobConfig) -> crate::error::Result<JobResult> {
     let mut needs_rendering: Vec<ContentStreamData> = Vec::new();
 
     for cs in content_streams {
-        let eligible = config.text_to_outlines
-            && config.preserve_images
-            && matches!(
-                cs.mode,
-                ColorMode::Rgb | ColorMode::Grayscale | ColorMode::Bw
-            )
-            && cs.fonts.is_some();
+        let eligible = matches!(
+            cs.mode,
+            ColorMode::Rgb | ColorMode::Grayscale | ColorMode::Bw
+        ) && cs.fonts.is_some();
 
         if eligible {
             let cache_settings = CacheSettings {
@@ -151,7 +141,6 @@ pub fn run_job(config: &JobConfig) -> crate::error::Result<JobResult> {
                 fg_dpi: config.dpi,
                 bg_quality: config.bg_quality,
                 fg_quality: config.fg_quality,
-                preserve_images: config.preserve_images,
                 color_mode: cs.mode,
             };
             let result = process_page_outlines(
@@ -204,7 +193,6 @@ pub fn run_job(config: &JobConfig) -> crate::error::Result<JobResult> {
                 fg_dpi: config.dpi,
                 bg_quality: config.bg_quality,
                 fg_quality: config.fg_quality,
-                preserve_images: config.preserve_images,
                 color_mode: pd.mode,
             };
             process_page(
@@ -216,8 +204,6 @@ pub fn run_job(config: &JobConfig) -> crate::error::Result<JobResult> {
                 cache_store.as_ref(),
                 &config.input_path,
                 pd.image_streams.as_ref(),
-                false,
-                None,
             )
         })
         .collect();

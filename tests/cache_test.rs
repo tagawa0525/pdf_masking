@@ -24,7 +24,6 @@ fn test_compute_cache_key() {
         fg_dpi: 150,
         bg_quality: 50,
         fg_quality: 30,
-        preserve_images: false,
         color_mode: ColorMode::Rgb,
     };
 
@@ -47,7 +46,6 @@ fn test_cache_key_deterministic() {
         fg_dpi: 150,
         bg_quality: 50,
         fg_quality: 30,
-        preserve_images: false,
         color_mode: ColorMode::Rgb,
     };
 
@@ -65,7 +63,6 @@ fn test_cache_key_differs_with_different_content() {
         fg_dpi: 150,
         bg_quality: 50,
         fg_quality: 30,
-        preserve_images: false,
         color_mode: ColorMode::Rgb,
     };
 
@@ -88,7 +85,6 @@ fn test_cache_key_differs_with_different_settings() {
         fg_dpi: 150,
         bg_quality: 50,
         fg_quality: 30,
-        preserve_images: false,
         color_mode: ColorMode::Rgb,
     };
     let settings_b = CacheSettings {
@@ -96,7 +92,6 @@ fn test_cache_key_differs_with_different_settings() {
         fg_dpi: 300,
         bg_quality: 80,
         fg_quality: 60,
-        preserve_images: true,
         color_mode: ColorMode::Rgb,
     };
 
@@ -118,7 +113,6 @@ fn test_cache_key_differs_with_different_pdf_path() {
         fg_dpi: 150,
         bg_quality: 50,
         fg_quality: 30,
-        preserve_images: false,
         color_mode: ColorMode::Rgb,
     };
 
@@ -140,7 +134,6 @@ fn test_cache_key_differs_with_different_page_index() {
         fg_dpi: 150,
         bg_quality: 50,
         fg_quality: 30,
-        preserve_images: false,
         color_mode: ColorMode::Rgb,
     };
 
