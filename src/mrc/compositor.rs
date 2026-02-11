@@ -151,6 +151,36 @@ pub fn compose_bw(rgba_data: &[u8], width: u32, height: u32) -> crate::error::Re
     })
 }
 
+/// テキスト領域をJBIG2マスクからクロップし、各領域をJBIG2エンコードする。
+///
+/// 1ビットのテキストマスクから複数の矩形領域を抽出し、それぞれをJBIG2エンコードする。
+///
+/// # Arguments
+/// * `text_mask` - 1ビットのテキストマスク（segmenter::segment_text_maskの出力）
+/// * `bboxes` - クロップ対象の矩形リスト（ピクセル座標）
+///
+/// # Returns
+/// `(jbig2_data, bbox)` のペアリスト
+pub fn crop_text_regions_jbig2(
+    text_mask: &crate::ffi::leptonica::Pix,
+    bboxes: &[PixelBBox],
+) -> crate::error::Result<Vec<(Vec<u8>, PixelBBox)>> {
+    let mut results = Vec::with_capacity(bboxes.len());
+
+    for bbox in bboxes {
+        // クロップ
+        let clipped = text_mask.clip_rectangle(bbox.x, bbox.y, bbox.width, bbox.height)?;
+
+        // JBIG2エンコード
+        let mut clipped_mut = clipped;
+        let jbig2_data = jbig2::encode_mask(&mut clipped_mut)?;
+
+        results.push((jbig2_data, bbox.clone()));
+    }
+
+    Ok(results)
+}
+
 /// テキスト選択的ラスタライズの入力パラメータ。
 pub struct TextMaskedParams<'a> {
     /// 元のコンテンツストリーム
