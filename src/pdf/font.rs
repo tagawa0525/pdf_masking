@@ -240,7 +240,7 @@ fn resolve_system_font(base_font_name: &str) -> crate::error::Result<(Vec<u8>, u
     // 3. Linux での代替フォント検索
     let fallback_family = match family.as_str() {
         "Times New Roman" => "Liberation Serif",
-        "Arial" => "Liberation Sans",
+        "Arial" | "Helvetica" => "Liberation Sans",
         "Courier" => "Liberation Mono",
         _ => {
             return Err(PdfMaskError::pdf_read(format!(
@@ -420,13 +420,62 @@ fn parse_single_font(doc: &Document, font_ref: &Object) -> crate::error::Result<
         .unwrap_or_default();
 
     match subtype.as_str() {
-        "TrueType" => parse_truetype_font(doc, font_dict),
+        "TrueType" | "Type1" | "MMType1" => parse_truetype_font(doc, font_dict),
         "Type0" => parse_type0_font(doc, font_dict),
         _ => Err(PdfMaskError::pdf_read(format!(
             "unsupported font subtype: {}",
             subtype
         ))),
     }
+}
+
+/// フォントfaceからグリフ幅を導出（Widths省略時用）
+/// ttf_parserのhorizontal advanceを1000単位に正規化して返す
+fn derive_widths_from_font_face(
+    face: &ttf_parser::Face,
+    encoding: &FontEncoding,
+    units_per_em: u16,
+) -> HashMap<u16, f64> {
+    let mut widths = HashMap::new();
+    let scale = 1000.0 / units_per_em as f64;
+
+    // エンコーディングに応じて文字コード範囲を決定
+    let char_codes: Vec<u16> = match encoding {
+        FontEncoding::WinAnsi { .. } => (0x00..=0xFF).collect(),
+        FontEncoding::IdentityH => {
+            // IdentityHの場合は全グリフを対象とする（0x0000-0xFFFF）
+            // 実際にはCIDフォントでは使わないが、念のため実装
+            (0x0000..=0xFFFF).collect()
+        }
+    };
+
+    for code in char_codes {
+        // 文字コード→グリフID解決（WinAnsi/IdentityH両対応）
+        let glyph_id = match encoding {
+            FontEncoding::WinAnsi { differences } => {
+                // Differences配列: グリフ名→Unicode→GID
+                if let Some(glyph_name) = differences.get(&(code as u8))
+                    && let Some(unicode) = glyph_name_to_unicode(glyph_name)
+                {
+                    face.glyph_index(unicode)
+                } else {
+                    // WinAnsi: char_code → Unicode → cmap lookup
+                    win_ansi_to_unicode(code as u8).and_then(|ch| face.glyph_index(ch))
+                }
+            }
+            FontEncoding::IdentityH => Some(GlyphId(code)),
+        };
+
+        // グリフIDからhorizontal advanceを取得して1000単位に正規化
+        if let Some(gid) = glyph_id
+            && let Some(advance) = face.glyph_hor_advance(gid)
+        {
+            let width = advance as f64 * scale;
+            widths.insert(code, width);
+        }
+    }
+
+    widths
 }
 
 /// TrueTypeフォントの解析
@@ -440,11 +489,16 @@ fn parse_truetype_font(
         .or_else(|_| resolve_system_font_from_dict(font_dict))?;
 
     let encoding = parse_encoding(doc, font_dict)?;
-    let widths = parse_truetype_widths(doc, font_dict)?;
+    let mut widths = parse_truetype_widths(doc, font_dict)?;
 
     let face = ttf_parser::Face::parse(&font_data, face_index)
         .map_err(|e| PdfMaskError::pdf_read(format!("failed to parse TrueType: {}", e)))?;
     let units_per_em = face.units_per_em();
+
+    // Widths が省略されている場合（Type1標準14フォント等）、システムフォントから導出
+    if widths.is_empty() {
+        widths = derive_widths_from_font_face(&face, &encoding, units_per_em);
+    }
 
     Ok(ParsedFont {
         font_data,
