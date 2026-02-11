@@ -1,0 +1,4 @@
+jobs:
+  - input: pdf_test.pdf
+    output: pdf_test_bw.pdf
+    bw_pages: "1-2"

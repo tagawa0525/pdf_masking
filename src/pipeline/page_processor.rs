@@ -89,13 +89,15 @@ pub fn process_page_outlines(
     })
 }
 
-/// Process a single page: check cache -> MRC compose -> store in cache.
+/// Process a single page: check cache -> mode-specific composition -> store in cache.
 ///
-/// `content_stream` is used with settings to compute the cache key.
-/// `pdf_path` and `page_index` are included in the cache key to prevent
-/// collisions across different PDFs.
-/// If cache hits and dimensions match the bitmap, return cached layers.
-/// Otherwise run MRC compose.
+/// Cache key is computed from content_stream, settings, pdf_path, and page_index.
+/// If cache hits and dimensions match the bitmap, return cached output.
+/// Otherwise, perform mode-specific composition:
+///
+/// - Skip: Return empty ProcessedPage without MRC encoding
+/// - Bw: Full-page JBIG2 encoding via compose_bw
+/// - Rgb/Grayscale: Try compose_text_masked (text-only JPEG); fallback to compose (full-page MRC) on failure
 #[allow(clippy::too_many_arguments)]
 pub fn process_page(
     page_index: u32,
@@ -106,8 +108,6 @@ pub fn process_page(
     cache_store: Option<&CacheStore>,
     pdf_path: &Path,
     image_streams: Option<&HashMap<String, lopdf::Stream>>,
-    text_to_outlines: bool,
-    fonts: Option<&HashMap<String, ParsedFont>>,
 ) -> crate::error::Result<ProcessedPage> {
     let color_mode = cache_settings.color_mode;
 
@@ -153,50 +153,30 @@ pub fn process_page(
             PageOutput::BwMask(bw_layers)
         }
         mode @ (ColorMode::Rgb | ColorMode::Grayscale) => {
-            if cache_settings.preserve_images {
-                let empty_streams = HashMap::new();
-                let streams = image_streams.unwrap_or(&empty_streams);
+            let empty_streams = HashMap::new();
+            let streams = image_streams.unwrap_or(&empty_streams);
 
-                // text_to_outlines=true: テキストをベクターパスに変換
-                // 変換失敗時はcompose_text_maskedにフォールバック
-                let outlines_result = if text_to_outlines {
-                    fonts.and_then(|page_fonts| {
-                        let outlines_params = TextOutlinesParams {
-                            content_bytes: content_stream,
-                            fonts: page_fonts,
-                            image_streams: streams,
-                            color_mode: mode,
-                            page_index,
-                        };
-                        compose_text_outlines(&outlines_params).ok()
-                    })
-                } else {
-                    None
-                };
+            let page_width_pts = width as f64 * 72.0 / cache_settings.dpi as f64;
+            let page_height_pts = height as f64 * 72.0 / cache_settings.dpi as f64;
+            let params = TextMaskedParams {
+                content_bytes: content_stream,
+                rgba_data: &rgba_data,
+                bitmap_width: width,
+                bitmap_height: height,
+                page_width_pts,
+                page_height_pts,
+                image_streams: streams,
+                quality: mrc_config.fg_quality,
+                color_mode: mode,
+                page_index,
+            };
 
-                if let Some(data) = outlines_result {
-                    PageOutput::TextMasked(data)
-                } else {
-                    let page_width_pts = width as f64 * 72.0 / cache_settings.dpi as f64;
-                    let page_height_pts = height as f64 * 72.0 / cache_settings.dpi as f64;
-                    let params = TextMaskedParams {
-                        content_bytes: content_stream,
-                        rgba_data: &rgba_data,
-                        bitmap_width: width,
-                        bitmap_height: height,
-                        page_width_pts,
-                        page_height_pts,
-                        image_streams: streams,
-                        quality: mrc_config.fg_quality,
-                        color_mode: mode,
-                        page_index,
-                    };
-                    let text_masked = compose_text_masked(&params)?;
-                    PageOutput::TextMasked(text_masked)
+            match compose_text_masked(&params) {
+                Ok(data) => PageOutput::TextMasked(data),
+                Err(_) => {
+                    let mrc_layers = compose(&rgba_data, width, height, mrc_config, mode)?;
+                    PageOutput::Mrc(mrc_layers)
                 }
-            } else {
-                let mrc_layers = compose(&rgba_data, width, height, mrc_config, mode)?;
-                PageOutput::Mrc(mrc_layers)
             }
         }
         ColorMode::Skip => unreachable!("Skip handled above"),

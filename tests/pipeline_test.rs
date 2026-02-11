@@ -24,7 +24,6 @@ fn test_process_page_cache_miss() {
         fg_dpi: 100,
         bg_quality: 50,
         fg_quality: 30,
-        preserve_images: false,
         color_mode: ColorMode::Rgb,
     };
 
@@ -37,8 +36,6 @@ fn test_process_page_cache_miss() {
         None,
         Path::new("test.pdf"),
         None,
-        false,
-        None,
     );
     assert!(
         result.is_ok(),
@@ -50,16 +47,10 @@ fn test_process_page_cache_miss() {
     assert_eq!(processed.page_index, 0);
     assert!(!processed.cache_key.is_empty());
     assert_eq!(processed.cache_key.len(), 64); // SHA-256 hex
-    match &processed.output {
-        PageOutput::Mrc(layers) => {
-            assert!(!layers.mask_jbig2.is_empty());
-            assert!(!layers.background_jpeg.is_empty());
-            assert!(!layers.foreground_jpeg.is_empty());
-            assert_eq!(layers.width, 100);
-            assert_eq!(layers.height, 100);
-        }
-        _ => panic!("expected PageOutput::Mrc"),
-    }
+    assert!(
+        matches!(&processed.output, PageOutput::TextMasked(_)),
+        "expected PageOutput::TextMasked"
+    );
 }
 
 #[test]
@@ -78,7 +69,6 @@ fn test_process_page_cache_hit() {
         fg_dpi: 100,
         bg_quality: 50,
         fg_quality: 30,
-        preserve_images: false,
         color_mode: ColorMode::Rgb,
     };
 
@@ -91,8 +81,6 @@ fn test_process_page_cache_hit() {
         &cache_settings,
         Some(&cache_store),
         Path::new("test.pdf"),
-        None,
-        false,
         None,
     );
     assert!(result1.is_ok());
@@ -111,22 +99,21 @@ fn test_process_page_cache_hit() {
         Some(&cache_store),
         Path::new("test.pdf"),
         None,
-        false,
-        None,
     );
     assert!(result2.is_ok());
     let processed2 = result2.unwrap();
 
     // Same cache key
     assert_eq!(processed1.cache_key, processed2.cache_key);
-    // Same layer dimensions
-    match (&processed1.output, &processed2.output) {
-        (PageOutput::Mrc(layers1), PageOutput::Mrc(layers2)) => {
-            assert_eq!(layers1.width, layers2.width);
-            assert_eq!(layers1.height, layers2.height);
-        }
-        _ => panic!("expected PageOutput::Mrc for both results"),
-    }
+    // Both should be TextMasked
+    assert!(
+        matches!(&processed1.output, PageOutput::TextMasked(_)),
+        "expected TextMasked for first result"
+    );
+    assert!(
+        matches!(&processed2.output, PageOutput::TextMasked(_)),
+        "expected TextMasked for second result"
+    );
 }
 
 /// image_streams=Some (非空) の場合、TextMaskedモードに分岐することを検証
@@ -145,7 +132,6 @@ fn test_process_page_text_masked_with_image_streams() {
         fg_dpi: 100,
         bg_quality: 50,
         fg_quality: 30,
-        preserve_images: true,
         color_mode: ColorMode::Rgb,
     };
 
@@ -173,8 +159,6 @@ fn test_process_page_text_masked_with_image_streams() {
         None,
         Path::new("test.pdf"),
         Some(&image_streams),
-        false,
-        None,
     );
     assert!(
         result.is_ok(),
@@ -196,7 +180,7 @@ fn test_process_page_text_masked_with_image_streams() {
     }
 }
 
-/// preserve_images=true かつ image_streams=None の場合もTextMaskedモードを使用する。
+/// image_streams=None の場合もTextMaskedモードを使用する。
 /// 画像XObjectが無いページでもテキスト領域のみをJPEG化する方がMRCより効率的。
 #[test]
 fn test_process_page_text_masked_without_image_streams() {
@@ -211,7 +195,6 @@ fn test_process_page_text_masked_without_image_streams() {
         fg_dpi: 100,
         bg_quality: 50,
         fg_quality: 30,
-        preserve_images: true,
         color_mode: ColorMode::Rgb,
     };
 
@@ -224,8 +207,6 @@ fn test_process_page_text_masked_without_image_streams() {
         None,
         Path::new("test.pdf"),
         None, // image_streams=None でもTextMaskedモードになるべき
-        false,
-        None,
     );
     assert!(
         result.is_ok(),
@@ -247,51 +228,6 @@ fn test_process_page_text_masked_without_image_streams() {
     }
 }
 
-/// preserve_images=false の場合はimage_streams有無に関わらずMRCフォールバック
-#[test]
-fn test_process_page_mrc_when_preserve_images_false() {
-    let img = DynamicImage::ImageRgba8(RgbaImage::new(100, 100));
-    let content_stream = b"q 100 0 0 100 0 0 cm /Im1 Do Q";
-    let mrc_config = MrcConfig {
-        bg_quality: 50,
-        fg_quality: 30,
-    };
-    let cache_settings = CacheSettings {
-        dpi: 300,
-        fg_dpi: 100,
-        bg_quality: 50,
-        fg_quality: 30,
-        preserve_images: false,
-        color_mode: ColorMode::Rgb,
-    };
-
-    let result = process_page(
-        0,
-        &img,
-        content_stream,
-        &mrc_config,
-        &cache_settings,
-        None,
-        Path::new("test.pdf"),
-        None,
-        false,
-        None,
-    );
-    assert!(result.is_ok());
-
-    let processed = result.unwrap();
-    match &processed.output {
-        PageOutput::Mrc(layers) => {
-            assert_eq!(layers.width, 100);
-            assert_eq!(layers.height, 100);
-        }
-        other => panic!(
-            "expected PageOutput::Mrc, got {:?}",
-            std::mem::discriminant(other)
-        ),
-    }
-}
-
 #[test]
 fn test_job_config_creation() {
     use std::collections::HashMap;
@@ -308,9 +244,7 @@ fn test_job_config_creation() {
         dpi: 300,
         bg_quality: 50,
         fg_quality: 30,
-        preserve_images: true,
         cache_dir: Some(PathBuf::from(".cache")),
-        text_to_outlines: false,
     };
 
     assert_eq!(config.input_path, Path::new("input.pdf"));
@@ -322,7 +256,6 @@ fn test_job_config_creation() {
     assert_eq!(config.dpi, 300);
     assert_eq!(config.bg_quality, 50);
     assert_eq!(config.fg_quality, 30);
-    assert!(config.preserve_images);
     assert_eq!(config.cache_dir, Some(PathBuf::from(".cache")));
 }
 
@@ -345,7 +278,6 @@ fn test_process_page_text_masked_cache_roundtrip() {
         fg_dpi: 100,
         bg_quality: 50,
         fg_quality: 30,
-        preserve_images: true,
         color_mode: ColorMode::Rgb,
     };
 
@@ -373,8 +305,6 @@ fn test_process_page_text_masked_cache_roundtrip() {
         Some(&cache_store),
         Path::new("test.pdf"),
         Some(&image_streams),
-        false,
-        None,
     );
     assert!(
         result1.is_ok(),
@@ -395,8 +325,6 @@ fn test_process_page_text_masked_cache_roundtrip() {
         Some(&cache_store),
         Path::new("test.pdf"),
         Some(&image_streams),
-        false,
-        None,
     );
     assert!(
         result2.is_ok(),
@@ -419,122 +347,6 @@ fn test_process_page_text_masked_cache_roundtrip() {
     }
 }
 
-/// text_to_outlines=true かつフォントあり → テキストがパスに変換されること
-#[test]
-fn test_process_page_text_to_outlines_with_fonts() {
-    use pdf_masking::pdf::font::ParsedFont;
-    use std::collections::HashMap;
-
-    let doc = lopdf::Document::load("sample/pdf_test.pdf").expect("load PDF");
-    let fonts: HashMap<String, ParsedFont> =
-        pdf_masking::pdf::font::parse_page_fonts(&doc, 1).expect("parse fonts");
-
-    let img = DynamicImage::ImageRgba8(RgbaImage::new(100, 100));
-    // F4はWinAnsiEncoding（'A'のアウトラインあり）
-    let content_stream = b"BT /F4 12 Tf (A) Tj ET";
-    let mrc_config = MrcConfig {
-        bg_quality: 50,
-        fg_quality: 30,
-    };
-    let cache_settings = CacheSettings {
-        dpi: 300,
-        fg_dpi: 100,
-        bg_quality: 50,
-        fg_quality: 30,
-        preserve_images: true,
-        color_mode: ColorMode::Rgb,
-    };
-
-    let result = process_page(
-        0,
-        &img,
-        content_stream,
-        &mrc_config,
-        &cache_settings,
-        None,
-        Path::new("sample/pdf_test.pdf"),
-        None,
-        true,
-        Some(&fonts),
-    );
-    assert!(
-        result.is_ok(),
-        "process_page with outlines should succeed: {:?}",
-        result.err()
-    );
-
-    let processed = result.unwrap();
-    match &processed.output {
-        PageOutput::TextMasked(data) => {
-            // テキストがパスに変換されるのでtext_regionsは空
-            assert!(
-                data.text_regions.is_empty(),
-                "text_regions should be empty when text_to_outlines=true"
-            );
-            // コンテンツストリームにパス演算子が含まれること
-            let text = String::from_utf8_lossy(&data.stripped_content_stream);
-            let has_moveto = text.split_whitespace().any(|token| token == "m");
-            assert!(
-                has_moveto,
-                "should contain moveto (m) operators as PDF tokens"
-            );
-        }
-        other => panic!(
-            "expected PageOutput::TextMasked, got {:?}",
-            std::mem::discriminant(other)
-        ),
-    }
-}
-
-/// text_to_outlines=true でフォント変換失敗時 → compose_text_masked にフォールバック
-#[test]
-fn test_process_page_text_to_outlines_fallback_on_missing_font() {
-    use std::collections::HashMap;
-
-    // 空のフォントマップ（変換は失敗する）
-    let fonts: HashMap<String, pdf_masking::pdf::font::ParsedFont> = HashMap::new();
-
-    let img = DynamicImage::ImageRgba8(RgbaImage::new(100, 100));
-    let content_stream = b"BT /F99 12 Tf (Hello) Tj ET";
-    let mrc_config = MrcConfig {
-        bg_quality: 50,
-        fg_quality: 30,
-    };
-    let cache_settings = CacheSettings {
-        dpi: 300,
-        fg_dpi: 100,
-        bg_quality: 50,
-        fg_quality: 30,
-        preserve_images: true,
-        color_mode: ColorMode::Rgb,
-    };
-
-    let result = process_page(
-        0,
-        &img,
-        content_stream,
-        &mrc_config,
-        &cache_settings,
-        None,
-        Path::new("test.pdf"),
-        None,
-        true,
-        Some(&fonts),
-    );
-    assert!(
-        result.is_ok(),
-        "should succeed with fallback: {:?}",
-        result.err()
-    );
-
-    let processed = result.unwrap();
-    // フォールバックでTextMaskedモード（通常のcompose_text_masked）
-    assert!(
-        matches!(&processed.output, PageOutput::TextMasked(_)),
-        "should fall back to TextMasked"
-    );
-}
-
 /// process_page_outlines: ビットマップなしでテキスト→パス変換が成功する
 #[test]
 fn test_process_page_outlines_produces_text_masked() {
@@ -552,7 +364,6 @@ fn test_process_page_outlines_produces_text_masked() {
         fg_dpi: 100,
         bg_quality: 50,
         fg_quality: 30,
-        preserve_images: true,
         color_mode: ColorMode::Rgb,
     };
 
@@ -611,7 +422,6 @@ fn test_process_page_outlines_accepts_bw_mode() {
         fg_dpi: 100,
         bg_quality: 50,
         fg_quality: 30,
-        preserve_images: true,
         color_mode: ColorMode::Bw,
     };
 
@@ -664,7 +474,6 @@ fn test_process_page_outlines_error_on_missing_font() {
         fg_dpi: 100,
         bg_quality: 50,
         fg_quality: 30,
-        preserve_images: true,
         color_mode: ColorMode::Rgb,
     };
 
@@ -699,7 +508,6 @@ fn test_process_page_outlines_cache_roundtrip() {
         fg_dpi: 100,
         bg_quality: 50,
         fg_quality: 30,
-        preserve_images: true,
         color_mode: ColorMode::Rgb,
     };
 
@@ -731,6 +539,51 @@ fn test_process_page_outlines_cache_roundtrip() {
     let processed2 = result2.unwrap();
     assert_eq!(processed1.cache_key, processed2.cache_key);
     assert!(matches!(&processed2.output, PageOutput::TextMasked(_)));
+}
+
+/// compose_text_masked はフォールバックチェーンの主経路として常に試行される。
+/// ゴミデータのコンテンツストリームでも process_page が成功することを検証。
+#[test]
+fn test_process_page_succeeds_with_any_content_stream() {
+    let img = DynamicImage::ImageRgba8(RgbaImage::new(100, 100));
+    let content_stream = b"\xff\xfe\xfd";
+    let mrc_config = MrcConfig {
+        bg_quality: 50,
+        fg_quality: 30,
+    };
+    let cache_settings = CacheSettings {
+        dpi: 300,
+        fg_dpi: 100,
+        bg_quality: 50,
+        fg_quality: 30,
+        color_mode: ColorMode::Rgb,
+    };
+
+    let result = process_page(
+        0,
+        &img,
+        content_stream,
+        &mrc_config,
+        &cache_settings,
+        None,
+        Path::new("test.pdf"),
+        None,
+    );
+    assert!(
+        result.is_ok(),
+        "process_page should succeed even with garbage content stream: {:?}",
+        result.err()
+    );
+
+    let processed = result.unwrap();
+    // compose_text_masked が成功すれば TextMasked、失敗すれば Mrc (フォールバック)
+    assert!(
+        matches!(
+            &processed.output,
+            PageOutput::TextMasked(_) | PageOutput::Mrc(_)
+        ),
+        "expected TextMasked or Mrc"
+    );
 }
 
 #[test]

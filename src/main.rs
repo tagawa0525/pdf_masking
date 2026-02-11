@@ -92,9 +92,7 @@ fn main() -> ExitCode {
                 dpi: merged.dpi,
                 bg_quality: merged.bg_quality,
                 fg_quality: merged.fg_quality,
-                preserve_images: merged.preserve_images,
                 cache_dir: Some(merged.cache_dir),
-                text_to_outlines: merged.text_to_outlines,
             });
         }
     }

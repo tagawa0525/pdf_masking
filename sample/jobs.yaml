@@ -1,0 +1,4 @@
+jobs:
+  - input: pdf_test.pdf
+    output: pdf_test_masked.pdf
+    # rgb_pages: [1, 2]
