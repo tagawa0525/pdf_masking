@@ -266,7 +266,8 @@ fn test_write_text_masked_page_no_text_regions() {
     assert_eq!(doc.get_pages().len(), 1);
 }
 
-/// テキスト領域JBIG2 XObjectの検証。
+/// テキスト領域JBIG2 ImageMaskの検証。
+/// - ImageMask が true
 /// - Filter が JBIG2Decode
 /// - BitsPerComponent が 1
 /// - Decode [1 0] が設定されていること
@@ -353,6 +354,14 @@ fn test_write_text_masked_page_jbig2_properties() {
         .and_then(lopdf::Object::as_stream)
         .expect("TxtRgn0 should be stream");
 
+    // ImageMask が true であることを検証
+    let image_mask = txtrn_stream
+        .dict
+        .get(b"ImageMask")
+        .and_then(lopdf::Object::as_bool)
+        .expect("ImageMask should be a boolean");
+    assert!(image_mask, "ImageMask should be true for text regions");
+
     // JBIG2Decode フィルタの検証
     let filter = txtrn_stream
         .dict
@@ -385,6 +394,27 @@ fn test_write_text_masked_page_jbig2_properties() {
         decode[1],
         Object::Integer(0),
         "Decode[1] must be 0 for correct polarity"
+    );
+
+    // ColorSpaceが設定されていないことを確認（ImageMaskはColorSpaceを持たない）
+    assert!(
+        txtrn_stream.dict.get(b"ColorSpace").is_err(),
+        "ImageMask should not have ColorSpace"
+    );
+
+    // コンテンツストリームに '0 g' (black color) が含まれていることを確認
+    let content_ref = page_dict
+        .get(b"Contents")
+        .and_then(lopdf::Object::as_reference)
+        .expect("Contents should be a reference");
+    let content_stream = doc
+        .get_object(content_ref)
+        .and_then(lopdf::Object::as_stream)
+        .expect("Contents should be a stream");
+    let content_str = String::from_utf8_lossy(&content_stream.content);
+    assert!(
+        content_str.contains("0 g"),
+        "Content stream should set black color before drawing ImageMask"
     );
 }
 

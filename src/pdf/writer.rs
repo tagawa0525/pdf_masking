@@ -117,6 +117,30 @@ impl MrcPageWriter {
         )
     }
 
+    /// テキスト領域用のImageMask JBIG2 XObjectを追加する。
+    ///
+    /// ImageMaskはステンシルとして動作し、1のピクセルのみを描画色で塗り、
+    /// 0のピクセルは透過される。これにより、背景を上書きせずにテキストだけを描画できる。
+    pub(crate) fn add_text_mask_xobject(
+        &mut self,
+        jbig2_data: &[u8],
+        width: u32,
+        height: u32,
+    ) -> lopdf::ObjectId {
+        let dict = dictionary! {
+            "Type" => "XObject",
+            "Subtype" => "Image",
+            "Width" => width as i64,
+            "Height" => height as i64,
+            "ImageMask" => true,
+            "Decode" => vec![Object::Integer(1), Object::Integer(0)],
+            "BitsPerComponent" => 1,
+            "Filter" => Object::Name(b"JBIG2Decode".to_vec()),
+        };
+        let stream = Stream::new(dict, jbig2_data.to_vec());
+        self.doc.add_object(Object::Stream(stream))
+    }
+
     /// 前景JPEG XObjectを追加する（SMaskとしてmask_idを参照）。
     pub(crate) fn add_foreground_xobject(
         &mut self,
@@ -324,25 +348,20 @@ impl MrcPageWriter {
             dict.set("Parent", Object::Reference(pages_id));
         }
 
-        // テキスト領域XObjectを作成
+        // テキスト領域XObjectを作成（ImageMaskとして）
         let mut text_xobjects: Vec<(String, lopdf::ObjectId)> = Vec::new();
         for (i, region) in data.text_regions.iter().enumerate() {
             let name = format!("TxtRgn{}", i);
-            let xobj_id =
-                self.add_mask_xobject(&region.jbig2_data, region.pixel_width, region.pixel_height);
-
-            // テキスト領域JBIG2も極性を反転させる（BWページと同じ理由）
-            if let Some(Object::Stream(stream)) = self.doc.objects.get_mut(&xobj_id) {
-                stream.dict.set(
-                    "Decode",
-                    Object::Array(vec![Object::Integer(1), Object::Integer(0)]),
-                );
-            }
-
+            let xobj_id = self.add_text_mask_xobject(
+                &region.jbig2_data,
+                region.pixel_width,
+                region.pixel_height,
+            );
             text_xobjects.push((name, xobj_id));
         }
 
-        // 新しいコンテンツストリームを構築（テキスト除去済み + テキスト画像Do）
+        // 新しいコンテンツストリームを構築（テキスト除去済み + テキストImageMask Do）
+        // ImageMaskは色を指定して描画するため、'0 g'（黒）を設定してからDoを実行
         let mut content = data.stripped_content_stream.clone();
         for (i, (name, _)) in text_xobjects.iter().enumerate() {
             let region = &data.text_regions[i];
@@ -352,7 +371,7 @@ impl MrcPageWriter {
             let y = region.bbox_points.y_min;
             let escaped = escape_pdf_name(name);
             content.extend_from_slice(
-                format!("\nq {w} 0 0 {h} {x} {y} cm /{escaped} Do Q").as_bytes(),
+                format!("\nq 0 g {w} 0 0 {h} {x} {y} cm /{escaped} Do Q").as_bytes(),
             );
         }
 
