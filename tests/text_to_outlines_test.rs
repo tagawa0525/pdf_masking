@@ -62,19 +62,39 @@ fn test_missing_font_returns_error() {
 }
 
 #[test]
-fn test_sample_pdf_missing_embedded_font_returns_error() {
-    // サンプルPDFのF1は埋め込みフォントがないため、変換時にエラーになる
+fn test_sample_pdf_converts_with_system_fonts() {
+    // システムフォント解決により、非埋め込みフォント（F1等）も含めて全フォントが
+    // 解決されるため、convert_text_to_outlines は Ok を返すべき
     let doc = lopdf::Document::load("sample/pdf_test.pdf").expect("load PDF");
     let fonts = load_sample_fonts();
+
+    // F1（TimesNewRomanPSMT）がシステムフォントとして解決されていない場合はスキップ
+    if !fonts.contains_key("F1") {
+        eprintln!("SKIP: F1 not resolved — system font not available");
+        return;
+    }
 
     let page_id = doc.page_iter().next().expect("at least one page");
     let content = doc.get_page_content(page_id).expect("get content");
 
     let result = convert_text_to_outlines(&content, &fonts, false);
-    // F1に埋め込みフォントがないためエラーになる（pdfiumフォールバック用）
     assert!(
-        result.is_err(),
-        "should error when non-embedded font (F1) is referenced"
+        result.is_ok(),
+        "should succeed with system fonts: {:?}",
+        result.err()
+    );
+
+    let output = result.unwrap();
+    let text = String::from_utf8_lossy(&output);
+
+    // BT/ETが出力に残らないこと（全テキストがパスに変換された）
+    assert!(
+        !text.contains(" BT"),
+        "BT should not appear in output (all text should be converted to paths)"
+    );
+    assert!(
+        !text.contains(" ET"),
+        "ET should not appear in output (all text should be converted to paths)"
     );
 }
 
@@ -110,6 +130,7 @@ fn test_extract_char_codes_identity_h_multi_chars() {
 #[test]
 fn test_extract_char_codes_winansi_unchanged() {
     // WinAnsi: 各バイトが1つの文字コード（従来動作）
+    use std::collections::HashMap;
     let obj = lopdf::Object::String(vec![0x41, 0x42], lopdf::StringFormat::Literal);
     let encoding = FontEncoding::WinAnsi {
         differences: HashMap::new(),
