@@ -5,6 +5,7 @@ use std::path::{Path, PathBuf};
 
 use image::DynamicImage;
 use pdfium_render::prelude::*;
+use tracing::debug;
 
 /// Resolves the path to the pdfium shared library.
 ///
@@ -16,6 +17,7 @@ fn resolve_pdfium_lib_path() -> crate::error::Result<PathBuf> {
         )
     })?;
     let p = PathBuf::from(&path);
+    debug!(path = %p.display(), "resolved pdfium library path");
     if p.exists() {
         Ok(p)
     } else {
@@ -126,6 +128,7 @@ pub fn render_page(
             .set_target_width(width_px)
             .set_target_height(height_px);
 
+        debug!(page = page_index, width_px, height_px, "rendering page");
         let bitmap = page.render_with_config(&config)?;
 
         Ok(bitmap.as_image())
