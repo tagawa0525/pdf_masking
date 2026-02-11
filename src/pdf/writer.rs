@@ -40,6 +40,9 @@ pub struct MrcPageWriter {
     doc: Document,
     /// 共有Pagesノード。最初のwrite_mrc_page呼び出しで作成される。
     pages_id: Option<lopdf::ObjectId>,
+    /// ソースPDFオブジェクトIDから出力PDFオブジェクトIDへのマッピング。
+    /// ページコピー間で共有し、同一オブジェクト（フォント、画像等）の重複を防ぐ。
+    copy_id_map: HashMap<lopdf::ObjectId, lopdf::ObjectId>,
 }
 
 impl Default for MrcPageWriter {
@@ -53,6 +56,7 @@ impl MrcPageWriter {
         Self {
             doc: Document::with_version("1.5"),
             pages_id: None,
+            copy_id_map: HashMap::new(),
         }
     }
 
@@ -342,8 +346,7 @@ impl MrcPageWriter {
         })?;
 
         let pages_id = self.ensure_pages_id();
-        let mut id_map = std::collections::HashMap::new();
-        let new_page_id = self.deep_copy_object(source, *source_page_id, &mut id_map)?;
+        let new_page_id = self.deep_copy_object(source, *source_page_id)?;
 
         // Parentを出力PDFのPagesに差し替え
         if let Some(Object::Dictionary(dict)) = self.doc.objects.get_mut(&new_page_id) {
@@ -541,10 +544,7 @@ impl MrcPageWriter {
 
         let pages_id = self.ensure_pages_id();
 
-        // オブジェクトIDマッピング（ソース→出力）
-        let mut id_map = std::collections::HashMap::new();
-
-        let new_page_id = self.deep_copy_object(source, *source_page_id, &mut id_map)?;
+        let new_page_id = self.deep_copy_object(source, *source_page_id)?;
 
         // Parentを出力PDFのPagesに差し替え
         if let Some(Object::Dictionary(dict)) = self.doc.objects.get_mut(&new_page_id) {
@@ -557,41 +557,37 @@ impl MrcPageWriter {
     }
 
     /// ソースPDFのオブジェクトを再帰的に深コピーする。
+    ///
+    /// `self.copy_id_map` を使い、ページ間で共有されるオブジェクトの重複コピーを防ぐ。
     fn deep_copy_object(
         &mut self,
         source: &Document,
         source_id: lopdf::ObjectId,
-        id_map: &mut std::collections::HashMap<lopdf::ObjectId, lopdf::ObjectId>,
     ) -> crate::error::Result<lopdf::ObjectId> {
         // 既にコピー済みならマッピングを返す
-        if let Some(&mapped_id) = id_map.get(&source_id) {
+        if let Some(&mapped_id) = self.copy_id_map.get(&source_id) {
             return Ok(mapped_id);
         }
 
         // 先にIDを予約して循環参照を防ぐ
         let new_id = self.doc.new_object_id();
-        id_map.insert(source_id, new_id);
+        self.copy_id_map.insert(source_id, new_id);
 
         let source_obj = source
             .get_object(source_id)
             .map_err(|e| crate::error::PdfMaskError::pdf_read(e.to_string()))?;
 
-        let new_obj = self.deep_copy_value(source, source_obj, id_map)?;
+        let new_obj = self.deep_copy_value(source, source_obj)?;
         self.doc.objects.insert(new_id, new_obj);
 
         Ok(new_id)
     }
 
     /// オブジェクト値を再帰的にコピーし、Reference先もコピーする。
-    fn deep_copy_value(
-        &mut self,
-        source: &Document,
-        obj: &Object,
-        id_map: &mut std::collections::HashMap<lopdf::ObjectId, lopdf::ObjectId>,
-    ) -> crate::error::Result<Object> {
+    fn deep_copy_value(&mut self, source: &Document, obj: &Object) -> crate::error::Result<Object> {
         match obj {
             Object::Reference(ref_id) => {
-                let new_id = self.deep_copy_object(source, *ref_id, id_map)?;
+                let new_id = self.deep_copy_object(source, *ref_id)?;
                 Ok(Object::Reference(new_id))
             }
             Object::Dictionary(dict) => {
@@ -601,7 +597,7 @@ impl MrcPageWriter {
                     if key == b"Parent" {
                         continue;
                     }
-                    let new_value = self.deep_copy_value(source, value, id_map)?;
+                    let new_value = self.deep_copy_value(source, value)?;
                     new_dict.set(key.clone(), new_value);
                 }
                 Ok(Object::Dictionary(new_dict))
@@ -609,7 +605,7 @@ impl MrcPageWriter {
             Object::Array(arr) => {
                 let mut new_arr = Vec::with_capacity(arr.len());
                 for item in arr {
-                    new_arr.push(self.deep_copy_value(source, item, id_map)?);
+                    new_arr.push(self.deep_copy_value(source, item)?);
                 }
                 Ok(Object::Array(new_arr))
             }
@@ -619,7 +615,7 @@ impl MrcPageWriter {
                     if key == b"Parent" {
                         continue;
                     }
-                    let new_value = self.deep_copy_value(source, value, id_map)?;
+                    let new_value = self.deep_copy_value(source, value)?;
                     new_dict.set(key.clone(), new_value);
                 }
                 let new_stream = Stream::new(new_dict, stream.content.clone());
@@ -910,6 +906,100 @@ mod tests {
         let media_box = out_page.get(b"MediaBox").expect("MediaBox");
         let arr = media_box.as_array().expect("MediaBox array");
         assert_eq!(arr.len(), 4);
+    }
+
+    #[test]
+    fn test_copy_shared_resources_deduplication() {
+        // 2ページが同一フォントオブジェクトを共有するソースPDFを作成
+        let mut source = Document::with_version("1.4");
+        let pages_id = source.new_object_id();
+
+        // 共有フォントオブジェクト（両ページのResourcesが参照）
+        let shared_font_id = source.add_object(dictionary! {
+            "Type" => "Font",
+            "Subtype" => "Type1",
+            "BaseFont" => "Helvetica",
+        });
+
+        let resources_1 = source.add_object(dictionary! {
+            "Font" => dictionary! {
+                "F1" => Object::Reference(shared_font_id),
+            },
+        });
+        let resources_2 = source.add_object(dictionary! {
+            "Font" => dictionary! {
+                "F1" => Object::Reference(shared_font_id),
+            },
+        });
+
+        let content1 = Stream::new(dictionary! {}, b"BT /F1 12 Tf (Hello) Tj ET".to_vec());
+        let content1_id = source.add_object(content1);
+        let page1_id = source.add_object(dictionary! {
+            "Type" => "Page",
+            "Parent" => pages_id,
+            "MediaBox" => vec![
+                Object::Integer(0), Object::Integer(0),
+                Object::Integer(612), Object::Integer(792),
+            ],
+            "Contents" => content1_id,
+            "Resources" => resources_1,
+        });
+
+        let content2 = Stream::new(dictionary! {}, b"BT /F1 12 Tf (World) Tj ET".to_vec());
+        let content2_id = source.add_object(content2);
+        let page2_id = source.add_object(dictionary! {
+            "Type" => "Page",
+            "Parent" => pages_id,
+            "MediaBox" => vec![
+                Object::Integer(0), Object::Integer(0),
+                Object::Integer(612), Object::Integer(792),
+            ],
+            "Contents" => content2_id,
+            "Resources" => resources_2,
+        });
+
+        let pages = dictionary! {
+            "Type" => "Pages",
+            "Kids" => vec![page1_id.into(), page2_id.into()],
+            "Count" => 2,
+        };
+        source.objects.insert(pages_id, Object::Dictionary(pages));
+        let catalog_id = source.add_object(dictionary! {
+            "Type" => "Catalog",
+            "Pages" => pages_id,
+        });
+        source.trailer.set("Root", catalog_id);
+
+        // 両ページをコピー
+        let mut writer = MrcPageWriter::new();
+        writer.copy_page_from(&source, 1).expect("copy page 1");
+        writer.copy_page_from(&source, 2).expect("copy page 2");
+
+        let pdf_bytes = writer.save_to_bytes().expect("save to bytes");
+        let doc = Document::load_mem(&pdf_bytes).expect("load output PDF");
+        assert_eq!(doc.get_pages().len(), 2);
+
+        // 共有フォントオブジェクトが1つだけ存在することを確認
+        let font_objects: Vec<_> = doc
+            .objects
+            .values()
+            .filter(|obj| {
+                if let Object::Dictionary(dict) = obj {
+                    dict.get(b"Type")
+                        .ok()
+                        .and_then(|t| t.as_name().ok())
+                        .is_some_and(|n| n == b"Font")
+                } else {
+                    false
+                }
+            })
+            .collect();
+        assert_eq!(
+            font_objects.len(),
+            1,
+            "shared font should be copied only once, found {}",
+            font_objects.len()
+        );
     }
 
     #[test]
