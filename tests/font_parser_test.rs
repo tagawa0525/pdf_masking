@@ -317,8 +317,8 @@ fn create_type1_test_pdf(path: &Path) {
 #[test]
 fn test_type1_font_parsed_from_system() {
     // Type1フォント（Helvetica）がシステムフォント解決によりパースされること
-    let temp_dir = std::env::temp_dir();
-    let pdf_path = temp_dir.join("type1_parsed_test.pdf");
+    let temp_dir = tempfile::tempdir().expect("create temp dir");
+    let pdf_path = temp_dir.path().join("type1_parsed_test.pdf");
     create_type1_test_pdf(&pdf_path);
 
     let doc = lopdf::Document::load(&pdf_path).expect("load Type1 test PDF");
@@ -343,8 +343,8 @@ fn test_type1_font_parsed_from_system() {
 #[test]
 fn test_type1_font_glyph_outline() {
     // Type1フォント（Helvetica）からグリフアウトラインが取得できること
-    let temp_dir = std::env::temp_dir();
-    let pdf_path = temp_dir.join("type1_outline_test.pdf");
+    let temp_dir = tempfile::tempdir().expect("create temp dir");
+    let pdf_path = temp_dir.path().join("type1_outline_test.pdf");
     create_type1_test_pdf(&pdf_path);
 
     let doc = lopdf::Document::load(&pdf_path).expect("load Type1 test PDF");
@@ -373,8 +373,8 @@ fn test_type1_font_glyph_outline() {
 #[test]
 fn test_mmtype1_font_parsed_from_system() {
     // MMType1フォント（Multiple Master Type1）もType1と同様に扱う
-    let temp_dir = std::env::temp_dir();
-    let pdf_path = temp_dir.join("mmtype1_parsed_test.pdf");
+    let temp_dir = tempfile::tempdir().expect("create temp dir");
+    let pdf_path = temp_dir.path().join("mmtype1_parsed_test.pdf");
 
     // MMType1フォント辞書を作成（通常のType1と辞書構造は同じ）
     let mut doc = Document::with_version("1.4");
