@@ -32,11 +32,9 @@ impl PdfReader {
         }
 
         // 見つからなければParentをたどって継承を確認する
-        if let Ok(parent_obj) = dict.get(b"Parent") {
-            if let lopdf::Object::Reference(parent_id) = parent_obj {
-                let parent_dict = self.doc.get_dictionary(*parent_id)?;
-                return self.get_media_box(&parent_dict);
-            }
+        if let Ok(lopdf::Object::Reference(parent_id)) = dict.get(b"Parent") {
+            let parent_dict = self.doc.get_dictionary(*parent_id)?;
+            return self.get_media_box(parent_dict);
         }
 
         Err(crate::error::PdfMaskError::pdf_read("MediaBox not found"))
@@ -48,7 +46,7 @@ impl PdfReader {
         let page_dict = self.doc.get_dictionary(page_id)?;
 
         // MediaBoxを取得（継承も考慮）
-        let media_box = self.get_media_box(&page_dict)?;
+        let media_box = self.get_media_box(page_dict)?;
 
         let media_box_array = media_box.as_array()?;
         if media_box_array.len() < 4 {
