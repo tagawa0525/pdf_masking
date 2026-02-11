@@ -131,6 +131,10 @@ fn parse_ps_name_to_query(ps_name: &str) -> (String, fontdb::Weight, bool) {
     let mut weight = fontdb::Weight::NORMAL;
     let mut is_italic = false;
 
+    // MT (Mac) / PS (PostScript) サフィックスを先に除去
+    // "-BoldMT" → "-Bold", "-ItalicMT" → "-Italic" にしてからスタイル解析
+    family = family.trim_end_matches("MT").to_string();
+
     // サフィックスの解析 (-Bold, -Italic, -BoldItalic, -Oblique)
     if family.ends_with("-BoldItalic") {
         family = family.strip_suffix("-BoldItalic").unwrap().to_string();
@@ -147,8 +151,7 @@ fn parse_ps_name_to_query(ps_name: &str) -> (String, fontdb::Weight, bool) {
         is_italic = true;
     }
 
-    // MT (Mac) / PS (PostScript) サフィックスを除去
-    family = family.trim_end_matches("MT").to_string();
+    // 残りの PS サフィックスを除去
     family = family.trim_end_matches("PS").to_string();
 
     // CamelCase をスペース区切りに展開: TimesNewRoman → Times New Roman
@@ -226,9 +229,13 @@ fn resolve_system_font(base_font_name: &str) -> crate::error::Result<(Vec<u8>, u
 
     let fallback_query = fontdb::Query {
         families: &[fontdb::Family::Name(fallback_family)],
-        weight: fontdb::Weight::NORMAL,
+        weight,
         stretch: fontdb::Stretch::Normal,
-        style: fontdb::Style::Normal,
+        style: if is_italic {
+            fontdb::Style::Italic
+        } else {
+            fontdb::Style::Normal
+        },
     };
 
     if let Some(id) = db.query(&fallback_query)
@@ -284,8 +291,13 @@ pub fn parse_page_fonts(
             }
             Err(e) => {
                 let msg = e.to_string();
-                if msg.contains("FontFile2") || msg.contains("FontDescriptor") {
-                    // 埋込フォントデータが無い場合はスキップ
+                if msg.contains("FontFile2")
+                    || msg.contains("FontDescriptor")
+                    || msg.contains("system font not found")
+                    || msg.contains("unsupported font subtype")
+                {
+                    // 埋込データなし、システムフォント未検出、非対応形式はスキップ
+                    // 呼び出し元が不足フォントを処理する（例: pdfium フォールバック）
                     continue;
                 }
                 return Err(e);
