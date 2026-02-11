@@ -369,22 +369,23 @@ fn test_write_text_masked_page_jbig2_properties() {
         .expect("BitsPerComponent should be an integer");
     assert_eq!(bpc, 1, "BitsPerComponent should be 1 for JBIG2");
 
-    // Decode [1 0] の検証
+    // Decode [1 0] の検証（極性反転が必須）
     let decode = txtrn_stream
         .dict
         .get(b"Decode")
         .and_then(lopdf::Object::as_array)
         .expect("Decode should be an array");
     assert_eq!(decode.len(), 2, "Decode array should have 2 elements");
-    match (&decode[0], &decode[1]) {
-        (Object::Integer(0), Object::Integer(1)) => {
-            // This is OK - for compatibility with some viewers, [0 1] is acceptable
-        }
-        (Object::Integer(1), Object::Integer(0)) => {
-            // Verify the polarity is correct [1 0]
-        }
-        _ => panic!("Decode should contain [0 1] or [1 0]"),
-    }
+    assert_eq!(
+        decode[0],
+        Object::Integer(1),
+        "Decode[0] must be 1 for correct polarity"
+    );
+    assert_eq!(
+        decode[1],
+        Object::Integer(0),
+        "Decode[1] must be 0 for correct polarity"
+    );
 }
 
 /// リダクション済み画像の差し替えが正しく行われることを検証。
