@@ -40,12 +40,16 @@ pub struct MrcConfig {
 /// * `rgba_data` - Raw RGBA pixel data (4 bytes per pixel)
 /// * `width`     - Image width in pixels
 /// * `height`    - Image height in pixels
+/// * `page_width_pts` - Original page width in PDF points
+/// * `page_height_pts` - Original page height in PDF points
 /// * `config`    - Quality settings for the output layers
 /// * `color_mode` - RGB, Grayscale, or Bw
 pub fn compose(
     rgba_data: &[u8],
     width: u32,
     height: u32,
+    page_width_pts: f64,
+    page_height_pts: f64,
     config: &MrcConfig,
     color_mode: ColorMode,
 ) -> crate::error::Result<MrcLayers> {
@@ -82,12 +86,20 @@ pub fn compose(
         background_jpeg,
         width,
         height,
+        page_width_pts,
+        page_height_pts,
         color_mode,
     })
 }
 
 /// BWモード: segmenter + JBIG2のみ。JPEG層なし。
-pub fn compose_bw(rgba_data: &[u8], width: u32, height: u32) -> crate::error::Result<BwLayers> {
+pub fn compose_bw(
+    rgba_data: &[u8],
+    width: u32,
+    height: u32,
+    page_width_pts: f64,
+    page_height_pts: f64,
+) -> crate::error::Result<BwLayers> {
     let mut text_mask = segmenter::segment_text_mask(rgba_data, width, height)?;
     let mask_jbig2 = jbig2::encode_mask(&mut text_mask)?;
 
@@ -95,6 +107,8 @@ pub fn compose_bw(rgba_data: &[u8], width: u32, height: u32) -> crate::error::Re
         mask_jbig2,
         width,
         height,
+        page_width_pts,
+        page_height_pts,
     })
 }
 
@@ -214,6 +228,8 @@ pub fn compose_text_masked(params: &TextMaskedParams) -> crate::error::Result<Te
             text_regions: Vec::new(),
             modified_images,
             page_index: params.page_index,
+            page_width_pts: params.page_width_pts,
+            page_height_pts: params.page_height_pts,
             color_mode: params.color_mode,
         });
     }
@@ -245,6 +261,8 @@ pub fn compose_text_masked(params: &TextMaskedParams) -> crate::error::Result<Te
         text_regions,
         modified_images,
         page_index: params.page_index,
+        page_width_pts: params.page_width_pts,
+        page_height_pts: params.page_height_pts,
         color_mode: params.color_mode,
     })
 }
@@ -257,6 +275,10 @@ pub struct TextOutlinesParams<'a> {
     pub fonts: &'a HashMap<String, ParsedFont>,
     /// XObject名 → lopdf::Stream のマップ
     pub image_streams: &'a HashMap<String, lopdf::Stream>,
+    /// ページ幅(pt)
+    pub page_width_pts: f64,
+    /// ページ高さ(pt)
+    pub page_height_pts: f64,
     /// RGB, Grayscale, or Bw
     pub color_mode: ColorMode,
     /// ページ番号(0-based)
@@ -283,6 +305,8 @@ pub fn compose_text_outlines(params: &TextOutlinesParams) -> crate::error::Resul
         text_regions: Vec::new(), // テキストはパスとしてコンテンツストリームに含まれる
         modified_images,
         page_index: params.page_index,
+        page_width_pts: params.page_width_pts,
+        page_height_pts: params.page_height_pts,
         color_mode: params.color_mode,
     })
 }

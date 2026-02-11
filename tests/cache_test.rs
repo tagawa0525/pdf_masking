@@ -159,6 +159,8 @@ fn sample_layers() -> MrcLayers {
         background_jpeg: vec![0xFF, 0xD8, 0xFF, 0xE1],
         width: 200,
         height: 300,
+        page_width_pts: 595.276,
+        page_height_pts: 841.89,
         color_mode: ColorMode::Rgb,
     }
 }
@@ -350,6 +352,8 @@ fn sample_text_masked_data() -> TextMaskedData {
         }],
         modified_images: HashMap::new(),
         page_index: 0,
+        page_width_pts: 595.276,
+        page_height_pts: 841.89,
         color_mode: ColorMode::Rgb,
     }
 }
@@ -416,6 +420,8 @@ fn test_store_and_retrieve_text_masked_with_modified_images() {
         text_regions: vec![],
         modified_images,
         page_index: 2,
+        page_width_pts: 595.276,
+        page_height_pts: 841.89,
         color_mode: ColorMode::Grayscale,
     };
 
@@ -499,6 +505,8 @@ fn test_text_masked_cache_files_on_disk() {
         }],
         modified_images,
         page_index: 0,
+        page_width_pts: 595.276,
+        page_height_pts: 841.89,
         color_mode: ColorMode::Rgb,
     };
 
