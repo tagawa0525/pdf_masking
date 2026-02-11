@@ -74,7 +74,38 @@ fn test_main_version_flag() {
 }
 
 // ============================================================
-// 4. Nonexistent job file produces error
+// 4. RUST_LOG=off suppresses log output
+// ============================================================
+
+#[test]
+fn test_rust_log_off_suppresses_error_output() {
+    let unique_path = std::env::temp_dir().join(format!(
+        "nonexistent_job_file_{}.yaml",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("system clock error")
+            .as_nanos()
+    ));
+    let output = cargo_bin()
+        .env("RUST_LOG", "off")
+        .arg(unique_path.as_os_str())
+        .output()
+        .expect("failed to execute binary");
+
+    assert!(
+        !output.status.success(),
+        "should exit with failure for nonexistent file"
+    );
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        !stderr.contains("ERROR"),
+        "RUST_LOG=off should suppress ERROR output, got: {stderr}"
+    );
+}
+
+// ============================================================
+// 5. Nonexistent job file produces error
 // ============================================================
 
 #[test]
