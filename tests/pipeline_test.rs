@@ -733,6 +733,59 @@ fn test_process_page_outlines_cache_roundtrip() {
     assert!(matches!(&processed2.output, PageOutput::TextMasked(_)));
 }
 
+/// compose_text_masked が失敗する入力で process_page を呼んだとき、
+/// compose (全面MRC) にフォールバックして PageOutput::Mrc が返ることを検証。
+/// 現状の process_page にはこのフォールバックが無いため #[ignore]。
+#[test]
+#[ignore]
+fn test_process_page_text_masked_fallback_to_compose() {
+    let img = DynamicImage::ImageRgba8(RgbaImage::new(100, 100));
+    // 不正なコンテンツストリーム: strip_text_operators が Err を返す
+    let content_stream = b"\xff\xfe\xfd";
+    let mrc_config = MrcConfig {
+        bg_quality: 50,
+        fg_quality: 30,
+    };
+    let cache_settings = CacheSettings {
+        dpi: 300,
+        fg_dpi: 100,
+        bg_quality: 50,
+        fg_quality: 30,
+        preserve_images: true,
+        color_mode: ColorMode::Rgb,
+    };
+
+    let result = process_page(
+        0,
+        &img,
+        content_stream,
+        &mrc_config,
+        &cache_settings,
+        None,
+        Path::new("test.pdf"),
+        None,
+        false,
+        None,
+    );
+    assert!(
+        result.is_ok(),
+        "process_page should fall back to compose on text_masked failure: {:?}",
+        result.err()
+    );
+
+    let processed = result.unwrap();
+    match &processed.output {
+        PageOutput::Mrc(layers) => {
+            assert_eq!(layers.width, 100);
+            assert_eq!(layers.height, 100);
+        }
+        other => panic!(
+            "expected PageOutput::Mrc (fallback), got {:?}",
+            std::mem::discriminant(other)
+        ),
+    }
+}
+
 #[test]
 fn test_run_all_jobs_empty() {
     let jobs: Vec<JobConfig> = vec![];
