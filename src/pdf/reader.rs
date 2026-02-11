@@ -24,20 +24,31 @@ impl PdfReader {
         self.doc.get_pages().len() as u32
     }
 
+    /// 指定ページ辞書からMediaBoxを取得する（Parent経由の継承も考慮）。
+    fn get_media_box(&self, dict: &lopdf::Dictionary) -> crate::error::Result<lopdf::Object> {
+        // まず現在の辞書からMediaBoxを探す
+        if let Ok(obj) = dict.get(b"MediaBox") {
+            return Ok(obj.clone());
+        }
+
+        // 見つからなければParentをたどって継承を確認する
+        if let Ok(parent_obj) = dict.get(b"Parent") {
+            if let lopdf::Object::Reference(parent_id) = parent_obj {
+                let parent_dict = self.doc.get_dictionary(*parent_id)?;
+                return self.get_media_box(&parent_dict);
+            }
+        }
+
+        Err(crate::error::PdfMaskError::pdf_read("MediaBox not found"))
+    }
+
     /// 指定ページ(1-indexed)のMediaBoxからページ寸法(width_pts, height_pts)を返す。
     pub fn page_dimensions(&self, page_num: u32) -> crate::error::Result<(f64, f64)> {
         let page_id = self.get_page_id(page_num)?;
         let page_dict = self.doc.get_dictionary(page_id)?;
 
         // MediaBoxを取得（継承も考慮）
-        let media_box = match page_dict.get(b"MediaBox") {
-            Ok(obj) => obj.clone(),
-            Err(_) => {
-                // MediaBoxが直接ない場合、親から継承する可能性がある
-                // 簡易実装: get_page_resources相当の親探索
-                return Err(crate::error::PdfMaskError::pdf_read("MediaBox not found"));
-            }
-        };
+        let media_box = self.get_media_box(&page_dict)?;
 
         let media_box_array = media_box.as_array()?;
         if media_box_array.len() < 4 {
