@@ -23,6 +23,28 @@ pub enum FontEncoding {
     IdentityH,
 }
 
+impl FontEncoding {
+    /// バイト列をエンコーディングに応じて文字コード列に変換する。
+    pub fn bytes_to_char_codes(&self, bytes: &[u8]) -> Vec<u16> {
+        match self {
+            FontEncoding::IdentityH => {
+                if !bytes.len().is_multiple_of(2) {
+                    eprintln!(
+                        "Warning: IdentityH encoded string has odd length ({} bytes); \
+                         trailing byte will be ignored.",
+                        bytes.len()
+                    );
+                }
+                bytes
+                    .chunks_exact(2)
+                    .map(|pair| ((pair[0] as u16) << 8) | pair[1] as u16)
+                    .collect()
+            }
+            FontEncoding::WinAnsi { .. } => bytes.iter().map(|&b| b as u16).collect(),
+        }
+    }
+}
+
 /// 解析済みフォント
 pub struct ParsedFont {
     font_data: Vec<u8>,

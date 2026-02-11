@@ -466,7 +466,7 @@ fn lookup_encoding<'a>(
 /// エンコーディングに応じて lopdf::Object からバイト列を文字コード列に変換する。
 fn extract_char_codes_for_encoding(obj: &lopdf::Object, encoding: &FontEncoding) -> Vec<u16> {
     match obj {
-        lopdf::Object::String(bytes, _) => bytes_to_char_codes(bytes, encoding),
+        lopdf::Object::String(bytes, _) => encoding.bytes_to_char_codes(bytes),
         _ => Vec::new(),
     }
 }
@@ -483,7 +483,7 @@ fn extract_tj_array_for_encoding(
         for item in arr {
             match item {
                 lopdf::Object::String(bytes, _) => {
-                    let codes = bytes_to_char_codes(bytes, encoding);
+                    let codes = encoding.bytes_to_char_codes(bytes);
                     all_codes.extend_from_slice(&codes);
                     entries.push(TjArrayEntry::Text(codes));
                 }
@@ -499,15 +499,4 @@ fn extract_tj_array_for_encoding(
     }
 
     (all_codes, entries)
-}
-
-/// バイト列をエンコーディングに応じて文字コード列に変換する。
-fn bytes_to_char_codes(bytes: &[u8], encoding: &FontEncoding) -> Vec<u16> {
-    match encoding {
-        FontEncoding::IdentityH => bytes
-            .chunks_exact(2)
-            .map(|pair| ((pair[0] as u16) << 8) | pair[1] as u16)
-            .collect(),
-        FontEncoding::WinAnsi { .. } => bytes.iter().map(|&b| b as u16).collect(),
-    }
 }

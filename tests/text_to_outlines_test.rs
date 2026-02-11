@@ -110,7 +110,6 @@ fn test_extract_char_codes_identity_h_multi_chars() {
 #[test]
 fn test_extract_char_codes_winansi_unchanged() {
     // WinAnsi: 各バイトが1つの文字コード（従来動作）
-    use std::collections::HashMap;
     let obj = lopdf::Object::String(vec![0x41, 0x42], lopdf::StringFormat::Literal);
     let encoding = FontEncoding::WinAnsi {
         differences: HashMap::new(),
