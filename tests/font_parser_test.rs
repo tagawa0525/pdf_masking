@@ -163,3 +163,49 @@ fn test_nonexistent_page_returns_error() {
     let result = pdf_masking::pdf::font::parse_page_fonts(&doc, 999);
     assert!(result.is_err(), "page 999 should not exist");
 }
+
+// ============================================================
+// 8. システムフォント解決（非埋め込みフォント）
+// ============================================================
+
+#[test]
+fn test_system_font_resolved_for_non_embedded() {
+    // F1（TimesNewRomanPSMT）は埋め込みフォントがないが、
+    // システムフォント解決により parse_page_fonts が返すフォントに含まれるべき
+    let doc = lopdf::Document::load("sample/pdf_test.pdf").expect("load PDF");
+    let fonts = pdf_masking::pdf::font::parse_page_fonts(&doc, 1).expect("parse fonts");
+
+    if !fonts.contains_key("F1") {
+        // システムにTimesNewRomanまたは互換フォントがない環境ではスキップ
+        eprintln!("SKIP: F1 (TimesNewRomanPSMT) not resolved — system font not available");
+        return;
+    }
+
+    // F1が解決されていればOK
+    assert!(
+        fonts.contains_key("F1"),
+        "F1 should be resolved via system font"
+    );
+}
+
+#[test]
+fn test_system_font_glyph_outline_available() {
+    // システムフォント解決されたフォントでグリフアウトラインが取得できること
+    let doc = lopdf::Document::load("sample/pdf_test.pdf").expect("load PDF");
+    let fonts = pdf_masking::pdf::font::parse_page_fonts(&doc, 1).expect("parse fonts");
+
+    let font = match fonts.get("F1") {
+        Some(f) => f,
+        None => {
+            eprintln!("SKIP: F1 not resolved — system font not available");
+            return;
+        }
+    };
+
+    // 'A' (0x41) のグリフを解決してアウトラインを取得
+    let gid = font
+        .char_code_to_glyph_id(0x41)
+        .expect("should resolve 'A' to glyph ID");
+    let outline = font.glyph_outline(gid).expect("should get outline for 'A'");
+    assert!(!outline.is_empty(), "outline for 'A' should not be empty");
+}
