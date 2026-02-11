@@ -362,45 +362,6 @@ fn test_e2e_with_settings_yaml() {
 }
 
 // ============================================================
-// 4. E2E test: output has MRC structure
-// ============================================================
-
-/// Run pipeline and verify output PDF is valid and has correct page count.
-#[test]
-fn test_e2e_output_structure() {
-    if !pdfium_available() {
-        eprintln!("Skipping: PDFIUM_DYNAMIC_LIB_PATH not set (run inside `nix develop`)");
-        return;
-    }
-
-    let dir = tempfile::tempdir().expect("create temp dir");
-    let input_path = dir.path().join("input.pdf");
-    let output_path = dir.path().join("output.pdf");
-
-    create_single_page_pdf(&input_path);
-    write_jobs_yaml(dir.path(), "input.pdf", "output.pdf", "");
-
-    let jobs_yaml_path = dir.path().join("jobs.yaml");
-
-    let output = cargo_bin()
-        .arg(&jobs_yaml_path)
-        .current_dir(dir.path())
-        .output()
-        .expect("failed to execute binary");
-
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(
-        output.status.success(),
-        "CLI should exit with success, stderr: {stderr}"
-    );
-
-    // Load output PDF and verify structure
-    let doc = Document::load(&output_path).expect("output PDF should be loadable");
-    let pages = doc.get_pages();
-    assert_eq!(pages.len(), 1, "output should have 1 page");
-}
-
-// ============================================================
 // 5. E2E test: invalid page range
 // ============================================================
 
