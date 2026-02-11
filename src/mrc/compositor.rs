@@ -38,7 +38,7 @@ pub struct MrcConfig {
 /// * `width`     - Image width in pixels
 /// * `height`    - Image height in pixels
 /// * `config`    - Quality settings for the output layers
-/// * `color_mode` - RGB or Grayscale
+/// * `color_mode` - RGB, Grayscale, or Bw
 pub fn compose(
     rgba_data: &[u8],
     width: u32,
@@ -92,7 +92,7 @@ pub fn compose(
 /// * `bitmap` - レンダリング済みのページビットマップ
 /// * `bboxes` - テキスト領域の矩形リスト（ピクセル座標）
 /// * `quality` - JPEG 品質 (1-100)
-/// * `color_mode` - RGB または Grayscale
+/// * `color_mode` - RGB, Grayscale, または Bw
 ///
 /// # Returns
 /// `(jpeg_data, bbox)` のペアリスト
@@ -169,7 +169,7 @@ pub struct TextMaskedParams<'a> {
     pub image_streams: &'a HashMap<String, lopdf::Stream>,
     /// JPEG品質 (1-100)
     pub quality: u8,
-    /// RGB or Grayscale
+    /// RGB, Grayscale, or Bw
     pub color_mode: ColorMode,
     /// ページ番号(0-based)
     pub page_index: u32,
@@ -284,7 +284,7 @@ pub struct TextOutlinesParams<'a> {
     pub fonts: &'a HashMap<String, ParsedFont>,
     /// XObject名 → lopdf::Stream のマップ
     pub image_streams: &'a HashMap<String, lopdf::Stream>,
-    /// RGB or Grayscale
+    /// RGB, Grayscale, or Bw
     pub color_mode: ColorMode,
     /// ページ番号(0-based)
     pub page_index: u32,

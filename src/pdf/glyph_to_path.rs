@@ -168,12 +168,12 @@ pub fn glyph_to_pdf_path(params: &GlyphPathParams) -> Vec<u8> {
 fn fill_color_luminance(color: &FillColor) -> f64 {
     match color {
         FillColor::Gray(g) => *g,
-        FillColor::Rgb(r, g, b) => 0.299 * r + 0.587 * g + 0.114 * b,
+        FillColor::Rgb(r, g, b) => 0.299 * *r + 0.587 * *g + 0.114 * *b,
         FillColor::Cmyk(c, m, y, k) => {
             // CMYK → RGB → 輝度
-            let r = (1.0 - c) * (1.0 - k);
-            let g = (1.0 - m) * (1.0 - k);
-            let b = (1.0 - y) * (1.0 - k);
+            let r = (1.0 - *c) * (1.0 - *k);
+            let g = (1.0 - *m) * (1.0 - *k);
+            let b = (1.0 - *y) * (1.0 - *k);
             0.299 * r + 0.587 * g + 0.114 * b
         }
     }
