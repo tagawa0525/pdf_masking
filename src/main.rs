@@ -8,6 +8,7 @@ use pdf_masking::error::PdfMaskError;
 use pdf_masking::linearize;
 use pdf_masking::pipeline::job_runner::{JobConfig, JobResult};
 use pdf_masking::pipeline::orchestrator::run_all_jobs;
+use tracing::{error, info};
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -27,11 +28,24 @@ fn main() -> ExitCode {
         return ExitCode::SUCCESS;
     }
 
+    // Initialize tracing subscriber (after --help/--version guards).
+    // Default to INFO level; override via RUST_LOG environment variable.
+    tracing_subscriber::fmt()
+        .with_env_filter(
+            tracing_subscriber::EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
+        )
+        .with_target(false)
+        .with_level(true)
+        .without_time()
+        .with_writer(std::io::stderr)
+        .init();
+
     // Collect job configs and their linearize flags from all job files.
     let (job_configs, linearize_flags) = match collect_jobs(&args) {
         Ok(pair) => pair,
         Err(e) => {
-            eprintln!("ERROR: {e}");
+            error!("{e}");
             return ExitCode::FAILURE;
         }
     };
@@ -112,8 +126,8 @@ fn report_results(
     for (i, result) in results.iter().enumerate() {
         match result {
             Ok(job_result) => {
-                eprintln!(
-                    "OK: {} -> {} ({} pages)",
+                info!(
+                    "{} -> {} ({} pages)",
                     job_result.input_path.display(),
                     job_result.output_path.display(),
                     job_result.pages_processed
@@ -123,16 +137,16 @@ fn report_results(
                 if linearize_flags[i]
                     && let Err(e) = linearize::linearize_in_place(&job_result.output_path)
                 {
-                    eprintln!(
-                        "ERROR: Failed to linearize {}: {e}",
+                    error!(
+                        "Failed to linearize {}: {e}",
                         job_result.output_path.display()
                     );
                     has_error = true;
                 }
             }
             Err(e) => {
-                eprintln!(
-                    "ERROR: {} -> {}: {e}",
+                error!(
+                    "{} -> {}: {e}",
                     job_configs[i].input_path.display(),
                     job_configs[i].output_path.display()
                 );

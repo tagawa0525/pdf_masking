@@ -30,9 +30,9 @@ impl FontEncoding {
         match self {
             FontEncoding::IdentityH => {
                 if !bytes.len().is_multiple_of(2) {
-                    eprintln!(
-                        "Warning: IdentityH encoded string has odd length ({} bytes); \
-                         trailing byte will be ignored.",
+                    tracing::warn!(
+                        "IdentityH encoded string has odd length ({} bytes); \
+                         trailing byte will be ignored",
                         bytes.len()
                     );
                 }
