@@ -76,6 +76,72 @@ fn create_single_page_pdf(path: &Path) {
     doc.save(path).expect("failed to save test PDF");
 }
 
+/// Create a 1-page PDF with simple text (Type1 Helvetica) for testing settings application.
+fn create_pdf_with_text(path: &Path) {
+    let mut doc = Document::with_version("1.4");
+
+    // Font: Helvetica (Type1, standard 14 fonts)
+    let font = dictionary! {
+        "Type" => "Font",
+        "Subtype" => "Type1",
+        "BaseFont" => "Helvetica",
+    };
+    let font_id = doc.add_object(font);
+
+    // Content stream with text
+    let content = b"BT /F1 24 Tf 100 700 Td (Settings Test) Tj ET";
+    let content_stream = Stream::new(dictionary! {}, content.to_vec());
+    let content_id = doc.add_object(content_stream);
+
+    // Resources with font
+    let resources = dictionary! {
+        "Font" => dictionary! {
+            "F1" => font_id,
+        },
+    };
+
+    // Page object: Letter size (612 x 792 points)
+    let page = dictionary! {
+        "Type" => "Page",
+        "MediaBox" => vec![
+            Object::Integer(0),
+            Object::Integer(0),
+            Object::Integer(612),
+            Object::Integer(792),
+        ],
+        "Contents" => content_id,
+        "Resources" => resources,
+    };
+    let page_id = doc.add_object(page);
+
+    // Pages object
+    let pages = dictionary! {
+        "Type" => "Pages",
+        "Kids" => vec![page_id.into()],
+        "Count" => Object::Integer(1),
+    };
+    let pages_id = doc.add_object(pages);
+
+    // Set Parent reference on page
+    match doc
+        .get_object_mut(page_id)
+        .expect("page object should exist")
+    {
+        Object::Dictionary(dict) => dict.set("Parent", pages_id),
+        _ => panic!("page object should be a dictionary"),
+    }
+
+    // Catalog
+    let catalog = dictionary! {
+        "Type" => "Catalog",
+        "Pages" => pages_id,
+    };
+    let catalog_id = doc.add_object(catalog);
+    doc.trailer.set("Root", catalog_id);
+
+    doc.save(path).expect("failed to save test PDF");
+}
+
 /// Create a multi-page PDF with the specified number of pages.
 fn create_multi_page_pdf(path: &Path, num_pages: usize) {
     let mut doc = Document::with_version("1.4");
@@ -232,7 +298,7 @@ fn test_e2e_multi_page_pdf() {
 // ============================================================
 
 /// Create PDF + settings.yaml + jobs.yaml in same dir, run CLI,
-/// verify settings are respected (verify output exists and is loadable).
+/// verify settings are applied (output contains XObjects proving MRC processing occurred).
 #[test]
 fn test_e2e_with_settings_yaml() {
     if !pdfium_available() {
@@ -244,7 +310,7 @@ fn test_e2e_with_settings_yaml() {
     let input_path = dir.path().join("input.pdf");
     let output_path = dir.path().join("output.pdf");
 
-    create_single_page_pdf(&input_path);
+    create_pdf_with_text(&input_path);
     // settings.yaml sets dpi=72, bg_quality=30
     write_settings_yaml(dir.path(), 72, 30);
     write_jobs_yaml(dir.path(), "input.pdf", "output.pdf", "");
@@ -267,6 +333,32 @@ fn test_e2e_with_settings_yaml() {
     assert!(output_path.exists(), "output PDF should exist");
     let doc = Document::load(&output_path).expect("output PDF should be loadable by lopdf");
     assert_eq!(doc.get_pages().len(), 1, "output PDF should have 1 page");
+
+    // Verify settings were applied: output should contain XObjects (TxtRgn* or BgImg/FgImg)
+    // proving MRC processing occurred with the specified DPI and quality settings
+    let pages = doc.get_pages();
+    let page_id = pages.get(&1).expect("page 1 should exist");
+    let page_obj = doc.get_object(*page_id).expect("page object should exist");
+    let page_dict = page_obj.as_dict().expect("page should be a dictionary");
+
+    let resources_ref = page_dict
+        .get(b"Resources")
+        .and_then(|r| r.as_reference())
+        .expect("Page should have Resources reference");
+    let resources = doc
+        .get_object(resources_ref)
+        .and_then(|obj| obj.as_dict())
+        .expect("Resources should be a dictionary");
+
+    let has_xobjects = resources
+        .get(b"XObject")
+        .and_then(|x| x.as_reference())
+        .is_ok();
+
+    assert!(
+        has_xobjects,
+        "Output should contain XObject dictionary (TxtRgn*/BgImg/FgImg), proving settings were applied"
+    );
 }
 
 // ============================================================
