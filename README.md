@@ -1,23 +1,34 @@
 # pdf_masking
 
 A CLI tool that removes text information from specified PDF pages while
-preserving visual appearance through MRC (Mixed Raster Content) compression.
+preserving visual appearance. Two processing modes are available:
 
-Targeted pages are rendered as bitmaps and decomposed into three layers
-(ITU-T T.44), making text non-searchable and non-selectable while maintaining
-document quality.
+- **MRC mode** (default): Renders pages as bitmaps and decomposes them into
+  three layers (ITU-T T.44 MRC compression)
+- **Text-to-outlines mode**: Converts text to vector path outlines directly
+  from font data, without rendering. Faster and smaller output, but requires
+  embedded fonts (falls back to pdfium rendering when fonts are not embedded)
+
+In both modes, text becomes non-searchable and non-selectable while document
+quality is maintained.
 
 ## How It Works
 
 Each page is processed through a 4-phase pipeline:
 
-1. **Content analysis** - Analyze PDF structure and detect image XObjects
-2. **Rendering** - Render pages to bitmaps via pdfium at specified DPI
-3. **MRC composition** (parallel) - Decompose each bitmap into three layers:
+1. **Content analysis** - Analyze PDF structure, extract fonts and image
+   XObjects, determine color mode per page
+2. **Text-to-outlines** (when enabled) - Convert text (BT...ET blocks) to
+   vector paths using glyph outlines from embedded fonts. Skips rendering.
+   Non-embedded fonts are resolved via system font lookup (fontdb)
+3. **Rendering** (MRC mode only) - Render pages to bitmaps via pdfium at
+   specified DPI
+4. **MRC composition** (parallel) - Decompose each bitmap into three layers:
    - **Mask**: 1-bit text/line art layer (JBIG2 encoded)
    - **Foreground**: Low-resolution text color (JPEG)
    - **Background**: Full-color image content (JPEG)
-4. **PDF assembly** - Build optimized output PDF with MRC XObjects
+5. **PDF assembly** - Build optimized output PDF, subset fonts on masked
+   pages, optionally linearize via qpdf
 
 A SHA-256-based cache system skips unchanged pages on subsequent runs.
 
@@ -77,7 +88,10 @@ Define processing jobs in YAML:
 jobs:
   - input: path/to/input.pdf
     output: path/to/output.pdf
-    pages: [1, 3, "5-10", 15]
+    color_mode: rgb
+    bw_pages: [1, 3]
+    skip_pages: [6]
+    text_to_outlines: true
     dpi: 300
     bg_quality: 50
     fg_quality: 30
@@ -89,19 +103,28 @@ jobs:
 | --- | --- | --- |
 | `input` | Yes | Input PDF path |
 | `output` | Yes | Output PDF path |
-| `pages` | Yes | Pages to mask (1-based). Single: `5`, range: `"5-10"`, |
-| | | mixed: `[1, 3, "5-10"]` |
+| `color_mode` | No | Default mode: `rgb`, `grayscale`, `bw`, `skip` |
+| `bw_pages` | No | Pages to process as black-and-white |
+| `grayscale_pages` | No | Pages to process as grayscale MRC |
+| `rgb_pages` | No | Pages to process as full-color MRC |
+| `skip_pages` | No | Pages to copy without processing |
+| `text_to_outlines` | No | Convert to vector outlines (default: false) |
 | `dpi` | No | Rendering resolution (default: 300) |
 | `bg_quality` | No | Background JPEG quality 1-100 (default: 50) |
 | `fg_quality` | No | Foreground JPEG quality 1-100 (default: 30) |
 | `preserve_images` | No | Keep original image XObjects (default: true) |
 | `linearize` | No | Web-optimize output PDF (default: true) |
 
+Page lists accept single pages (`5`), ranges (`"5-10"`), and mixed
+(`[1, 3, "5-10"]`). Pages not listed in any mode-specific list use the
+`color_mode` default.
+
 ### Settings File
 
 Place a `settings.yaml` in the same directory as the job file to set defaults:
 
 ```yaml
+color_mode: rgb
 dpi: 300
 fg_dpi: 100
 bg_quality: 50
@@ -110,6 +133,7 @@ parallel_workers: 0     # 0 = auto (CPU count)
 cache_dir: .cache
 preserve_images: true
 linearize: true
+text_to_outlines: false
 ```
 
 Job-level values override settings. Missing values use built-in defaults.
