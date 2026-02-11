@@ -63,6 +63,21 @@ impl PdfReader {
         let width = (x1 - x0).abs();
         let height = (y1 - y0).abs();
 
+        // Validate that the computed page dimensions are positive and reasonable.
+        if width <= 0.0 || height <= 0.0 {
+            return Err(crate::error::PdfMaskError::pdf_read(
+                "Invalid MediaBox: non-positive page dimensions",
+            ));
+        }
+
+        // Optionally enforce an upper bound based on typical PDF limits (14,400 pt ≈ 200 in).
+        const PDF_MAX_DIMENSION_PT: f64 = 14_400.0;
+        if width > PDF_MAX_DIMENSION_PT || height > PDF_MAX_DIMENSION_PT {
+            return Err(crate::error::PdfMaskError::pdf_read(
+                "Invalid MediaBox: page dimensions exceed PDF limits",
+            ));
+        }
+
         Ok((width, height))
     }
 
