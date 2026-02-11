@@ -1,6 +1,8 @@
 // 埋込フォント解析テスト (RED phase)
 
+use lopdf::{Document, Object, Stream, dictionary};
 use pdf_masking::pdf::font::FontEncoding;
+use std::path::Path;
 
 // ============================================================
 // 1. サンプルPDFからのフォント解析
@@ -248,4 +250,205 @@ fn test_system_font_glyph_outline_available() {
         .expect("should resolve 'A' to glyph ID");
     let outline = font.glyph_outline(gid).expect("should get outline for 'A'");
     assert!(!outline.is_empty(), "outline for 'A' should not be empty");
+}
+
+// ============================================================
+// 9. Type1フォント（システムフォント解決）
+// ============================================================
+
+/// Type1フォントを含むテスト用PDFを作成（標準14フォント）
+fn create_type1_test_pdf(path: &Path) {
+    let mut doc = Document::with_version("1.4");
+
+    // Type1 Helveticaフォント（標準14フォントの一つ、非埋め込み）
+    let font = dictionary! {
+        "Type" => "Font",
+        "Subtype" => "Type1",
+        "BaseFont" => "Helvetica",
+        "Encoding" => "WinAnsiEncoding",
+    };
+    let font_id = doc.add_object(font);
+
+    // コンテンツストリーム
+    let content = b"BT /F1 24 Tf 100 700 Td (Type1 Test) Tj ET";
+    let content_stream = Stream::new(dictionary! {}, content.to_vec());
+    let content_id = doc.add_object(content_stream);
+
+    // Resourcesにフォントを登録
+    let resources = dictionary! {
+        "Font" => dictionary! {
+            "F1" => font_id,
+        },
+    };
+
+    // Page object
+    let page = dictionary! {
+        "Type" => "Page",
+        "MediaBox" => vec![
+            Object::Integer(0),
+            Object::Integer(0),
+            Object::Integer(612),
+            Object::Integer(792),
+        ],
+        "Contents" => content_id,
+        "Resources" => resources,
+    };
+    let page_id = doc.add_object(page);
+
+    // Pages node
+    let pages = dictionary! {
+        "Type" => "Pages",
+        "Kids" => vec![Object::Reference(page_id)],
+        "Count" => 1,
+    };
+    let pages_id = doc.add_object(pages);
+
+    // Catalog
+    let catalog = dictionary! {
+        "Type" => "Catalog",
+        "Pages" => pages_id,
+    };
+    let catalog_id = doc.add_object(catalog);
+    doc.trailer.set("Root", catalog_id);
+
+    doc.save(path).expect("failed to save Type1 test PDF");
+}
+
+#[test]
+fn test_type1_font_parsed_from_system() {
+    // Type1フォント（Helvetica）がシステムフォント解決によりパースされること
+    let temp_dir = std::env::temp_dir();
+    let pdf_path = temp_dir.join("type1_parsed_test.pdf");
+    create_type1_test_pdf(&pdf_path);
+
+    let doc = lopdf::Document::load(&pdf_path).expect("load Type1 test PDF");
+    let fonts = pdf_masking::pdf::font::parse_page_fonts(&doc, 1).expect("parse fonts");
+
+    // Type1フォント（F1 = Helvetica）が解析されていること
+    // システムフォントが無い環境ではこのテスト自体が意味をなさないが、
+    // Type1がサポートされていない現在の実装では、フォントが見つからない（スキップされる）
+    // 実装後は必ずF1が存在するようになる
+    assert!(
+        fonts.contains_key("F1"),
+        "Type1 font (Helvetica) should be parsed and available as F1"
+    );
+
+    let font = fonts.get("F1").unwrap();
+
+    // エンコーディングがWinAnsiであること
+    assert!(
+        matches!(font.encoding(), FontEncoding::WinAnsi { .. }),
+        "Type1 Helvetica should use WinAnsi encoding"
+    );
+}
+
+#[test]
+fn test_type1_font_glyph_outline() {
+    // Type1フォント（Helvetica）からグリフアウトラインが取得できること
+    let temp_dir = std::env::temp_dir();
+    let pdf_path = temp_dir.join("type1_outline_test.pdf");
+    create_type1_test_pdf(&pdf_path);
+
+    let doc = lopdf::Document::load(&pdf_path).expect("load Type1 test PDF");
+    let fonts = pdf_masking::pdf::font::parse_page_fonts(&doc, 1).expect("parse fonts");
+
+    assert!(
+        fonts.contains_key("F1"),
+        "Type1 font (Helvetica) should be parsed"
+    );
+
+    let font = fonts.get("F1").unwrap();
+
+    // 'A' (0x41) のグリフアウトラインを取得
+    let gid = font
+        .char_code_to_glyph_id(0x41)
+        .expect("should resolve 'A' to glyph ID for Type1 Helvetica");
+    let outline = font
+        .glyph_outline(gid)
+        .expect("should get outline for 'A' from Type1 Helvetica");
+    assert!(
+        !outline.is_empty(),
+        "outline for 'A' should not be empty for Type1 Helvetica"
+    );
+}
+
+#[test]
+fn test_mmtype1_font_parsed_from_system() {
+    // MMType1フォント（Multiple Master Type1）もType1と同様に扱う
+    let temp_dir = std::env::temp_dir();
+    let pdf_path = temp_dir.join("mmtype1_parsed_test.pdf");
+
+    // MMType1フォント辞書を作成（通常のType1と辞書構造は同じ）
+    let mut doc = Document::with_version("1.4");
+
+    let font = dictionary! {
+        "Type" => "Font",
+        "Subtype" => "MMType1",
+        "BaseFont" => "Helvetica",
+        "Encoding" => "WinAnsiEncoding",
+    };
+    let font_id = doc.add_object(font);
+
+    let content = b"BT /F1 24 Tf 100 700 Td (MMType1 Test) Tj ET";
+    let content_stream = Stream::new(dictionary! {}, content.to_vec());
+    let content_id = doc.add_object(content_stream);
+
+    let resources = dictionary! {
+        "Font" => dictionary! {
+            "F1" => font_id,
+        },
+    };
+
+    let page = dictionary! {
+        "Type" => "Page",
+        "MediaBox" => vec![
+            Object::Integer(0),
+            Object::Integer(0),
+            Object::Integer(612),
+            Object::Integer(792),
+        ],
+        "Contents" => content_id,
+        "Resources" => resources,
+    };
+    let page_id = doc.add_object(page);
+
+    let pages = dictionary! {
+        "Type" => "Pages",
+        "Kids" => vec![Object::Reference(page_id)],
+        "Count" => 1,
+    };
+    let pages_id = doc.add_object(pages);
+
+    let catalog = dictionary! {
+        "Type" => "Catalog",
+        "Pages" => pages_id,
+    };
+    let catalog_id = doc.add_object(catalog);
+    doc.trailer.set("Root", catalog_id);
+
+    doc.save(&pdf_path)
+        .expect("failed to save MMType1 test PDF");
+
+    // MMType1フォントがパースされること
+    let doc = lopdf::Document::load(&pdf_path).expect("load MMType1 test PDF");
+    let fonts = pdf_masking::pdf::font::parse_page_fonts(&doc, 1).expect("parse fonts");
+
+    assert!(
+        fonts.contains_key("F1"),
+        "MMType1 font (Helvetica) should be parsed and available as F1"
+    );
+
+    let font = fonts.get("F1").unwrap();
+
+    // グリフアウトラインが取得できること
+    let gid = font
+        .char_code_to_glyph_id(0x41)
+        .expect("should resolve 'A' to glyph ID for MMType1");
+    let outline = font
+        .glyph_outline(gid)
+        .expect("should get outline for 'A' from MMType1");
+    assert!(
+        !outline.is_empty(),
+        "outline for 'A' should not be empty for MMType1"
+    );
 }

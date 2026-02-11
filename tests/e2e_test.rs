@@ -534,37 +534,96 @@ fn test_e2e_bw_mode() {
         .and_then(|obj| obj.as_dict())
         .expect("Resources should be a dictionary");
 
+    // BW処理が行われたことを確認:
+    // 1. text_to_outlinesが成功した場合: XObject辞書が空、コンテンツストリームにパス描画オペレータ
+    // 2. text_to_outlinesが失敗した場合: BwImgまたはTxtRgn* XObjectが生成される
     let xobj_result = resources.get(b"XObject");
-    assert!(
-        xobj_result.is_ok(),
-        "BW mode output should have XObject in Resources, found: {:?}",
-        resources
-            .iter()
-            .map(|(k, _)| std::str::from_utf8(k).unwrap_or("<invalid>"))
-            .collect::<Vec<_>>()
-    );
 
-    // XObject can be either a direct dictionary or a reference
-    let xobjects = xobj_result
-        .and_then(|xobj| {
-            xobj.as_dict().or_else(|_| {
-                xobj.as_reference()
-                    .and_then(|r| doc.get_object(r)?.as_dict())
+    if xobj_result.is_ok() {
+        // XObjectがある場合: BwImgまたはTxtRgn*を確認
+        let xobjects = xobj_result
+            .and_then(|xobj| {
+                xobj.as_dict().or_else(|_| {
+                    xobj.as_reference()
+                        .and_then(|r| doc.get_object(r)?.as_dict())
+                })
             })
-        })
-        .expect("XObject should be a dictionary or reference to dictionary");
+            .expect("XObject should be a dictionary or reference to dictionary");
 
-    let has_bw_or_text = xobjects
-        .iter()
-        .any(|(k, _)| k.starts_with(b"BwImg") || k.starts_with(b"TxtRgn"));
-    assert!(
-        has_bw_or_text,
-        "BW mode output should contain BwImg or TxtRgn* XObjects, found: {:?}",
-        xobjects
+        let has_bw_or_text = xobjects
             .iter()
-            .map(|(k, _)| std::str::from_utf8(k).unwrap_or("<invalid>"))
-            .collect::<Vec<_>>()
-    );
+            .any(|(k, _)| k.starts_with(b"BwImg") || k.starts_with(b"TxtRgn"));
+
+        if !has_bw_or_text {
+            // XObjectが空の場合、text_to_outlinesが成功した可能性がある
+            // コンテンツストリームにパス描画オペレータが含まれることを確認
+            let contents_ref = page_dict
+                .get(b"Contents")
+                .expect("Page should have Contents");
+            let contents_obj = match contents_ref {
+                Object::Reference(id) => doc.get_object(*id).expect("Contents object should exist"),
+                other => other,
+            };
+            let mut contents_stream = contents_obj
+                .as_stream()
+                .expect("Contents should be a stream")
+                .clone();
+            // コンテンツストリームを解凍
+            contents_stream
+                .decompress()
+                .expect("Failed to decompress content stream");
+            let content_bytes = &contents_stream.content;
+            let content_str = String::from_utf8_lossy(content_bytes);
+
+            // パス描画オペレータの存在を確認
+            let has_path_ops = content_str.contains(" m\n")
+                || content_str.contains(" l\n")
+                || content_str.contains(" c\n")
+                || content_str.contains(" h\n")
+                || content_str.contains(" f\n")
+                || content_str.contains(" F\n")
+                || content_str.contains(" B\n");
+
+            assert!(
+                has_path_ops,
+                "BW mode output with empty XObject should contain path drawing operators (text_to_outlines succeeded)"
+            );
+        }
+    } else {
+        // XObjectがない場合: text_to_outlinesが成功したはず
+        // コンテンツストリームにパス描画オペレータが含まれることを確認
+        let contents_ref = page_dict
+            .get(b"Contents")
+            .expect("Page should have Contents");
+        let contents_obj = match contents_ref {
+            Object::Reference(id) => doc.get_object(*id).expect("Contents object should exist"),
+            other => other,
+        };
+        let mut contents_stream = contents_obj
+            .as_stream()
+            .expect("Contents should be a stream")
+            .clone();
+        // コンテンツストリームを解凍
+        contents_stream
+            .decompress()
+            .expect("Failed to decompress content stream");
+        let content_bytes = &contents_stream.content;
+        let content_str = String::from_utf8_lossy(content_bytes);
+
+        // パス描画オペレータの存在を確認
+        let has_path_ops = content_str.contains(" m\n")
+            || content_str.contains(" l\n")
+            || content_str.contains(" c\n")
+            || content_str.contains(" h\n")
+            || content_str.contains(" f\n")
+            || content_str.contains(" F\n")
+            || content_str.contains(" B\n");
+
+        assert!(
+            has_path_ops,
+            "BW mode output without XObject should contain path drawing operators (text_to_outlines succeeded)"
+        );
+    }
 }
 
 // ============================================================

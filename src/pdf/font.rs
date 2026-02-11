@@ -240,7 +240,7 @@ fn resolve_system_font(base_font_name: &str) -> crate::error::Result<(Vec<u8>, u
     // 3. Linux での代替フォント検索
     let fallback_family = match family.as_str() {
         "Times New Roman" => "Liberation Serif",
-        "Arial" => "Liberation Sans",
+        "Arial" | "Helvetica" => "Liberation Sans",
         "Courier" => "Liberation Mono",
         _ => {
             return Err(PdfMaskError::pdf_read(format!(
@@ -420,7 +420,7 @@ fn parse_single_font(doc: &Document, font_ref: &Object) -> crate::error::Result<
         .unwrap_or_default();
 
     match subtype.as_str() {
-        "TrueType" => parse_truetype_font(doc, font_dict),
+        "TrueType" | "Type1" | "MMType1" => parse_truetype_font(doc, font_dict),
         "Type0" => parse_type0_font(doc, font_dict),
         _ => Err(PdfMaskError::pdf_read(format!(
             "unsupported font subtype: {}",
