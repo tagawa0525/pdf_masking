@@ -83,62 +83,6 @@ pub fn compose(
     })
 }
 
-/// テキスト領域をビットマップからクロップし、JPEG化する。
-///
-/// 各 PixelBBox 領域をクロップして、指定のカラーモードとクオリティで
-/// JPEG エンコードする。
-///
-/// # Arguments
-/// * `bitmap` - レンダリング済みのページビットマップ
-/// * `bboxes` - テキスト領域の矩形リスト（ピクセル座標）
-/// * `quality` - JPEG 品質 (1-100)
-/// * `color_mode` - RGB, Grayscale, または Bw
-///
-/// # Returns
-/// `(jpeg_data, bbox)` のペアリスト
-pub fn crop_text_regions(
-    bitmap: &DynamicImage,
-    bboxes: &[PixelBBox],
-    quality: u8,
-    color_mode: ColorMode,
-) -> crate::error::Result<Vec<(Vec<u8>, PixelBBox)>> {
-    if !(1..=100).contains(&quality) {
-        return Err(PdfMaskError::jpeg_encode(format!(
-            "JPEG quality must be 1-100, got {}",
-            quality
-        )));
-    }
-
-    let mut results = Vec::with_capacity(bboxes.len());
-
-    for bbox in bboxes {
-        // クロップ
-        let cropped = bitmap.crop_imm(bbox.x, bbox.y, bbox.width, bbox.height);
-
-        // カラーモードに応じてエンコード
-        let jpeg_data = match color_mode {
-            ColorMode::Grayscale => {
-                let gray = cropped.to_luma8();
-                jpeg::encode_gray_to_jpeg(&gray, quality)?
-            }
-            ColorMode::Rgb => {
-                let rgb = cropped.to_rgb8();
-                jpeg::encode_rgb_to_jpeg(&rgb, quality)?
-            }
-            ColorMode::Bw | ColorMode::Skip => {
-                return Err(PdfMaskError::jpeg_encode(format!(
-                    "crop_text_regions does not support {:?} color mode",
-                    color_mode
-                )));
-            }
-        };
-
-        results.push((jpeg_data, bbox.clone()));
-    }
-
-    Ok(results)
-}
-
 /// BWモード: segmenter + JBIG2のみ。JPEG層なし。
 pub fn compose_bw(rgba_data: &[u8], width: u32, height: u32) -> crate::error::Result<BwLayers> {
     let mut text_mask = segmenter::segment_text_mask(rgba_data, width, height)?;
