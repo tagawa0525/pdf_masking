@@ -7,7 +7,7 @@
 use std::path::Path;
 use std::process::Command;
 
-use lopdf::{Document, Object, Stream, dictionary};
+use lopdf::{Document, Object, Stream, content::Content, dictionary};
 
 // ============================================================
 // Guards and helpers
@@ -19,6 +19,25 @@ fn pdfium_available() -> bool {
         Ok(path) => Path::new(&path).exists(),
         Err(_) => false,
     }
+}
+
+/// Check if content stream contains path painting/construction operators.
+/// Parses the stream via lopdf::content::Content::decode to avoid
+/// whitespace-dependent string matching.
+fn content_has_path_operators(content_bytes: &[u8]) -> bool {
+    let operations = match Content::decode(content_bytes) {
+        Ok(content) => content.operations,
+        Err(_) => return false,
+    };
+
+    // パス構築・描画オペレータを検出
+    const PATH_OPS: &[&str] = &[
+        "m", "l", "c", "v", "y", "h", "re", "f", "F", "f*", "B", "B*", "b", "b*", "s", "S",
+    ];
+
+    operations
+        .iter()
+        .any(|op| PATH_OPS.contains(&op.operator.as_str()))
 }
 
 /// Build a Command pointing to the compiled binary.
@@ -573,19 +592,10 @@ fn test_e2e_bw_mode() {
                 .decompress()
                 .expect("Failed to decompress content stream");
             let content_bytes = &contents_stream.content;
-            let content_str = String::from_utf8_lossy(content_bytes);
 
-            // パス描画オペレータの存在を確認
-            let has_path_ops = content_str.contains(" m\n")
-                || content_str.contains(" l\n")
-                || content_str.contains(" c\n")
-                || content_str.contains(" h\n")
-                || content_str.contains(" f\n")
-                || content_str.contains(" F\n")
-                || content_str.contains(" B\n");
-
+            // パス描画オペレータの存在を確認（lopdf::content::Contentでパース）
             assert!(
-                has_path_ops,
+                content_has_path_operators(content_bytes),
                 "BW mode output with empty XObject should contain path drawing operators (text_to_outlines succeeded)"
             );
         }
@@ -608,19 +618,10 @@ fn test_e2e_bw_mode() {
             .decompress()
             .expect("Failed to decompress content stream");
         let content_bytes = &contents_stream.content;
-        let content_str = String::from_utf8_lossy(content_bytes);
 
-        // パス描画オペレータの存在を確認
-        let has_path_ops = content_str.contains(" m\n")
-            || content_str.contains(" l\n")
-            || content_str.contains(" c\n")
-            || content_str.contains(" h\n")
-            || content_str.contains(" f\n")
-            || content_str.contains(" F\n")
-            || content_str.contains(" B\n");
-
+        // パス描画オペレータの存在を確認（lopdf::content::Contentでパース）
         assert!(
-            has_path_ops,
+            content_has_path_operators(content_bytes),
             "BW mode output without XObject should contain path drawing operators (text_to_outlines succeeded)"
         );
     }
