@@ -249,7 +249,70 @@ fn test_empty_outline() {
 }
 
 // ============================================================
-// 5. horizontal_scaling / text_rise
+// 5. CubicTo (3次ベジェ曲線)
+// ============================================================
+
+#[test]
+fn test_cubic_to_produces_c_operator() {
+    // CFF/CFF2フォントの3次ベジェ曲線がPDF `c` 演算子に変換されること
+    let outline = vec![
+        PathOp::MoveTo(0.0, 0.0),
+        PathOp::CubicTo(100.0, 200.0, 300.0, 400.0, 500.0, 0.0),
+        PathOp::Close,
+    ];
+
+    let result = glyph_to_pdf_path(&GlyphPathParams {
+        outline: &outline,
+        font_size: 10.0,
+        units_per_em: 1000,
+        text_matrix: &Matrix::identity(),
+        ctm: &Matrix::identity(),
+        fill_color: &FillColor::Gray(0.0),
+        horizontal_scaling: 100.0,
+        text_rise: 0.0,
+    });
+
+    let text = String::from_utf8_lossy(&result);
+    // CubicToは直接PDF `c` 演算子に変換される（Quad→Cubic変換不要）
+    assert!(
+        text.contains(" c\n"),
+        "CubicTo should produce PDF cubic bezier 'c' operator, got: {}",
+        text
+    );
+}
+
+#[test]
+fn test_cubic_to_coordinates_transformed() {
+    // CubicToの座標がfont_size/units_per_emでスケーリングされること
+    let outline = vec![
+        PathOp::MoveTo(0.0, 0.0),
+        PathOp::CubicTo(1000.0, 0.0, 1000.0, 1000.0, 0.0, 1000.0),
+        PathOp::Close,
+    ];
+
+    let result = glyph_to_pdf_path(&GlyphPathParams {
+        outline: &outline,
+        font_size: 10.0,
+        units_per_em: 1000,
+        text_matrix: &Matrix::identity(),
+        ctm: &Matrix::identity(),
+        fill_color: &FillColor::Gray(0.0),
+        horizontal_scaling: 100.0,
+        text_rise: 0.0,
+    });
+
+    let text = String::from_utf8_lossy(&result);
+    // 1000 * (10/1000) = 10.0 にスケーリング
+    // "10 0 10 10 0 10 c" のようなパターンが含まれるはず
+    assert!(
+        text.contains("10 0 10 10 0 10 c"),
+        "CubicTo coordinates should be scaled, got: {}",
+        text
+    );
+}
+
+// ============================================================
+// 6. horizontal_scaling / text_rise
 // ============================================================
 
 #[test]

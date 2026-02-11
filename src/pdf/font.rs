@@ -11,6 +11,8 @@ pub enum PathOp {
     MoveTo(f64, f64),
     LineTo(f64, f64),
     QuadTo(f64, f64, f64, f64),
+    /// 3次ベジェ曲線（CFF/CFF2フォント用）: (x1, y1, x2, y2, x, y)
+    CubicTo(f64, f64, f64, f64, f64, f64),
     Close,
 }
 
@@ -19,6 +21,28 @@ pub enum PathOp {
 pub enum FontEncoding {
     WinAnsi { differences: HashMap<u8, String> },
     IdentityH,
+}
+
+impl FontEncoding {
+    /// バイト列をエンコーディングに応じて文字コード列に変換する。
+    pub fn bytes_to_char_codes(&self, bytes: &[u8]) -> Vec<u16> {
+        match self {
+            FontEncoding::IdentityH => {
+                if !bytes.len().is_multiple_of(2) {
+                    eprintln!(
+                        "Warning: IdentityH encoded string has odd length ({} bytes); \
+                         trailing byte will be ignored.",
+                        bytes.len()
+                    );
+                }
+                bytes
+                    .chunks_exact(2)
+                    .map(|pair| ((pair[0] as u16) << 8) | pair[1] as u16)
+                    .collect()
+            }
+            FontEncoding::WinAnsi { .. } => bytes.iter().map(|&b| b as u16).collect(),
+        }
+    }
 }
 
 /// 解析済みフォント
@@ -103,9 +127,10 @@ impl ttf_parser::OutlineBuilder for OutlineBuilder {
             .push(PathOp::QuadTo(x1 as f64, y1 as f64, x as f64, y as f64));
     }
 
-    fn curve_to(&mut self, _x1: f32, _y1: f32, _x2: f32, _y2: f32, _x: f32, _y: f32) {
-        // TrueType fonts don't use cubic curves, but handle gracefully
-        // CFF/CFF2 fonts would use this, but we only support TrueType
+    fn curve_to(&mut self, x1: f32, y1: f32, x2: f32, y2: f32, x: f32, y: f32) {
+        self.ops.push(PathOp::CubicTo(
+            x1 as f64, y1 as f64, x2 as f64, y2 as f64, x as f64, y as f64,
+        ));
     }
 
     fn close(&mut self) {

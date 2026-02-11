@@ -121,6 +121,25 @@ pub fn glyph_to_pdf_path(params: &GlyphPathParams) -> Vec<u8> {
                 )
                 .unwrap();
             }
+            PathOp::CubicTo(x1, y1, x2, y2, x, y) => {
+                // CFF/CFF2の3次ベジェ: そのままPDF `c` 演算子に出力（変換不要）
+                let (px1, py1) = transform(*x1, *y1);
+                let (px2, py2) = transform(*x2, *y2);
+                let (px3, py3) = transform(*x, *y);
+                current_x = *x;
+                current_y = *y;
+                writeln!(
+                    buf,
+                    "{} {} {} {} {} {} c",
+                    format_f64(px1),
+                    format_f64(py1),
+                    format_f64(px2),
+                    format_f64(py2),
+                    format_f64(px3),
+                    format_f64(py3)
+                )
+                .unwrap();
+            }
             PathOp::Close => {
                 writeln!(buf, "h").unwrap();
             }
