@@ -1,10 +1,10 @@
 // Phase 3: 安全ラッパー（Pix型、RAII Drop）
 
 use super::leptonica_sys::{
-    BOX, BOXA, L_CLONE, PIX, boxDestroy, boxGetGeometry, boxaDestroy, boxaGetBox, boxaGetCount,
-    pixClone, pixConnCompBB, pixConvertRGBToGray, pixCreate, pixDestroy, pixGetData, pixGetDepth,
-    pixGetHeight, pixGetRegionsBinary, pixGetWidth, pixGetWpl, pixOtsuAdaptiveThreshold, pixSetAll,
-    pixSetPixel,
+    BOX, BOXA, L_CLONE, PIX, boxCreate, boxDestroy, boxGetGeometry, boxaDestroy, boxaGetBox,
+    boxaGetCount, pixClipRectangle, pixClone, pixConnCompBB, pixConvertRGBToGray, pixCreate,
+    pixDestroy, pixGetData, pixGetDepth, pixGetHeight, pixGetRegionsBinary, pixGetWidth, pixGetWpl,
+    pixOtsuAdaptiveThreshold, pixSetAll, pixSetPixel,
 };
 use crate::error::{PdfMaskError, Result};
 use std::ptr;
@@ -432,6 +432,83 @@ impl Pix {
                 ))
             } else {
                 Ok(Pix { ptr })
+            }
+        }
+    }
+
+    /// Clip a rectangular region from the image.
+    ///
+    /// Wraps leptonica's `pixClipRectangle`. Returns a new `Pix` containing
+    /// the specified rectangular region.
+    ///
+    /// # Arguments
+    /// * `x` - X coordinate of the top-left corner
+    /// * `y` - Y coordinate of the top-left corner
+    /// * `w` - Width of the rectangle
+    /// * `h` - Height of the rectangle
+    ///
+    /// # Errors
+    /// Returns an error if the rectangle is out of bounds or if leptonica fails.
+    ///
+    /// # Returns
+    /// `Ok(Pix)` containing the clipped region, `Err` on failure
+    pub fn clip_rectangle(&self, x: u32, y: u32, w: u32, h: u32) -> Result<Pix> {
+        // Validate dimensions
+        if x >= self.get_width() || y >= self.get_height() {
+            return Err(PdfMaskError::segmentation(format!(
+                "clip rectangle origin ({}, {}) is out of bounds for {}x{} image",
+                x,
+                y,
+                self.get_width(),
+                self.get_height()
+            )));
+        }
+
+        if x + w > self.get_width() || y + h > self.get_height() {
+            return Err(PdfMaskError::segmentation(format!(
+                "clip rectangle (x={}, y={}, w={}, h={}) exceeds image bounds ({}x{})",
+                x,
+                y,
+                w,
+                h,
+                self.get_width(),
+                self.get_height()
+            )));
+        }
+
+        // Validate u32 values fit in i32 before casting
+        if x > i32::MAX as u32 || y > i32::MAX as u32 || w > i32::MAX as u32 || h > i32::MAX as u32
+        {
+            return Err(PdfMaskError::segmentation(format!(
+                "clip rectangle parameters exceed i32::MAX (x={}, y={}, w={}, h={})",
+                x, y, w, h
+            )));
+        }
+
+        unsafe {
+            // Create BOX for the rectangle
+            let box_ptr = boxCreate(x as i32, y as i32, w as i32, h as i32);
+            if box_ptr.is_null() {
+                return Err(PdfMaskError::segmentation(format!(
+                    "boxCreate failed for rectangle (x={}, y={}, w={}, h={})",
+                    x, y, w, h
+                )));
+            }
+
+            // Clip the rectangle (pboxc = null since we don't need the clipped box)
+            let pix_ptr = pixClipRectangle(self.ptr, box_ptr, ptr::null_mut());
+
+            // Clean up the BOX
+            let mut box_to_destroy = box_ptr;
+            boxDestroy(&mut box_to_destroy);
+
+            if pix_ptr.is_null() {
+                Err(PdfMaskError::segmentation(format!(
+                    "pixClipRectangle failed for rectangle (x={}, y={}, w={}, h={})",
+                    x, y, w, h
+                )))
+            } else {
+                Ok(Pix { ptr: pix_ptr })
             }
         }
     }
