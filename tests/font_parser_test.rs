@@ -3,6 +3,7 @@
 use lopdf::{Document, Object, Stream, dictionary};
 use pdf_masking::pdf::font::FontEncoding;
 use std::path::Path;
+use tracing::warn;
 
 // ============================================================
 // 1. サンプルPDFからのフォント解析
@@ -188,6 +189,7 @@ fn test_parse_page_fonts_skips_unresolvable_system_fonts() {
 
 #[test]
 fn test_page2_bold_italic_system_fonts_resolved() {
+    let _ = tracing_subscriber::fmt().with_test_writer().try_init();
     // F7=TimesNewRomanPS-ItalicMT, F8=TimesNewRomanPS-BoldMT はスタイル付き非埋め込みフォント
     // PostScript名の -BoldMT, -ItalicMT サフィックスから正しくファミリ・スタイルをパースすべき
     let doc = lopdf::Document::load("sample/pdf_test.pdf").expect("load PDF");
@@ -195,7 +197,7 @@ fn test_page2_bold_italic_system_fonts_resolved() {
 
     if !fonts.contains_key("F1") {
         // システムにTimes New Roman互換フォントがない環境ではスキップ
-        eprintln!("SKIP: system font not available");
+        warn!("SKIP: system font not available");
         return;
     }
 
@@ -212,6 +214,7 @@ fn test_page2_bold_italic_system_fonts_resolved() {
 
 #[test]
 fn test_system_font_resolved_for_non_embedded() {
+    let _ = tracing_subscriber::fmt().with_test_writer().try_init();
     // F1（TimesNewRomanPSMT）は埋め込みフォントがないが、
     // システムフォント解決により parse_page_fonts が返すフォントに含まれるべき
     let doc = lopdf::Document::load("sample/pdf_test.pdf").expect("load PDF");
@@ -219,7 +222,7 @@ fn test_system_font_resolved_for_non_embedded() {
 
     if !fonts.contains_key("F1") {
         // システムにTimesNewRomanまたは互換フォントがない環境ではスキップ
-        eprintln!("SKIP: F1 (TimesNewRomanPSMT) not resolved — system font not available");
+        warn!("SKIP: F1 (TimesNewRomanPSMT) not resolved — system font not available");
         return;
     }
 
@@ -232,6 +235,7 @@ fn test_system_font_resolved_for_non_embedded() {
 
 #[test]
 fn test_system_font_glyph_outline_available() {
+    let _ = tracing_subscriber::fmt().with_test_writer().try_init();
     // システムフォント解決されたフォントでグリフアウトラインが取得できること
     let doc = lopdf::Document::load("sample/pdf_test.pdf").expect("load PDF");
     let fonts = pdf_masking::pdf::font::parse_page_fonts(&doc, 1).expect("parse fonts");
@@ -239,7 +243,7 @@ fn test_system_font_glyph_outline_available() {
     let font = match fonts.get("F1") {
         Some(f) => f,
         None => {
-            eprintln!("SKIP: F1 not resolved — system font not available");
+            warn!("SKIP: F1 not resolved — system font not available");
             return;
         }
     };
@@ -316,6 +320,7 @@ fn create_type1_test_pdf(path: &Path) {
 
 #[test]
 fn test_type1_font_parsed_from_system() {
+    let _ = tracing_subscriber::fmt().with_test_writer().try_init();
     // Type1フォント（Helvetica）がシステムフォント解決によりパースされること
     let temp_dir = tempfile::tempdir().expect("create temp dir");
     let pdf_path = temp_dir.path().join("type1_parsed_test.pdf");
@@ -329,7 +334,7 @@ fn test_type1_font_parsed_from_system() {
     let font = if let Some(font) = fonts.get("F1") {
         font
     } else {
-        eprintln!("skipping Type1 font test: system Helvetica (F1) could not be resolved");
+        warn!("skipping Type1 font test: system Helvetica (F1) could not be resolved");
         return;
     };
 
@@ -342,6 +347,7 @@ fn test_type1_font_parsed_from_system() {
 
 #[test]
 fn test_type1_font_glyph_outline() {
+    let _ = tracing_subscriber::fmt().with_test_writer().try_init();
     // Type1フォント（Helvetica）からグリフアウトラインが取得できること
     let temp_dir = tempfile::tempdir().expect("create temp dir");
     let pdf_path = temp_dir.path().join("type1_outline_test.pdf");
@@ -353,7 +359,7 @@ fn test_type1_font_glyph_outline() {
     let font = if let Some(font) = fonts.get("F1") {
         font
     } else {
-        eprintln!("skipping Type1 glyph outline test: system Helvetica (F1) could not be resolved");
+        warn!("skipping Type1 glyph outline test: system Helvetica (F1) could not be resolved");
         return;
     };
 
@@ -372,6 +378,7 @@ fn test_type1_font_glyph_outline() {
 
 #[test]
 fn test_mmtype1_font_parsed_from_system() {
+    let _ = tracing_subscriber::fmt().with_test_writer().try_init();
     // MMType1フォント（Multiple Master Type1）もType1と同様に扱う
     let temp_dir = tempfile::tempdir().expect("create temp dir");
     let pdf_path = temp_dir.path().join("mmtype1_parsed_test.pdf");
@@ -434,7 +441,7 @@ fn test_mmtype1_font_parsed_from_system() {
     let font = if let Some(font) = fonts.get("F1") {
         font
     } else {
-        eprintln!("skipping MMType1 font test: system Helvetica (F1) could not be resolved");
+        warn!("skipping MMType1 font test: system Helvetica (F1) could not be resolved");
         return;
     };
 
