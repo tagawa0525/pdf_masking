@@ -328,7 +328,17 @@ impl MrcPageWriter {
         let mut text_xobjects: Vec<(String, lopdf::ObjectId)> = Vec::new();
         for (i, region) in data.text_regions.iter().enumerate() {
             let name = format!("TxtRgn{}", i);
-            let xobj_id = self.add_mask_xobject(&region.jbig2_data, region.pixel_width, region.pixel_height);
+            let xobj_id =
+                self.add_mask_xobject(&region.jbig2_data, region.pixel_width, region.pixel_height);
+
+            // テキスト領域JBIG2も極性を反転させる（BWページと同じ理由）
+            if let Some(Object::Stream(stream)) = self.doc.objects.get_mut(&xobj_id) {
+                stream.dict.set(
+                    "Decode",
+                    Object::Array(vec![Object::Integer(1), Object::Integer(0)]),
+                );
+            }
+
             text_xobjects.push((name, xobj_id));
         }
 
