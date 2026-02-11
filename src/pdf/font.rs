@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::sync::LazyLock;
 
 use lopdf::{Document, Object, ObjectId};
 use ttf_parser::GlyphId;
@@ -48,6 +49,7 @@ impl FontEncoding {
 /// 解析済みフォント
 pub struct ParsedFont {
     font_data: Vec<u8>,
+    face_index: u32,
     encoding: FontEncoding,
     widths: HashMap<u16, f64>,
     default_width: f64,
@@ -65,7 +67,7 @@ impl ParsedFont {
 
     /// 文字コード→グリフIDを解決
     pub fn char_code_to_glyph_id(&self, code: u16) -> Option<GlyphId> {
-        let face = ttf_parser::Face::parse(&self.font_data, 0).ok()?;
+        let face = ttf_parser::Face::parse(&self.font_data, self.face_index).ok()?;
         match &self.encoding {
             FontEncoding::WinAnsi { differences } => {
                 // Differences配列: グリフ名→cmapでUnicode→GID
@@ -95,7 +97,7 @@ impl ParsedFont {
 
     /// グリフIDからアウトラインを取得
     pub fn glyph_outline(&self, glyph_id: GlyphId) -> Option<Vec<PathOp>> {
-        let face = ttf_parser::Face::parse(&self.font_data, 0).ok()?;
+        let face = ttf_parser::Face::parse(&self.font_data, self.face_index).ok()?;
         let mut builder = OutlineBuilder::new();
         face.outline_glyph(glyph_id, &mut builder)?;
         Some(builder.ops)
@@ -138,8 +140,155 @@ impl ttf_parser::OutlineBuilder for OutlineBuilder {
     }
 }
 
+/// システムフォントデータベース（一度だけ初期化）
+static SYSTEM_FONT_DB: LazyLock<fontdb::Database> = LazyLock::new(|| {
+    let mut db = fontdb::Database::new();
+    db.load_system_fonts();
+    db
+});
+
+/// PostScript フォント名からファミリ名とスタイルを推定して fontdb::Query を構築
+fn parse_ps_name_to_query(ps_name: &str) -> (String, fontdb::Weight, bool) {
+    let mut family = ps_name.to_string();
+    let mut weight = fontdb::Weight::NORMAL;
+    let mut is_italic = false;
+
+    // MT (Mac) / PS (PostScript) サフィックスを先に除去
+    // "-BoldMT" → "-Bold", "-ItalicMT" → "-Italic" にしてからスタイル解析
+    family = family.trim_end_matches("MT").to_string();
+
+    // サフィックスの解析 (-Bold, -Italic, -BoldItalic, -Oblique)
+    if family.ends_with("-BoldItalic") {
+        family = family.strip_suffix("-BoldItalic").unwrap().to_string();
+        weight = fontdb::Weight::BOLD;
+        is_italic = true;
+    } else if family.ends_with("-Bold") {
+        family = family.strip_suffix("-Bold").unwrap().to_string();
+        weight = fontdb::Weight::BOLD;
+    } else if family.ends_with("-Italic") {
+        family = family.strip_suffix("-Italic").unwrap().to_string();
+        is_italic = true;
+    } else if family.ends_with("-Oblique") {
+        family = family.strip_suffix("-Oblique").unwrap().to_string();
+        is_italic = true;
+    }
+
+    // 残りの PS サフィックスを除去
+    family = family.trim_end_matches("PS").to_string();
+
+    // CamelCase をスペース区切りに展開: TimesNewRoman → Times New Roman
+    let mut result = String::new();
+    for (i, ch) in family.chars().enumerate() {
+        if i > 0 && ch.is_uppercase() {
+            result.push(' ');
+        }
+        result.push(ch);
+    }
+
+    (result, weight, is_italic)
+}
+
+/// 非埋め込みフォントをシステムフォントから解決
+/// Returns: (font_data, face_index)
+fn resolve_system_font(base_font_name: &str) -> crate::error::Result<(Vec<u8>, u32)> {
+    let db = &*SYSTEM_FONT_DB;
+
+    // Helper to load font data from face info
+    let load_font_data = |face_info: &fontdb::FaceInfo| -> Option<(Vec<u8>, u32)> {
+        let font_data = match &face_info.source {
+            fontdb::Source::File(path) => std::fs::read(path).ok()?,
+            fontdb::Source::SharedFile(path, _) => std::fs::read(path).ok()?,
+            fontdb::Source::Binary(_) => {
+                // Memory-resident fonts (e.g., embedded in the binary)
+                return None;
+            }
+        };
+        Some((font_data, face_info.index))
+    };
+
+    // 1. PostScript 名で完全一致検索
+    for face_info in db.faces() {
+        if face_info.post_script_name == base_font_name
+            && let Some((font_data, face_index)) = load_font_data(face_info)
+        {
+            return Ok((font_data, face_index));
+        }
+    }
+
+    // 2. ファミリ名とスタイルから検索
+    let (family, weight, is_italic) = parse_ps_name_to_query(base_font_name);
+
+    let query = fontdb::Query {
+        families: &[fontdb::Family::Name(&family)],
+        weight,
+        stretch: fontdb::Stretch::Normal,
+        style: if is_italic {
+            fontdb::Style::Italic
+        } else {
+            fontdb::Style::Normal
+        },
+    };
+
+    if let Some(id) = db.query(&query)
+        && let Some(face_info) = db.face(id)
+        && let Some((font_data, face_index)) = load_font_data(face_info)
+    {
+        return Ok((font_data, face_index));
+    }
+
+    // 3. Linux での代替フォント検索
+    let fallback_family = match family.as_str() {
+        "Times New Roman" => "Liberation Serif",
+        "Arial" => "Liberation Sans",
+        "Courier" => "Liberation Mono",
+        _ => {
+            return Err(PdfMaskError::pdf_read(format!(
+                "system font not found: {}",
+                base_font_name
+            )));
+        }
+    };
+
+    let fallback_query = fontdb::Query {
+        families: &[fontdb::Family::Name(fallback_family)],
+        weight,
+        stretch: fontdb::Stretch::Normal,
+        style: if is_italic {
+            fontdb::Style::Italic
+        } else {
+            fontdb::Style::Normal
+        },
+    };
+
+    if let Some(id) = db.query(&fallback_query)
+        && let Some(face_info) = db.face(id)
+        && let Some((font_data, face_index)) = load_font_data(face_info)
+    {
+        return Ok((font_data, face_index));
+    }
+
+    Err(PdfMaskError::pdf_read(format!(
+        "system font not found: {}",
+        base_font_name
+    )))
+}
+
+/// フォント辞書から BaseFont を取得してシステムフォント解決
+fn resolve_system_font_from_dict(
+    font_dict: &lopdf::Dictionary,
+) -> crate::error::Result<(Vec<u8>, u32)> {
+    let base_font = font_dict
+        .get(b"BaseFont")
+        .ok()
+        .and_then(|o| o.as_name().ok())
+        .map(|n| String::from_utf8_lossy(n).into_owned())
+        .ok_or_else(|| PdfMaskError::pdf_read("no BaseFont in font dictionary"))?;
+
+    resolve_system_font(&base_font)
+}
+
 /// ページのフォントリソースを解析し、ParsedFontのマップを返す。
-/// 埋込フォントデータが無いフォントはスキップされる。
+/// 埋込フォントデータが無いフォントはシステムフォントから解決を試みる。
 pub fn parse_page_fonts(
     doc: &Document,
     page_num: u32,
@@ -164,8 +313,13 @@ pub fn parse_page_fonts(
             }
             Err(e) => {
                 let msg = e.to_string();
-                if msg.contains("FontFile2") || msg.contains("FontDescriptor") {
-                    // 埋込フォントデータが無い場合はスキップ
+                if msg.contains("FontFile2")
+                    || msg.contains("FontDescriptor")
+                    || msg.contains("system font not found")
+                    || msg.contains("unsupported font subtype")
+                {
+                    // 埋込データなし、システムフォント未検出、非対応形式はスキップ
+                    // 呼び出し元が不足フォントを処理する（例: pdfium フォールバック）
                     continue;
                 }
                 return Err(e);
@@ -279,16 +433,21 @@ fn parse_truetype_font(
     doc: &Document,
     font_dict: &lopdf::Dictionary,
 ) -> crate::error::Result<ParsedFont> {
-    let font_data = extract_font_file2(doc, font_dict)?;
+    // 埋め込みフォントデータが無ければシステムフォント解決
+    let (font_data, face_index) = extract_font_file2(doc, font_dict)
+        .map(|data| (data, 0u32))
+        .or_else(|_| resolve_system_font_from_dict(font_dict))?;
+
     let encoding = parse_encoding(doc, font_dict)?;
     let widths = parse_truetype_widths(doc, font_dict)?;
 
-    let face = ttf_parser::Face::parse(&font_data, 0)
+    let face = ttf_parser::Face::parse(&font_data, face_index)
         .map_err(|e| PdfMaskError::pdf_read(format!("failed to parse TrueType: {}", e)))?;
     let units_per_em = face.units_per_em();
 
     Ok(ParsedFont {
         font_data,
+        face_index,
         encoding,
         widths,
         default_width: 1000.0,
@@ -347,7 +506,11 @@ fn parse_type0_font(
         }
     }
 
-    let font_data = extract_font_file2(doc, cid_font_dict)?;
+    // 埋め込みフォントデータが無ければシステムフォント解決
+    let (font_data, face_index) = extract_font_file2(doc, cid_font_dict)
+        .map(|data| (data, 0u32))
+        .or_else(|_| resolve_system_font_from_dict(cid_font_dict))?;
+
     let widths = parse_cid_widths(doc, cid_font_dict)?;
     let default_width = cid_font_dict
         .get(b"DW")
@@ -359,12 +522,13 @@ fn parse_type0_font(
         })
         .unwrap_or(1000.0);
 
-    let face = ttf_parser::Face::parse(&font_data, 0)
+    let face = ttf_parser::Face::parse(&font_data, face_index)
         .map_err(|e| PdfMaskError::pdf_read(format!("failed to parse CID TrueType: {}", e)))?;
     let units_per_em = face.units_per_em();
 
     Ok(ParsedFont {
         font_data,
+        face_index,
         encoding: FontEncoding::IdentityH,
         widths,
         default_width,
