@@ -4,7 +4,7 @@ use std::collections::HashMap;
 use std::path::Path;
 
 use image::DynamicImage;
-use tracing::warn;
+use tracing::{debug, warn};
 
 use crate::cache::hash::{CacheSettings, compute_cache_key};
 use crate::cache::store::CacheStore;
@@ -69,6 +69,7 @@ impl ProcessPageOutlinesParams<'_> {
             && let Some(cached) = store.retrieve(&cache_key, color_mode, None)?
             && !matches!(&cached, PageOutput::Skip(_))
         {
+            debug!(page = self.page_index, path = "outlines", "cache hit");
             return Ok(ProcessedPage {
                 page_index: self.page_index,
                 output: cached,
@@ -76,6 +77,7 @@ impl ProcessPageOutlinesParams<'_> {
             });
         }
 
+        debug!(page = self.page_index, path = "outlines", "cache miss");
         // Run compose_text_outlines (no bitmap needed)
         let empty_streams = HashMap::new();
         let streams = self.image_streams.unwrap_or(&empty_streams);
@@ -190,6 +192,7 @@ impl ProcessPageParams<'_> {
             match &cached {
                 PageOutput::Skip(_) => {}
                 _ => {
+                    debug!(page = self.page_index, path = "mrc", "cache hit");
                     return Ok(ProcessedPage {
                         page_index: self.page_index,
                         output: cached,
@@ -199,6 +202,7 @@ impl ProcessPageParams<'_> {
             }
         }
 
+        debug!(page = self.page_index, path = "mrc", "cache miss");
         // Cache miss: run MRC composition
         let rgba_image = self.bitmap.to_rgba8();
         let (width, height) = (rgba_image.width(), rgba_image.height());

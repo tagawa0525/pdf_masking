@@ -3,6 +3,7 @@
 use std::collections::HashMap;
 
 use lopdf::{Document, Object, Stream, dictionary};
+use tracing::debug;
 
 use crate::config::job::ColorMode;
 use crate::error::PdfMaskError;
@@ -279,6 +280,7 @@ impl MrcPageWriter {
 
         self.append_page_to_kids(pages_id, page_id);
 
+        debug!("write_mrc_page complete");
         Ok(page_id)
     }
 
@@ -331,6 +333,7 @@ impl MrcPageWriter {
 
         self.append_page_to_kids(pages_id, page_id);
 
+        debug!("write_bw_page complete");
         Ok(page_id)
     }
 
@@ -558,6 +561,7 @@ impl MrcPageWriter {
 
         self.append_page_to_kids(pages_id, new_page_id);
 
+        debug!(page = page_num, "copy_page_from complete");
         Ok(new_page_id)
     }
 
@@ -668,6 +672,7 @@ impl MrcPageWriter {
         self.doc
             .save_to(&mut buf)
             .map_err(|e| crate::error::PdfMaskError::pdf_write(e.to_string()))?;
+        debug!(bytes = buf.len(), "save_to_bytes complete");
         Ok(buf)
     }
 }

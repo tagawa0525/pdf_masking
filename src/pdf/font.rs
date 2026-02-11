@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::sync::LazyLock;
 
 use lopdf::{Document, Object, ObjectId};
-use tracing::warn;
+use tracing::{debug, warn};
 use ttf_parser::GlyphId;
 
 use crate::error::PdfMaskError;
@@ -328,6 +328,7 @@ pub fn parse_page_fonts(
         }
     }
 
+    debug!(page = page_num, count = fonts.len(), "parsed page fonts");
     Ok(fonts)
 }
 
@@ -486,7 +487,10 @@ fn parse_truetype_font(
     // 埋め込みフォントデータが無ければシステムフォント解決
     let (font_data, face_index) = extract_font_file2(doc, font_dict)
         .map(|data| (data, 0u32))
-        .or_else(|_| resolve_system_font_from_dict(font_dict))?;
+        .or_else(|_| {
+            debug!("embedded font data not found, trying system font resolution");
+            resolve_system_font_from_dict(font_dict)
+        })?;
 
     let encoding = parse_encoding(doc, font_dict)?;
     let mut widths = parse_truetype_widths(doc, font_dict)?;
@@ -564,7 +568,10 @@ fn parse_type0_font(
     // 埋め込みフォントデータが無ければシステムフォント解決
     let (font_data, face_index) = extract_font_file2(doc, cid_font_dict)
         .map(|data| (data, 0u32))
-        .or_else(|_| resolve_system_font_from_dict(cid_font_dict))?;
+        .or_else(|_| {
+            debug!("embedded CID font data not found, trying system font resolution");
+            resolve_system_font_from_dict(cid_font_dict)
+        })?;
 
     let widths = parse_cid_widths(doc, cid_font_dict)?;
     let default_width = cid_font_dict

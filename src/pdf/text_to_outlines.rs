@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 
 use lopdf::content::Content;
+use tracing::debug;
 
 use crate::error::{PdfMaskError, Result};
 use crate::pdf::content_stream::{Matrix, operand_to_f64};
@@ -203,6 +204,10 @@ pub fn convert_text_to_outlines(
     // パスバイト列を追加
     result.extend_from_slice(&path_bytes);
 
+    debug!(
+        output_bytes = result.len(),
+        "text-to-outlines conversion complete"
+    );
     Ok(result)
 }
 

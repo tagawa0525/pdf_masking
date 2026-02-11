@@ -7,6 +7,7 @@ use flate2::read::ZlibDecoder;
 use image::{DynamicImage, GrayImage, RgbImage};
 use lopdf::Object;
 use std::io::Read;
+use tracing::{debug, warn};
 
 /// 2つのBBoxの重なりを判定する。
 ///
@@ -290,6 +291,12 @@ pub fn redact_image_regions(
         .filter_map(|rb| page_to_image_coords(rb, image_placement, meta.width, meta.height))
         .collect();
 
+    debug!(
+        overlapping = overlapping.len(),
+        pixel_regions = pixel_regions.len(),
+        "redact_image_regions"
+    );
+
     if pixel_regions.is_empty() {
         return Ok(None);
     }
@@ -379,10 +386,13 @@ fn encode_image(img: &DynamicImage, meta: &ImageMeta) -> crate::error::Result<(V
             };
             Ok((raw, String::new()))
         }
-        Some(other) => Err(PdfMaskError::image_xobject(format!(
-            "Cannot re-encode unsupported filter: {}",
-            other
-        ))),
+        Some(other) => {
+            warn!(filter = other, "unsupported image filter for re-encoding");
+            Err(PdfMaskError::image_xobject(format!(
+                "Cannot re-encode unsupported filter: {}",
+                other
+            )))
+        }
     }
 }
 
@@ -477,9 +487,15 @@ pub fn optimize_image_encoding(
     // 最小サイズの候補を選択（元のサイズ以下のもの）
     candidates.sort_by_key(|c| c.data.len());
 
-    Ok(candidates
+    let result = candidates
         .into_iter()
-        .find(|c| c.data.len() <= original_size))
+        .find(|c| c.data.len() <= original_size);
+    debug!(
+        candidates_tried = if is_color { 2 } else { 3 },
+        selected = result.as_ref().map(|r| r.filter),
+        "optimize_image_encoding"
+    );
+    Ok(result)
 }
 
 #[cfg(test)]

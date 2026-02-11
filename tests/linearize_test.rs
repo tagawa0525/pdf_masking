@@ -7,6 +7,7 @@ use lopdf::{Document, Object, Stream, dictionary};
 use pdf_masking::error::PdfMaskError;
 use pdf_masking::linearize::{linearize, linearize_in_place};
 use tempfile::tempdir;
+use tracing::warn;
 
 /// Check whether qpdf is available on PATH.
 fn qpdf_available() -> bool {
@@ -54,8 +55,9 @@ fn create_test_pdf(path: &std::path::Path) {
 /// Linearize creates an output file at the specified path.
 #[test]
 fn test_linearize_creates_output() {
+    let _ = tracing_subscriber::fmt().with_test_writer().try_init();
     if !qpdf_available() {
-        eprintln!("Skipping: qpdf not found in PATH (run inside `nix develop`)");
+        warn!("Skipping: qpdf not found in PATH (run inside `nix develop`)");
         return;
     }
     let dir = tempdir().expect("create temp dir");
@@ -76,8 +78,9 @@ fn test_linearize_creates_output() {
 /// Linearize in-place replaces the original file and keeps it valid.
 #[test]
 fn test_linearize_in_place() {
+    let _ = tracing_subscriber::fmt().with_test_writer().try_init();
     if !qpdf_available() {
-        eprintln!("Skipping: qpdf not found in PATH (run inside `nix develop`)");
+        warn!("Skipping: qpdf not found in PATH (run inside `nix develop`)");
         return;
     }
     let dir = tempdir().expect("create temp dir");
@@ -108,8 +111,9 @@ fn test_linearize_in_place() {
 /// Linearize returns an error for a nonexistent input file.
 #[test]
 fn test_linearize_nonexistent_input() {
+    let _ = tracing_subscriber::fmt().with_test_writer().try_init();
     if !qpdf_available() {
-        eprintln!("Skipping: qpdf not found in PATH (run inside `nix develop`)");
+        warn!("Skipping: qpdf not found in PATH (run inside `nix develop`)");
         return;
     }
     let dir = tempdir().expect("create temp dir");
@@ -131,8 +135,9 @@ fn test_linearize_nonexistent_input() {
 /// Linearized output can be loaded by lopdf as a valid PDF.
 #[test]
 fn test_linearize_output_is_valid_pdf() {
+    let _ = tracing_subscriber::fmt().with_test_writer().try_init();
     if !qpdf_available() {
-        eprintln!("Skipping: qpdf not found in PATH (run inside `nix develop`)");
+        warn!("Skipping: qpdf not found in PATH (run inside `nix develop`)");
         return;
     }
     let dir = tempdir().expect("create temp dir");

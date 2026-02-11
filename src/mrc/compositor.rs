@@ -2,6 +2,8 @@
 
 use std::collections::HashMap;
 
+use tracing::debug;
+
 use super::{
     BwLayers, ImageModification, MrcLayers, TextMaskedData, TextRegionCrop, jbig2, jpeg, segmenter,
 };
@@ -80,6 +82,12 @@ pub fn compose(
         }
     };
 
+    debug!(
+        mask_bytes = mask_jbig2.len(),
+        bg_bytes = background_jpeg.len(),
+        fg_bytes = foreground_jpeg.len(),
+        "compose MRC layers"
+    );
     Ok(MrcLayers {
         mask_jbig2,
         foreground_jpeg,
@@ -103,6 +111,7 @@ pub fn compose_bw(
     let mut text_mask = segmenter::segment_text_mask(rgba_data, width, height)?;
     let mask_jbig2 = jbig2::encode_mask(&mut text_mask)?;
 
+    debug!(mask_bytes = mask_jbig2.len(), "compose BW layers");
     Ok(BwLayers {
         mask_jbig2,
         width,
@@ -256,6 +265,11 @@ pub fn compose_text_masked(params: &TextMaskedParams) -> crate::error::Result<Te
         })
         .collect::<crate::error::Result<Vec<_>>>()?;
 
+    debug!(
+        text_regions = text_regions.len(),
+        modified_images = modified_images.len(),
+        "compose_text_masked"
+    );
     Ok(TextMaskedData {
         stripped_content_stream,
         text_regions,
@@ -300,6 +314,11 @@ pub fn compose_text_outlines(params: &TextOutlinesParams) -> crate::error::Resul
     // 2. 白色fill矩形と重なる画像をリダクション
     let modified_images = detect_and_redact_images(params.content_bytes, params.image_streams)?;
 
+    debug!(
+        outlines_bytes = outlines_content.len(),
+        modified_images = modified_images.len(),
+        "compose_text_outlines"
+    );
     Ok(TextMaskedData {
         stripped_content_stream: outlines_content,
         text_regions: Vec::new(), // テキストはパスとしてコンテンツストリームに含まれる

@@ -6,6 +6,7 @@ use pdf_masking::pdf::font::{FontEncoding, ParsedFont};
 use pdf_masking::pdf::text_to_outlines::{
     convert_text_to_outlines, extract_char_codes_for_encoding, parse_tj_entries_for_encoding,
 };
+use tracing::warn;
 
 // ============================================================
 // ヘルパー: サンプルPDFからフォントを取得
@@ -63,6 +64,7 @@ fn test_missing_font_returns_error() {
 
 #[test]
 fn test_sample_pdf_converts_with_system_fonts() {
+    let _ = tracing_subscriber::fmt().with_test_writer().try_init();
     // システムフォント解決により、非埋め込みフォント（F1等）も含めて全フォントが
     // 解決されるため、convert_text_to_outlines は Ok を返すべき
     let doc = lopdf::Document::load("sample/pdf_test.pdf").expect("load PDF");
@@ -70,7 +72,7 @@ fn test_sample_pdf_converts_with_system_fonts() {
 
     // F1（TimesNewRomanPSMT）がシステムフォントとして解決されていない場合はスキップ
     if !fonts.contains_key("F1") {
-        eprintln!("SKIP: F1 not resolved — system font not available");
+        warn!("SKIP: F1 not resolved — system font not available");
         return;
     }
 

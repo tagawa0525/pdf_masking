@@ -8,6 +8,7 @@ use std::path::Path;
 use std::process::Command;
 
 use lopdf::{Document, Object, Stream, content::Content, dictionary};
+use tracing::warn;
 
 // ============================================================
 // Guards and helpers
@@ -235,8 +236,9 @@ fn write_settings_yaml(dir: &Path, dpi: u32, bg_quality: u8) {
 /// verify output PDF exists and is valid (loadable by lopdf, has 1 page).
 #[test]
 fn test_e2e_single_page_pdf() {
+    let _ = tracing_subscriber::fmt().with_test_writer().try_init();
     if !pdfium_available() {
-        eprintln!("Skipping: PDFIUM_DYNAMIC_LIB_PATH not set (run inside `nix develop`)");
+        warn!("Skipping: PDFIUM_DYNAMIC_LIB_PATH not set (run inside `nix develop`)");
         return;
     }
 
@@ -275,8 +277,9 @@ fn test_e2e_single_page_pdf() {
 /// verify output has all 3 pages.
 #[test]
 fn test_e2e_multi_page_pdf() {
+    let _ = tracing_subscriber::fmt().with_test_writer().try_init();
     if !pdfium_available() {
-        eprintln!("Skipping: PDFIUM_DYNAMIC_LIB_PATH not set (run inside `nix develop`)");
+        warn!("Skipping: PDFIUM_DYNAMIC_LIB_PATH not set (run inside `nix develop`)");
         return;
     }
 
@@ -320,8 +323,9 @@ fn test_e2e_multi_page_pdf() {
 /// verify settings are applied (output contains XObjects proving MRC processing occurred).
 #[test]
 fn test_e2e_with_settings_yaml() {
+    let _ = tracing_subscriber::fmt().with_test_writer().try_init();
     if !pdfium_available() {
-        eprintln!("Skipping: PDFIUM_DYNAMIC_LIB_PATH not set (run inside `nix develop`)");
+        warn!("Skipping: PDFIUM_DYNAMIC_LIB_PATH not set (run inside `nix develop`)");
         return;
     }
 
@@ -387,8 +391,9 @@ fn test_e2e_with_settings_yaml() {
 /// jobs.yaml with override page number > page count, verify CLI exits with error.
 #[test]
 fn test_e2e_invalid_page_range() {
+    let _ = tracing_subscriber::fmt().with_test_writer().try_init();
     if !pdfium_available() {
-        eprintln!("Skipping: PDFIUM_DYNAMIC_LIB_PATH not set (run inside `nix develop`)");
+        warn!("Skipping: PDFIUM_DYNAMIC_LIB_PATH not set (run inside `nix develop`)");
         return;
     }
 
@@ -431,8 +436,9 @@ fn test_e2e_invalid_page_range() {
 /// Two separate job files, both processed in one invocation.
 #[test]
 fn test_e2e_multiple_job_files() {
+    let _ = tracing_subscriber::fmt().with_test_writer().try_init();
     if !pdfium_available() {
-        eprintln!("Skipping: PDFIUM_DYNAMIC_LIB_PATH not set (run inside `nix develop`)");
+        warn!("Skipping: PDFIUM_DYNAMIC_LIB_PATH not set (run inside `nix develop`)");
         return;
     }
 
@@ -503,8 +509,9 @@ fn test_e2e_multiple_job_files() {
 /// text_to_outlines が成功すれば TextMasked、失敗すれば compose_bw (BwImg) が使われる。
 #[test]
 fn test_e2e_bw_mode() {
+    let _ = tracing_subscriber::fmt().with_test_writer().try_init();
     if !pdfium_available() {
-        eprintln!("Skipping: PDFIUM_DYNAMIC_LIB_PATH not set (run inside `nix develop`)");
+        warn!("Skipping: PDFIUM_DYNAMIC_LIB_PATH not set (run inside `nix develop`)");
         return;
     }
 
@@ -635,8 +642,9 @@ fn test_e2e_bw_mode() {
 /// Output should be a valid PDF with 1 page.
 #[test]
 fn test_e2e_grayscale_mode() {
+    let _ = tracing_subscriber::fmt().with_test_writer().try_init();
     if !pdfium_available() {
-        eprintln!("Skipping: PDFIUM_DYNAMIC_LIB_PATH not set (run inside `nix develop`)");
+        warn!("Skipping: PDFIUM_DYNAMIC_LIB_PATH not set (run inside `nix develop`)");
         return;
     }
 
@@ -678,8 +686,9 @@ fn test_e2e_grayscale_mode() {
 /// Process with skip_pages to copy a page as-is from source PDF.
 #[test]
 fn test_e2e_skip_mode() {
+    let _ = tracing_subscriber::fmt().with_test_writer().try_init();
     if !pdfium_available() {
-        eprintln!("Skipping: PDFIUM_DYNAMIC_LIB_PATH not set (run inside `nix develop`)");
+        warn!("Skipping: PDFIUM_DYNAMIC_LIB_PATH not set (run inside `nix develop`)");
         return;
     }
 
@@ -726,8 +735,9 @@ fn test_e2e_skip_mode() {
 /// 3-page PDF with: page 1 = RGB, page 2 = BW, page 3 = skip.
 #[test]
 fn test_e2e_mixed_mode() {
+    let _ = tracing_subscriber::fmt().with_test_writer().try_init();
     if !pdfium_available() {
-        eprintln!("Skipping: PDFIUM_DYNAMIC_LIB_PATH not set (run inside `nix develop`)");
+        warn!("Skipping: PDFIUM_DYNAMIC_LIB_PATH not set (run inside `nix develop`)");
         return;
     }
 

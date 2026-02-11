@@ -1,5 +1,7 @@
 // Phase 5: leptonica segmentation: bitmap -> mask/fg/bg separation
 
+use tracing::debug;
+
 use crate::ffi::leptonica::Pix;
 
 /// テキスト領域のピクセル座標バウンディングボックス。
@@ -41,14 +43,24 @@ pub fn extract_text_bboxes(
         })
         .collect();
 
+    let before_filter = bboxes.len();
+
     // 最小面積閾値: 4x4px 未満を除外
     bboxes.retain(|b| b.width >= 4 && b.height >= 4);
+
+    let after_filter = bboxes.len();
 
     // 近接矩形のマージ
     if merge_distance > 0 {
         bboxes = merge_nearby_bboxes(bboxes, merge_distance);
     }
 
+    debug!(
+        raw = before_filter,
+        filtered = after_filter,
+        merged = bboxes.len(),
+        "extract_text_bboxes"
+    );
     Ok(bboxes)
 }
 

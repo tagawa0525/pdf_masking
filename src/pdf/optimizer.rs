@@ -7,6 +7,8 @@ use flate2::Compression;
 use flate2::write::ZlibEncoder;
 use lopdf::{Document, Object, ObjectId};
 
+use tracing::debug;
+
 use crate::error::PdfMaskError;
 
 /// 指定ページの `/Resources` 辞書から `/Font` エントリを除去する。
@@ -124,8 +126,12 @@ pub fn delete_unused_objects(doc: &mut Document) {
 /// 2. 未圧縮ストリームを圧縮
 /// 3. 孤立オブジェクトを除去
 pub fn optimize(doc: &mut Document, masked_page_ids: &[ObjectId]) -> crate::error::Result<()> {
+    debug!(pages = masked_page_ids.len(), "starting PDF optimization");
     remove_fonts_from_pages(doc, masked_page_ids);
+    debug!(pages = masked_page_ids.len(), "removed fonts from pages");
     compress_streams(doc)?;
+    debug!("compressed streams");
     delete_unused_objects(doc);
+    debug!("deleted unused objects");
     Ok(())
 }

@@ -7,6 +7,8 @@
 
 use std::collections::HashMap;
 
+use tracing::debug;
+
 use crate::config::job::ColorMode;
 use crate::error::PdfMaskError;
 use crate::mrc::{
@@ -150,6 +152,14 @@ impl CacheStore {
         bitmap_dims: Option<(u32, u32)>,
     ) -> crate::error::Result<()> {
         validate_cache_key(key)?;
+
+        let cache_type = match output {
+            PageOutput::Skip(_) => "skip",
+            PageOutput::Mrc(_) => "mrc",
+            PageOutput::BwMask(_) => "bw",
+            PageOutput::TextMasked(_) => "text_masked",
+        };
+        debug!(cache_type, key_prefix = &key[..16], "cache store");
 
         match output {
             PageOutput::Skip(_) => Ok(()),
@@ -320,11 +330,21 @@ impl CacheStore {
     ) -> crate::error::Result<Option<PageOutput>> {
         let dir = self.key_dir(key)?;
         if !dir.exists() {
+            debug!(
+                key_prefix = &key[..16],
+                reason = "dir not found",
+                "cache miss"
+            );
             return Ok(None);
         }
 
         let metadata = self.read_cache_metadata(key, &dir, expected_mode, bitmap_dims)?;
         let Some(metadata) = metadata else {
+            debug!(
+                key_prefix = &key[..16],
+                reason = "metadata mismatch",
+                "cache miss"
+            );
             return Ok(None);
         };
 
