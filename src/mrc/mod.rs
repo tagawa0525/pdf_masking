@@ -35,7 +35,7 @@ pub struct SkipData {
 /// テキスト領域のクロップ結果
 #[derive(Debug)]
 pub struct TextRegionCrop {
-    pub jpeg_data: Vec<u8>,
+    pub jbig2_data: Vec<u8>,
     pub bbox_points: BBox,
     pub pixel_width: u32,
     pub pixel_height: u32,

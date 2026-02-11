@@ -252,11 +252,11 @@ impl CacheStore {
         )
         .map_err(|e| PdfMaskError::cache(e.to_string()))?;
 
-        // region_*.jpg
+        // region_*.jbig2
         let mut region_metas = Vec::with_capacity(data.text_regions.len());
         for (i, region) in data.text_regions.iter().enumerate() {
-            let filename = format!("region_{}.jpg", i);
-            fs::write(tmp_dir.join(&filename), &region.jpeg_data)
+            let filename = format!("region_{}.jbig2", i);
+            fs::write(tmp_dir.join(&filename), &region.jbig2_data)
                 .map_err(|e| PdfMaskError::cache(e.to_string()))?;
             region_metas.push(TextRegionMeta {
                 bbox: region.bbox_points.clone(),
@@ -386,10 +386,10 @@ impl CacheStore {
 
         let mut text_regions = Vec::with_capacity(metadata.regions.len());
         for region_meta in &metadata.regions {
-            let jpeg_data = fs::read(dir.join(&region_meta.file))
+            let jbig2_data = fs::read(dir.join(&region_meta.file))
                 .map_err(|e| PdfMaskError::cache(e.to_string()))?;
             text_regions.push(TextRegionCrop {
-                jpeg_data,
+                jbig2_data,
                 bbox_points: region_meta.bbox.clone(),
                 pixel_width: region_meta.pixel_width,
                 pixel_height: region_meta.pixel_height,

@@ -197,8 +197,6 @@ pub struct TextMaskedParams<'a> {
     pub page_height_pts: f64,
     /// XObject名 → lopdf::Stream のマップ
     pub image_streams: &'a HashMap<String, lopdf::Stream>,
-    /// JPEG品質 (1-100)
-    pub quality: u8,
     /// RGB, Grayscale, or Bw
     pub color_mode: ColorMode,
     /// ページ番号(0-based)
@@ -249,7 +247,7 @@ pub fn compose_text_masked(params: &TextMaskedParams) -> crate::error::Result<Te
         }
     }
 
-    // 5. ビットマップからテキスト領域を抽出・JPEG化
+    // 5. ビットマップからテキスト領域を抽出・JBIG2化
     /// テキスト領域のマージ距離（px）。近接する矩形を結合してXObject数を削減する。
     const TEXT_BBOX_MERGE_DISTANCE: u32 = 5;
 
@@ -257,7 +255,7 @@ pub fn compose_text_masked(params: &TextMaskedParams) -> crate::error::Result<Te
         segmenter::segment_text_mask(params.rgba_data, params.bitmap_width, params.bitmap_height)?;
     let bboxes = segmenter::extract_text_bboxes(&text_mask, TEXT_BBOX_MERGE_DISTANCE)?;
 
-    // テキスト領域が無い場合はビットマップコピーを回避して早期リターン
+    // テキスト領域が無い場合は早期リターン
     if bboxes.is_empty() {
         return Ok(TextMaskedData {
             stripped_content_stream,
@@ -268,19 +266,12 @@ pub fn compose_text_masked(params: &TextMaskedParams) -> crate::error::Result<Te
         });
     }
 
-    let bitmap = RgbaImage::from_raw(
-        params.bitmap_width,
-        params.bitmap_height,
-        params.rgba_data.to_vec(),
-    )
-    .ok_or_else(|| PdfMaskError::jpeg_encode("Failed to create bitmap from RGBA data"))?;
-    let dynamic = DynamicImage::ImageRgba8(bitmap);
-
-    let crops = crop_text_regions(&dynamic, &bboxes, params.quality, params.color_mode)?;
+    // テキスト領域をJBIG2エンコード
+    let crops = crop_text_regions_jbig2(&text_mask, &bboxes)?;
 
     let text_regions: Vec<TextRegionCrop> = crops
         .into_iter()
-        .map(|(jpeg_data, pixel_bbox)| {
+        .map(|(jbig2_data, pixel_bbox)| {
             let bbox_points = pixel_to_page_coords(
                 &pixel_bbox,
                 params.page_width_pts,
@@ -289,7 +280,7 @@ pub fn compose_text_masked(params: &TextMaskedParams) -> crate::error::Result<Te
                 params.bitmap_height,
             )?;
             Ok(TextRegionCrop {
-                jpeg_data,
+                jbig2_data,
                 bbox_points,
                 pixel_width: pixel_bbox.width,
                 pixel_height: pixel_bbox.height,

@@ -468,7 +468,6 @@ fn test_compose_text_masked_empty_content() {
         page_width_pts: 612.0,
         page_height_pts: 792.0,
         image_streams: &image_streams,
-        quality: 75,
         color_mode: ColorMode::Rgb,
         page_index: 0,
     };
@@ -502,7 +501,6 @@ fn test_compose_text_masked_strips_text() {
         page_width_pts: 612.0,
         page_height_pts: 792.0,
         image_streams: &image_streams,
-        quality: 75,
         color_mode: ColorMode::Rgb,
         page_index: 2,
     };
@@ -534,7 +532,6 @@ fn test_compose_text_masked_grayscale() {
         page_width_pts: 100.0,
         page_height_pts: 100.0,
         image_streams: &image_streams,
-        quality: 50,
         color_mode: ColorMode::Grayscale,
         page_index: 1,
     };
@@ -544,10 +541,9 @@ fn test_compose_text_masked_grayscale() {
 
     let text_data = result.unwrap();
     assert!(matches!(text_data.color_mode, ColorMode::Grayscale));
-    // Text regions should have valid JPEG data
+    // Text regions should have valid JBIG2 data
     for region in &text_data.text_regions {
-        assert!(!region.jpeg_data.is_empty());
-        assert!(region.jpeg_data.starts_with(&[0xFF, 0xD8]));
+        assert!(!region.jbig2_data.is_empty());
         assert!(region.pixel_width > 0);
         assert!(region.pixel_height > 0);
     }
@@ -567,7 +563,6 @@ fn test_compose_text_masked_valid_bboxes() {
         page_width_pts: 200.0,
         page_height_pts: 200.0,
         image_streams: &image_streams,
-        quality: 75,
         color_mode: ColorMode::Rgb,
         page_index: 0,
     };
@@ -756,7 +751,10 @@ fn test_crop_text_regions_jbig2_multiple() {
     let crops = result.unwrap();
     assert_eq!(crops.len(), 2, "should have 2 crops");
     for (jbig2_data, _) in &crops {
-        assert!(!jbig2_data.is_empty(), "each JBIG2 crop should be non-empty");
+        assert!(
+            !jbig2_data.is_empty(),
+            "each JBIG2 crop should be non-empty"
+        );
     }
 }
 
