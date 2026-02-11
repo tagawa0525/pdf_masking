@@ -50,10 +50,10 @@ cargo fmt                                 # フォーマット適用
 [Phase A] コンテンツ解析
   — ページ内容・フォント・画像XObject検出、ColorModeフィルタリング
     ↓
-[Phase A2] text_to_outlines（有効時）
+[Phase A2] text_to_outlines（自動試行）
   — フォントからグリフアウトラインを取得
   — BT...ETブロックをベクターパスに変換
-  — レンダリング不要、フォント未埋め込み時はpdfiumフォールバック
+  — レンダリング不要、フォント未埋め込み時はPhase B+Cフォールバック
     ↓
 [Phase B] レンダリング（A2未使用時のみ）
   — pdfiumでビットマップ化

@@ -1,6 +1,6 @@
 # 処理フローとフォールバック構造
 
-このプロジェクトでは、PDFページからテキスト情報を除去する方法が複数あり、最適な方法が失敗したとき次善の方法に自動的に切り替わる。この文書ではその判断ロジックを整理する。
+PDFページからテキスト情報を除去する方法が複数あり、最適な方法が失敗したとき次善の方法に自動的に切り替わる。この文書ではその判断ロジックを整理する。
 
 ## 全体像
 
@@ -13,8 +13,7 @@
   |
   +-- [非Skip] -----> Phase A: コンテンツ解析
                          |
-                         +-- text_to_outlines が有効
-                         |     かつフォント取得成功
+                         +-- フォント取得成功
                          |         |
                          |    Phase A2: テキスト→ベクターパス変換
                          |         |
@@ -22,7 +21,7 @@
                          |         |
                          |         +-- 失敗 -------+
                          |                         |
-                         +-- それ以外 -------------+
+                         +-- フォント取得失敗 -----+
                                                    |
                                               Phase B: pdfium レンダリング
                                                    |
@@ -31,21 +30,43 @@
                                               Phase D: PDF 組み立て
 ```
 
-**ポイント**: Phase A2 が成功すればレンダリング(B)もMRC合成(C)も不要。失敗したときだけ B→C に進む。これが最も大きなフォールバックである。
+**ポイント**: Phase A2 が成功すればレンダリング(B)もMRC合成(C)も不要。失敗したときだけ B→C に進む。
+
+---
+
+## フォールバックチェーン
+
+### Rgb/Grayscale
+
+```text
+Phase A2: compose_text_outlines (ベクターパス変換、レンダリング不要)
+  → 失敗 →
+Phase B+C: compose_text_masked (テキスト領域だけJPEG化、画像保持)
+  → 失敗 →
+Phase B+C: compose (全面ラスタライズ、3層MRC)
+```
+
+### Bw
+
+```text
+Phase A2: compose_text_outlines + force_bw
+  → 失敗 →
+Phase B+C: compose_bw (全面JBIG2)
+```
 
 ---
 
 ## Phase A: コンテンツ解析
 
-> `job_runner.rs:91-132`
+> `job_runner.rs`
 
-すべての非Skipページに対して実行される。ページのコンテンツストリーム（PDFの描画命令列）を抽出する。
+すべての非Skipページに対して実行される。
 
 ```text
 各ページについて:
   1. コンテンツストリームを抽出
-  2. preserve_images=true → 画像XObjectストリームを抽出
-  3. text_to_outlines=true → フォント情報を解析 (.ok() で失敗を許容)
+  2. Rgb/Grayscale/Bw → 画像XObjectストリームを抽出
+  3. Rgb/Grayscale/Bw → フォント情報を解析 (.ok() で失敗を許容)
 ```
 
 フォント解析が失敗した場合、`fonts = None` となり Phase A2 の対象外になる。ジョブ全体は止まらない。
@@ -54,16 +75,14 @@
 
 ## Phase A2: テキスト→アウトライン変換
 
-> `job_runner.rs:134-178`, `compositor.rs:293-344`
+> `job_runner.rs`, `compositor.rs`
 
 ### 適格条件
 
 以下の**すべて**を満たすページだけが Phase A2 の対象になる:
 
 ```text
-text_to_outlines = true
-  AND preserve_images = true
-  AND ColorMode = Rgb | Grayscale | Bw
+ColorMode = Rgb | Grayscale | Bw
   AND fonts が取得できている (Some)
 ```
 
@@ -93,7 +112,6 @@ TextMaskedData {
 Phase A2 で `Err` が返ると、そのページは Phase B に回される:
 
 ```rust
-// job_runner.rs:166-173
 match result {
     Ok(page) => outlines_pages.push(page),  // 成功: レンダリング不要
     Err(_) => needs_rendering.push(cs),     // 失敗: Phase B へ
@@ -110,7 +128,7 @@ Phase A2 の対象外、または Phase A2 が失敗したページがここに�
 
 ### Phase B: レンダリング
 
-> `job_runner.rs:180-191`
+> `job_runner.rs`
 
 ```text
 PDF + ページ番号 + DPI
@@ -121,53 +139,30 @@ PDF + ページ番号 + DPI
 
 ### Phase C: MRC合成
 
-> `page_processor.rs:100-215`
+> `page_processor.rs`
 
-ColorMode と preserve_images の組み合わせで処理が分岐する。
+ColorMode に応じて処理が分岐する。
 
 ```text
                           Phase C の分岐
                               |
-          +-------------------+-------------------+
-          |                   |                   |
-     preserve_images     preserve_images       Bw モード
-       = false             = true
-          |                   |                   |
-     compose()           [分岐あり]          compose_bw()
-     標準MRC 3層         下記参照            JBIG2 のみ
+                    +---------+---------+
+                    |                   |
+              Rgb/Grayscale          Bw モード
+                    |                   |
+              [フォールバック]      compose_bw()
+              下記参照            JBIG2 のみ
 ```
 
-#### preserve_images=false のとき
+#### Rgb/Grayscale のフォールバック
 
 ```text
-RGBA ビットマップ
-  → テキストマスク生成 (1-bit)
-  → JBIG2 エンコード (マスク層)
-  → JPEG エンコード (前景・背景層)
-  → MrcLayers (3層構造)
-```
-
-ページ全体をビットマップ化して3層MRCにする。画像もテキストも区別なくラスタライズされる。
-
-#### preserve_images=true のとき (Phase C 内のフォールバック)
-
-> `page_processor.rs:155-196`
-
-ここにもう一つのフォールバックがある:
-
-```text
-text_to_outlines = true かつ fonts あり ?
+compose_text_masked()
+  テキスト部分だけラスタライズ、画像保持
   |
-  +-- Yes → compose_text_outlines() を試行
-  |           |
-  |           +-- 成功 → TextMaskedData (パス変換済み)
-  |           |
-  |           +-- 失敗 --+
-  |                      |
-  +-- No ---------------+
-                         |
-                    compose_text_masked()
-                    テキスト部分だけラスタライズ
+  +-- 成功 → TextMaskedData
+  |
+  +-- 失敗 → compose() (全面MRC 3層)
 ```
 
 **compose_text_masked** の処理:
@@ -189,13 +184,21 @@ TextMaskedData {
 }
 ```
 
-compose_text_masked が失敗するとジョブ全体がエラーになる（最終手段のため）。
+**compose (全面MRC)** は compose_text_masked 失敗時の最終手段:
+
+```text
+RGBA ビットマップ
+  → テキストマスク生成 (1-bit)
+  → JBIG2 エンコード (マスク層)
+  → JPEG エンコード (前景・背景層)
+  → MrcLayers (3層構造)
+```
 
 ---
 
 ## Phase D: PDF組み立て
 
-> `job_runner.rs:249-279`
+> `job_runner.rs`
 
 処理結果の型に応じて出力方法が決まる:
 
@@ -203,14 +206,14 @@ compose_text_masked が失敗するとジョブ全体がエラーになる（最
 | --- | --- | --- |
 | `Mrc(MrcLayers)` | `write_mrc_page` | Phase C compose() |
 | `BwMask(BwLayers)` | `write_bw_page` | Phase C compose_bw() |
-| `TextMasked(TextMaskedData)` | `write_text_masked_page` | Phase A2 または Phase C |
+| `TextMasked(...)` | `write_text_masked_page` | Phase A2 または Phase C |
 | `Skip(SkipData)` | `copy_page_from` | Skipモード (無加工コピー) |
 
 ---
 
 ## フォント解決の詳細
 
-> `font.rs:151-274`
+> `font.rs`
 
 Phase A2 の成否はフォントが取得できるかに大きく依存する。フォント解決は以下の順序で試行される:
 
@@ -254,10 +257,9 @@ Phase A2 の成否はフォントが取得できるかに大きく依存する�
 
 ### フォント解決失敗時の挙動
 
-> `font.rs:290-331`
+> `font.rs`
 
-`parse_page_fonts` はページ内の各フォントを個別に解決する。特定のフォントが解決できなくても、その
-フォントをスキップして残りの解析を続ける:
+`parse_page_fonts` はページ内の各フォントを個別に解決する。特定のフォントが解決できなくても、そのフォントをスキップして残りの解析を続ける:
 
 ```text
 ページ内のフォント: [F1, F2, F3]
@@ -288,7 +290,7 @@ Phase A2 の成否はフォントが取得できるかに大きく依存する�
 ```text
 ページの処理開始
   |
-  |  [条件不足: text_to_outlines=false, preserve_images=false, フォントなし等]
+  |  [フォントなし]
   |  → Phase A2 をスキップ
   |
   v
@@ -300,39 +302,33 @@ Phase A2 を試行 ---- 失敗 ---+
   |                           v
   |                      Phase C: MRC合成
   |                           |
-  |                           +-- preserve_images=false → compose() 3層MRC
-  |                           |
   |                           +-- Bw → compose_bw() JBIG2のみ
   |                           |
-  |                           +-- preserve_images=true:
+  |                           +-- Rgb/Grayscale:
   |                           |     |
-  |                           |     compose_text_outlines() -- 失敗 --+
+  |                           |     compose_text_masked() -- 失敗 --+
   |                           |       |                               |
   |                           |       成功                            v
-  |                           |       |                    compose_text_masked()
-  |                           |       |                    テキストだけJPEG化
+  |                           |       |                    compose()
+  |                           |       |                    全面MRC 3層
   |                           |       |                               |
   v                           v       v                               v
-Phase D: PDF 組み立て ← ← ← ← ← ← ← ← ← ← ← ← ← ← ← ← ← ← ← ←
+Phase D: PDF 組み立て
 ```
 
 ### フォールバックは2段階
 
 | 段階 | 主処理 | フォールバック先 | 発生箇所 |
 | --- | --- | --- | --- |
-| 第1段階 | Phase A2 (ベクターパス変換) | Phase B+C (ラスタライズ) | `job_runner.rs:166-173` |
-| 第2段階 | compose_text_outlines (パス変換) | compose_text_masked (テキストJPEG化) | `page_processor.rs:162-196` |
+| 第1段階 | Phase A2 (ベクターパス変換) | Phase B+C (ラスタライズ) | `job_runner.rs` |
+| 第2段階 | compose_text_masked | compose (全面MRC) | `page_processor.rs` |
 
-第1段階と第2段階は、同じ処理（テキスト→パス変換）が異なるコンテキストで呼ばれている。
-Phase A2 はレンダリング前に試行し、第2段階はレンダリング後に再試行する構造になっている。
+第1段階と第2段階は異なるアプローチ。Phase A2 はレンダリング前にベクターパス変換を試行し、第2段階はレンダリング後にテキスト部分だけ差し替える。
 
 ### フォールバックが起きないケース
 
-| 設定 | 理由 | 通る経路 |
+| 条件 | 理由 | 通る経路 |
 | --- | --- | --- |
-| `text_to_outlines=false` | パス変換自体が無効 | Phase B → C (compose or compose_text_masked) |
-| `preserve_images=false` | 画像保持不要 | Phase B → C (compose: 標準3層MRC) |
 | `ColorMode::Bw` + 埋め込みフォントあり | Bw でもパス変換可能 | Phase A2 成功 |
 | `ColorMode::Skip` | 無加工コピー | Phase D 直行 |
-
-これらの設定では判断分岐が1つもなく、処理経路が一意に決まる。
+| 全フォント解決成功 + 単純なコンテンツ | パス変換が成功 | Phase A2 成功 |
