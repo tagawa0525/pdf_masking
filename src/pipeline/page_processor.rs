@@ -222,7 +222,8 @@ impl ProcessPageParams<'_> {
                     Err(e) => {
                         warn!(
                             "page {}: compose_text_masked failed, falling back to full MRC: {}",
-                            self.page_index, e
+                            self.page_index + 1,
+                            e
                         );
                         let mrc_layers = compose(&rgba_data, width, height, self.mrc_config, mode)?;
                         PageOutput::Mrc(mrc_layers)
