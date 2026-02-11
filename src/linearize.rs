@@ -3,6 +3,8 @@
 use std::path::Path;
 use std::process::Command;
 
+use tracing::{debug, warn};
+
 /// Linearize a PDF file using qpdf.
 ///
 /// Creates a linearized copy of the input PDF at the output path.
@@ -10,6 +12,11 @@ use std::process::Command;
 ///
 /// qpdf must be available in PATH (provided by nix develop environment).
 pub fn linearize(input_path: &Path, output_path: &Path) -> crate::error::Result<()> {
+    debug!(
+        input = %input_path.display(),
+        output = %output_path.display(),
+        "linearizing PDF"
+    );
     let output = if input_path == output_path {
         // In-place mode: qpdf --linearize --replace-input <path>
         Command::new("qpdf")
@@ -42,9 +49,12 @@ pub fn linearize(input_path: &Path, output_path: &Path) -> crate::error::Result<
                 )))
             }
         }
-        Err(e) => Err(crate::error::PdfMaskError::linearize(format!(
-            "failed to execute qpdf: {e}"
-        ))),
+        Err(e) => {
+            warn!("failed to execute qpdf: {e}");
+            Err(crate::error::PdfMaskError::linearize(format!(
+                "failed to execute qpdf: {e}"
+            )))
+        }
     }
 }
 

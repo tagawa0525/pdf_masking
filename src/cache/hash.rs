@@ -7,6 +7,7 @@ use std::collections::BTreeMap;
 use std::path::Path;
 
 use sha2::{Digest, Sha256};
+use tracing::debug;
 
 use crate::config::job::ColorMode;
 
@@ -53,7 +54,13 @@ pub fn compute_cache_key(
     let settings_json = settings_to_canonical_json(settings);
     hasher.update(settings_json.as_bytes());
 
-    hex::encode(hasher.finalize())
+    let key = hex::encode(hasher.finalize());
+    debug!(
+        key_prefix = &key[..16],
+        page = page_index,
+        "computed cache key"
+    );
+    key
 }
 
 #[cfg(test)]
