@@ -4,6 +4,7 @@ use std::collections::HashMap;
 use std::path::Path;
 
 use image::DynamicImage;
+use tracing::warn;
 
 use crate::cache::hash::{CacheSettings, compute_cache_key};
 use crate::cache::store::CacheStore;
@@ -219,10 +220,9 @@ impl ProcessPageParams<'_> {
                 match compose_text_masked(&params) {
                     Ok(data) => PageOutput::TextMasked(data),
                     Err(e) => {
-                        tracing::warn!(
+                        warn!(
                             "page {}: compose_text_masked failed, falling back to full MRC: {}",
-                            self.page_index,
-                            e
+                            self.page_index, e
                         );
                         let mrc_layers = compose(&rgba_data, width, height, self.mrc_config, mode)?;
                         PageOutput::Mrc(mrc_layers)

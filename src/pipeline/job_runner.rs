@@ -3,6 +3,7 @@
 use std::path::PathBuf;
 
 use rayon::prelude::*;
+use tracing::debug;
 
 use crate::cache::hash::CacheSettings;
 use crate::cache::store::CacheStore;
@@ -66,7 +67,7 @@ pub fn run_job(config: &JobConfig) -> crate::error::Result<JobResult> {
     let reader = PdfReader::open(&config.input_path)?;
     let page_count = reader.page_count();
 
-    tracing::debug!(
+    debug!(
         input = %config.input_path.display(),
         pages = page_count,
         "starting job"
@@ -97,16 +98,16 @@ pub fn run_job(config: &JobConfig) -> crate::error::Result<JobResult> {
     let cache_store = config.cache_dir.as_ref().map(CacheStore::new);
 
     // Phase A: Content stream analysis
-    tracing::debug!("phase A: analyzing content streams");
+    debug!("phase A: analyzing content streams");
     let content_streams = phase_a_analyze(&reader, &page_modes)?;
 
     // Phase A2: Text-to-outlines conversion
-    tracing::debug!("phase A2: text-to-outlines conversion");
+    debug!("phase A2: text-to-outlines conversion");
     let (outlines_pages, needs_rendering) =
         phase_a2_text_to_outlines(content_streams, config, cache_store.as_ref())?;
 
     // Phase B+C: Rendering and MRC composition
-    tracing::debug!(
+    debug!(
         rendering = needs_rendering.len(),
         outlines = outlines_pages.len(),
         "phase B+C: rendering and MRC composition"
@@ -122,7 +123,7 @@ pub fn run_job(config: &JobConfig) -> crate::error::Result<JobResult> {
     let pages_processed = successful_pages.len();
 
     // Phase D: PDF output assembly
-    tracing::debug!("phase D: PDF assembly");
+    debug!("phase D: PDF assembly");
     phase_d_write(&reader, &successful_pages, config, pages_processed)
 }
 
