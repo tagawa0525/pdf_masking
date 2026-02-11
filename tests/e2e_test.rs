@@ -518,9 +518,9 @@ fn test_e2e_multiple_job_files() {
 // 7. E2E test: BW mode
 // ============================================================
 
-/// Process a single page in BW mode. Output should be a valid PDF.
-/// 自動フォールバックチェーンにより、text_to_outlines が成功すれば TextMasked、
-/// 失敗すれば compose_bw (BwImg) が使われる。
+/// Process a single page in BW mode. Output should contain BwImg or TxtRgn* XObjects,
+/// proving BW processing occurred. 自動フォールバックチェーンにより、
+/// text_to_outlines が成功すれば TextMasked、失敗すれば compose_bw (BwImg) が使われる。
 #[test]
 fn test_e2e_bw_mode() {
     if !pdfium_available() {
@@ -532,7 +532,7 @@ fn test_e2e_bw_mode() {
     let input_path = dir.path().join("input.pdf");
     let output_path = dir.path().join("output.pdf");
 
-    create_single_page_pdf(&input_path);
+    create_pdf_with_text(&input_path);
     write_jobs_yaml(
         dir.path(),
         "input.pdf",
@@ -557,6 +557,53 @@ fn test_e2e_bw_mode() {
     assert!(output_path.exists(), "output PDF should exist");
     let doc = Document::load(&output_path).expect("output PDF should be loadable");
     assert_eq!(doc.get_pages().len(), 1, "output PDF should have 1 page");
+
+    // Verify BW processing occurred: output should contain BwImg or TxtRgn* XObjects
+    let pages = doc.get_pages();
+    let page_id = pages.get(&1).expect("page 1 should exist");
+    let page_obj = doc.get_object(*page_id).expect("page object should exist");
+    let page_dict = page_obj.as_dict().expect("page should be a dictionary");
+
+    let resources_ref = page_dict
+        .get(b"Resources")
+        .and_then(|r| r.as_reference())
+        .expect("Page should have Resources reference");
+    let resources = doc
+        .get_object(resources_ref)
+        .and_then(|obj| obj.as_dict())
+        .expect("Resources should be a dictionary");
+
+    let xobj_result = resources.get(b"XObject");
+    assert!(
+        xobj_result.is_ok(),
+        "BW mode output should have XObject in Resources, found: {:?}",
+        resources
+            .iter()
+            .map(|(k, _)| std::str::from_utf8(k).unwrap_or("<invalid>"))
+            .collect::<Vec<_>>()
+    );
+
+    // XObject can be either a direct dictionary or a reference
+    let xobjects = xobj_result
+        .and_then(|xobj| {
+            xobj.as_dict().or_else(|_| {
+                xobj.as_reference()
+                    .and_then(|r| doc.get_object(r)?.as_dict())
+            })
+        })
+        .expect("XObject should be a dictionary or reference to dictionary");
+
+    let has_bw_or_text = xobjects
+        .iter()
+        .any(|(k, _)| k.starts_with(b"BwImg") || k.starts_with(b"TxtRgn"));
+    assert!(
+        has_bw_or_text,
+        "BW mode output should contain BwImg or TxtRgn* XObjects, found: {:?}",
+        xobjects
+            .iter()
+            .map(|(k, _)| std::str::from_utf8(k).unwrap_or("<invalid>"))
+            .collect::<Vec<_>>()
+    );
 }
 
 // ============================================================
