@@ -83,62 +83,6 @@ pub fn compose(
     })
 }
 
-/// テキスト領域をビットマップからクロップし、JPEG化する。
-///
-/// 各 PixelBBox 領域をクロップして、指定のカラーモードとクオリティで
-/// JPEG エンコードする。
-///
-/// # Arguments
-/// * `bitmap` - レンダリング済みのページビットマップ
-/// * `bboxes` - テキスト領域の矩形リスト（ピクセル座標）
-/// * `quality` - JPEG 品質 (1-100)
-/// * `color_mode` - RGB, Grayscale, または Bw
-///
-/// # Returns
-/// `(jpeg_data, bbox)` のペアリスト
-pub fn crop_text_regions(
-    bitmap: &DynamicImage,
-    bboxes: &[PixelBBox],
-    quality: u8,
-    color_mode: ColorMode,
-) -> crate::error::Result<Vec<(Vec<u8>, PixelBBox)>> {
-    if !(1..=100).contains(&quality) {
-        return Err(PdfMaskError::jpeg_encode(format!(
-            "JPEG quality must be 1-100, got {}",
-            quality
-        )));
-    }
-
-    let mut results = Vec::with_capacity(bboxes.len());
-
-    for bbox in bboxes {
-        // クロップ
-        let cropped = bitmap.crop_imm(bbox.x, bbox.y, bbox.width, bbox.height);
-
-        // カラーモードに応じてエンコード
-        let jpeg_data = match color_mode {
-            ColorMode::Grayscale => {
-                let gray = cropped.to_luma8();
-                jpeg::encode_gray_to_jpeg(&gray, quality)?
-            }
-            ColorMode::Rgb => {
-                let rgb = cropped.to_rgb8();
-                jpeg::encode_rgb_to_jpeg(&rgb, quality)?
-            }
-            ColorMode::Bw | ColorMode::Skip => {
-                return Err(PdfMaskError::jpeg_encode(format!(
-                    "crop_text_regions does not support {:?} color mode",
-                    color_mode
-                )));
-            }
-        };
-
-        results.push((jpeg_data, bbox.clone()));
-    }
-
-    Ok(results)
-}
-
 /// BWモード: segmenter + JBIG2のみ。JPEG層なし。
 pub fn compose_bw(rgba_data: &[u8], width: u32, height: u32) -> crate::error::Result<BwLayers> {
     let mut text_mask = segmenter::segment_text_mask(rgba_data, width, height)?;
@@ -149,6 +93,36 @@ pub fn compose_bw(rgba_data: &[u8], width: u32, height: u32) -> crate::error::Re
         width,
         height,
     })
+}
+
+/// テキスト領域をJBIG2マスクからクロップし、各領域をJBIG2エンコードする。
+///
+/// 1ビットのテキストマスクから複数の矩形領域を抽出し、それぞれをJBIG2エンコードする。
+///
+/// # Arguments
+/// * `text_mask` - 1ビットのテキストマスク（segmenter::segment_text_maskの出力）
+/// * `bboxes` - クロップ対象の矩形リスト（ピクセル座標）
+///
+/// # Returns
+/// `(jbig2_data, bbox)` のペアリスト
+pub fn crop_text_regions_jbig2(
+    text_mask: &crate::ffi::leptonica::Pix,
+    bboxes: &[PixelBBox],
+) -> crate::error::Result<Vec<(Vec<u8>, PixelBBox)>> {
+    let mut results = Vec::with_capacity(bboxes.len());
+
+    for bbox in bboxes {
+        // クロップ
+        let clipped = text_mask.clip_rectangle(bbox.x, bbox.y, bbox.width, bbox.height)?;
+
+        // JBIG2エンコード
+        let mut clipped_mut = clipped;
+        let jbig2_data = jbig2::encode_mask(&mut clipped_mut)?;
+
+        results.push((jbig2_data, bbox.clone()));
+    }
+
+    Ok(results)
 }
 
 /// テキスト選択的ラスタライズの入力パラメータ。
@@ -167,8 +141,6 @@ pub struct TextMaskedParams<'a> {
     pub page_height_pts: f64,
     /// XObject名 → lopdf::Stream のマップ
     pub image_streams: &'a HashMap<String, lopdf::Stream>,
-    /// JPEG品質 (1-100)
-    pub quality: u8,
     /// RGB, Grayscale, or Bw
     pub color_mode: ColorMode,
     /// ページ番号(0-based)
@@ -219,7 +191,7 @@ pub fn compose_text_masked(params: &TextMaskedParams) -> crate::error::Result<Te
         }
     }
 
-    // 5. ビットマップからテキスト領域を抽出・JPEG化
+    // 5. ビットマップからテキスト領域を抽出・JBIG2化
     /// テキスト領域のマージ距離（px）。近接する矩形を結合してXObject数を削減する。
     const TEXT_BBOX_MERGE_DISTANCE: u32 = 5;
 
@@ -227,7 +199,7 @@ pub fn compose_text_masked(params: &TextMaskedParams) -> crate::error::Result<Te
         segmenter::segment_text_mask(params.rgba_data, params.bitmap_width, params.bitmap_height)?;
     let bboxes = segmenter::extract_text_bboxes(&text_mask, TEXT_BBOX_MERGE_DISTANCE)?;
 
-    // テキスト領域が無い場合はビットマップコピーを回避して早期リターン
+    // テキスト領域が無い場合は早期リターン
     if bboxes.is_empty() {
         return Ok(TextMaskedData {
             stripped_content_stream,
@@ -238,19 +210,12 @@ pub fn compose_text_masked(params: &TextMaskedParams) -> crate::error::Result<Te
         });
     }
 
-    let bitmap = RgbaImage::from_raw(
-        params.bitmap_width,
-        params.bitmap_height,
-        params.rgba_data.to_vec(),
-    )
-    .ok_or_else(|| PdfMaskError::jpeg_encode("Failed to create bitmap from RGBA data"))?;
-    let dynamic = DynamicImage::ImageRgba8(bitmap);
-
-    let crops = crop_text_regions(&dynamic, &bboxes, params.quality, params.color_mode)?;
+    // テキスト領域をJBIG2エンコード
+    let crops = crop_text_regions_jbig2(&text_mask, &bboxes)?;
 
     let text_regions: Vec<TextRegionCrop> = crops
         .into_iter()
-        .map(|(jpeg_data, pixel_bbox)| {
+        .map(|(jbig2_data, pixel_bbox)| {
             let bbox_points = pixel_to_page_coords(
                 &pixel_bbox,
                 params.page_width_pts,
@@ -259,7 +224,7 @@ pub fn compose_text_masked(params: &TextMaskedParams) -> crate::error::Result<Te
                 params.bitmap_height,
             )?;
             Ok(TextRegionCrop {
-                jpeg_data,
+                jbig2_data,
                 bbox_points,
                 pixel_width: pixel_bbox.width,
                 pixel_height: pixel_bbox.height,

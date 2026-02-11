@@ -318,95 +318,6 @@ fn test_connected_component_bboxes_wrong_depth() {
     assert!(result.is_err(), "Should reject non-1-bit image");
 }
 
-// ---- compositor::crop_text_regions tests ----
-
-/// Test cropping a single text region from a bitmap.
-#[test]
-fn test_crop_text_regions_single() {
-    let (data, width, height) = create_test_rgba_image();
-    let img = image::RgbaImage::from_raw(width, height, data).expect("create image");
-    let dynamic = image::DynamicImage::ImageRgba8(img);
-
-    let bboxes = vec![segmenter::PixelBBox {
-        x: 10,
-        y: 10,
-        width: 50,
-        height: 50,
-    }];
-
-    let result =
-        compositor::crop_text_regions(&dynamic, &bboxes, 75, ColorMode::Rgb).expect("crop");
-    assert_eq!(result.len(), 1);
-    // JPEG data should be non-empty and start with FF D8
-    assert!(!result[0].0.is_empty());
-    assert!(result[0].0.starts_with(&[0xFF, 0xD8]));
-    // BBox should be preserved
-    assert_eq!(result[0].1, bboxes[0]);
-}
-
-/// Test cropping multiple regions.
-#[test]
-fn test_crop_text_regions_multiple() {
-    let (data, width, height) = create_test_rgba_image();
-    let img = image::RgbaImage::from_raw(width, height, data).expect("create image");
-    let dynamic = image::DynamicImage::ImageRgba8(img);
-
-    let bboxes = vec![
-        segmenter::PixelBBox {
-            x: 0,
-            y: 0,
-            width: 100,
-            height: 50,
-        },
-        segmenter::PixelBBox {
-            x: 50,
-            y: 100,
-            width: 80,
-            height: 40,
-        },
-    ];
-
-    let result =
-        compositor::crop_text_regions(&dynamic, &bboxes, 50, ColorMode::Rgb).expect("crop");
-    assert_eq!(result.len(), 2);
-    for (jpeg_data, _) in &result {
-        assert!(!jpeg_data.is_empty());
-        assert!(jpeg_data.starts_with(&[0xFF, 0xD8]));
-    }
-}
-
-/// Test cropping in grayscale mode.
-#[test]
-fn test_crop_text_regions_grayscale() {
-    let (data, width, height) = create_test_rgba_image();
-    let img = image::RgbaImage::from_raw(width, height, data).expect("create image");
-    let dynamic = image::DynamicImage::ImageRgba8(img);
-
-    let bboxes = vec![segmenter::PixelBBox {
-        x: 0,
-        y: 0,
-        width: 100,
-        height: 100,
-    }];
-
-    let result =
-        compositor::crop_text_regions(&dynamic, &bboxes, 75, ColorMode::Grayscale).expect("crop");
-    assert_eq!(result.len(), 1);
-    assert!(!result[0].0.is_empty());
-    assert!(result[0].0.starts_with(&[0xFF, 0xD8]));
-}
-
-/// Test cropping with empty bboxes returns empty.
-#[test]
-fn test_crop_text_regions_empty() {
-    let (data, width, height) = create_test_rgba_image();
-    let img = image::RgbaImage::from_raw(width, height, data).expect("create image");
-    let dynamic = image::DynamicImage::ImageRgba8(img);
-
-    let result = compositor::crop_text_regions(&dynamic, &[], 75, ColorMode::Rgb).expect("crop");
-    assert!(result.is_empty());
-}
-
 // ---- compositor.rs tests ----
 
 /// Test the full MRC pipeline: RGBA bitmap + config -> MrcLayers.
@@ -468,7 +379,6 @@ fn test_compose_text_masked_empty_content() {
         page_width_pts: 612.0,
         page_height_pts: 792.0,
         image_streams: &image_streams,
-        quality: 75,
         color_mode: ColorMode::Rgb,
         page_index: 0,
     };
@@ -502,7 +412,6 @@ fn test_compose_text_masked_strips_text() {
         page_width_pts: 612.0,
         page_height_pts: 792.0,
         image_streams: &image_streams,
-        quality: 75,
         color_mode: ColorMode::Rgb,
         page_index: 2,
     };
@@ -534,7 +443,6 @@ fn test_compose_text_masked_grayscale() {
         page_width_pts: 100.0,
         page_height_pts: 100.0,
         image_streams: &image_streams,
-        quality: 50,
         color_mode: ColorMode::Grayscale,
         page_index: 1,
     };
@@ -544,10 +452,9 @@ fn test_compose_text_masked_grayscale() {
 
     let text_data = result.unwrap();
     assert!(matches!(text_data.color_mode, ColorMode::Grayscale));
-    // Text regions should have valid JPEG data
+    // Text regions should have valid JBIG2 data
     for region in &text_data.text_regions {
-        assert!(!region.jpeg_data.is_empty());
-        assert!(region.jpeg_data.starts_with(&[0xFF, 0xD8]));
+        assert!(!region.jbig2_data.is_empty());
         assert!(region.pixel_width > 0);
         assert!(region.pixel_height > 0);
     }
@@ -567,7 +474,6 @@ fn test_compose_text_masked_valid_bboxes() {
         page_width_pts: 200.0,
         page_height_pts: 200.0,
         image_streams: &image_streams,
-        quality: 75,
         color_mode: ColorMode::Rgb,
         page_index: 0,
     };
@@ -680,4 +586,95 @@ fn test_compose_text_outlines_no_text() {
     // Doオペレータが保持されること
     let text = String::from_utf8_lossy(&data.stripped_content_stream);
     assert!(text.contains("Do"), "should preserve Do operator");
+}
+
+// ---- crop_text_regions_jbig2 tests ----
+
+/// Test cropping a single text region as JBIG2 from a 1-bit mask.
+#[test]
+fn test_crop_text_regions_jbig2_single() {
+    let mut mask = Pix::create(200, 200, 1).expect("create 1-bit Pix");
+
+    // Create a 50x50 black region at (50, 50)
+    for y in 50..100 {
+        for x in 50..100 {
+            mask.set_pixel(x, y, 1).expect("set pixel");
+        }
+    }
+
+    let bboxes = vec![segmenter::PixelBBox {
+        x: 50,
+        y: 50,
+        width: 50,
+        height: 50,
+    }];
+
+    let result = compositor::crop_text_regions_jbig2(&mask, &bboxes);
+    assert!(
+        result.is_ok(),
+        "crop_text_regions_jbig2 failed: {:?}",
+        result.err()
+    );
+
+    let crops = result.unwrap();
+    assert_eq!(crops.len(), 1, "should have 1 crop");
+    // JBIG2 data should be non-empty
+    assert!(!crops[0].0.is_empty(), "JBIG2 data should not be empty");
+    // BBox should be preserved
+    assert_eq!(crops[0].1, bboxes[0], "bbox should be preserved");
+}
+
+/// Test cropping multiple regions from a 1-bit mask.
+#[test]
+fn test_crop_text_regions_jbig2_multiple() {
+    let mut mask = Pix::create(300, 200, 1).expect("create 1-bit Pix");
+
+    // Create two separate regions
+    for y in 20..50 {
+        for x in 20..70 {
+            mask.set_pixel(x, y, 1).expect("set pixel");
+        }
+    }
+    for y in 100..150 {
+        for x in 100..150 {
+            mask.set_pixel(x, y, 1).expect("set pixel");
+        }
+    }
+
+    let bboxes = vec![
+        segmenter::PixelBBox {
+            x: 20,
+            y: 20,
+            width: 50,
+            height: 30,
+        },
+        segmenter::PixelBBox {
+            x: 100,
+            y: 100,
+            width: 50,
+            height: 50,
+        },
+    ];
+
+    let result = compositor::crop_text_regions_jbig2(&mask, &bboxes);
+    assert!(result.is_ok(), "should succeed: {:?}", result.err());
+
+    let crops = result.unwrap();
+    assert_eq!(crops.len(), 2, "should have 2 crops");
+    for (jbig2_data, _) in &crops {
+        assert!(
+            !jbig2_data.is_empty(),
+            "each JBIG2 crop should be non-empty"
+        );
+    }
+}
+
+/// Test cropping with empty bboxes returns empty.
+#[test]
+fn test_crop_text_regions_jbig2_empty() {
+    let mask = Pix::create(200, 200, 1).expect("create 1-bit Pix");
+    let result = compositor::crop_text_regions_jbig2(&mask, &[]);
+    assert!(result.is_ok());
+    let crops = result.unwrap();
+    assert!(crops.is_empty(), "empty bboxes should yield empty crops");
 }

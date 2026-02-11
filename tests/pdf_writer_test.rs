@@ -156,7 +156,7 @@ fn test_write_text_masked_page_basic() {
     let data = TextMaskedData {
         stripped_content_stream: b"q Q".to_vec(),
         text_regions: vec![TextRegionCrop {
-            jpeg_data: vec![0xFF, 0xD8, 0xFF, 0xE0], // ダミーJPEG
+            jbig2_data: vec![0x97, 0x4A, 0x42, 0x32], // ダミーJBIG2（JBIG2シグネチャ先頭バイト）
             bbox_points: BBox {
                 x_min: 72.0,
                 y_min: 600.0,
@@ -264,6 +264,158 @@ fn test_write_text_masked_page_no_text_regions() {
     let pdf_bytes = writer.save_to_bytes().expect("save");
     let doc = Document::load_mem(&pdf_bytes).expect("load");
     assert_eq!(doc.get_pages().len(), 1);
+}
+
+/// テキスト領域JBIG2 ImageMaskの検証。
+/// - ImageMask が true
+/// - Filter が JBIG2Decode
+/// - BitsPerComponent が 1
+/// - Decode [1 0] が設定されていること
+#[test]
+fn test_write_text_masked_page_jbig2_properties() {
+    use pdf_masking::mrc::TextMaskedData;
+    use pdf_masking::mrc::TextRegionCrop;
+    use pdf_masking::pdf::content_stream::BBox;
+    use std::collections::HashMap;
+
+    let mut source_doc = Document::with_version("1.5");
+    let pages_id = source_doc.new_object_id();
+    let content_id = source_doc.add_object(lopdf::Stream::new(dictionary! {}, b"q Q".to_vec()));
+    let page_id = source_doc.add_object(dictionary! {
+        "Type" => "Page",
+        "Parent" => pages_id,
+        "Contents" => content_id,
+        "Resources" => dictionary! {},
+        "MediaBox" => vec![0.into(), 0.into(), 612.into(), 792.into()],
+    });
+    let pages = dictionary! {
+        "Type" => "Pages",
+        "Kids" => vec![page_id.into()],
+        "Count" => 1,
+    };
+    source_doc
+        .objects
+        .insert(pages_id, Object::Dictionary(pages));
+    let catalog_id = source_doc.add_object(dictionary! {
+        "Type" => "Catalog",
+        "Pages" => pages_id,
+    });
+    source_doc.trailer.set("Root", catalog_id);
+
+    // ダミーJBIG2データ
+    let jbig2_data = vec![0x97, 0x4A, 0x42, 0x32, 0x00];
+
+    let data = TextMaskedData {
+        stripped_content_stream: b"q Q".to_vec(),
+        text_regions: vec![TextRegionCrop {
+            jbig2_data: jbig2_data.clone(),
+            bbox_points: BBox {
+                x_min: 72.0,
+                y_min: 600.0,
+                x_max: 200.0,
+                y_max: 700.0,
+            },
+            pixel_width: 128,
+            pixel_height: 100,
+        }],
+        modified_images: HashMap::new(),
+        page_index: 0,
+        color_mode: ColorMode::Rgb,
+    };
+
+    let mut writer = MrcPageWriter::new();
+    let page_obj_id = writer
+        .write_text_masked_page(&source_doc, 1, &data)
+        .expect("write text masked page");
+
+    let doc = writer.document_mut();
+
+    // ページのXObjectからTxtRgn0を取得
+    let page_dict = doc.get_dictionary(page_obj_id).expect("get page dict");
+    let resources = page_dict.get(b"Resources").expect("Resources");
+    let resources_dict = match resources {
+        Object::Reference(r) => doc.get_dictionary(*r).expect("resolve Resources"),
+        Object::Dictionary(d) => d,
+        _ => panic!("unexpected Resources type"),
+    };
+    let xobject = resources_dict.get(b"XObject").expect("XObject");
+    let xobject_dict = match xobject {
+        Object::Reference(r) => doc.get_dictionary(*r).expect("resolve XObject"),
+        Object::Dictionary(d) => d,
+        _ => panic!("unexpected XObject type"),
+    };
+
+    let txtrn_ref = xobject_dict
+        .get(b"TxtRgn0")
+        .and_then(lopdf::Object::as_reference)
+        .expect("TxtRgn0 should be reference");
+    let txtrn_stream = doc
+        .get_object(txtrn_ref)
+        .and_then(lopdf::Object::as_stream)
+        .expect("TxtRgn0 should be stream");
+
+    // ImageMask が true であることを検証
+    let image_mask = txtrn_stream
+        .dict
+        .get(b"ImageMask")
+        .and_then(lopdf::Object::as_bool)
+        .expect("ImageMask should be a boolean");
+    assert!(image_mask, "ImageMask should be true for text regions");
+
+    // JBIG2Decode フィルタの検証
+    let filter = txtrn_stream
+        .dict
+        .get(b"Filter")
+        .and_then(lopdf::Object::as_name)
+        .expect("Filter should be a Name");
+    assert_eq!(filter, b"JBIG2Decode", "Filter should be JBIG2Decode");
+
+    // BitsPerComponent が 1 であることを検証
+    let bpc = txtrn_stream
+        .dict
+        .get(b"BitsPerComponent")
+        .and_then(lopdf::Object::as_i64)
+        .expect("BitsPerComponent should be an integer");
+    assert_eq!(bpc, 1, "BitsPerComponent should be 1 for JBIG2");
+
+    // Decode [1 0] の検証（極性反転が必須）
+    let decode = txtrn_stream
+        .dict
+        .get(b"Decode")
+        .and_then(lopdf::Object::as_array)
+        .expect("Decode should be an array");
+    assert_eq!(decode.len(), 2, "Decode array should have 2 elements");
+    assert_eq!(
+        decode[0],
+        Object::Integer(1),
+        "Decode[0] must be 1 for correct polarity"
+    );
+    assert_eq!(
+        decode[1],
+        Object::Integer(0),
+        "Decode[1] must be 0 for correct polarity"
+    );
+
+    // ColorSpaceが設定されていないことを確認（ImageMaskはColorSpaceを持たない）
+    assert!(
+        txtrn_stream.dict.get(b"ColorSpace").is_err(),
+        "ImageMask should not have ColorSpace"
+    );
+
+    // コンテンツストリームに '0 g' (black color) が含まれていることを確認
+    let content_ref = page_dict
+        .get(b"Contents")
+        .and_then(lopdf::Object::as_reference)
+        .expect("Contents should be a reference");
+    let content_stream = doc
+        .get_object(content_ref)
+        .and_then(lopdf::Object::as_stream)
+        .expect("Contents should be a stream");
+    let content_str = String::from_utf8_lossy(&content_stream.content);
+    assert!(
+        content_str.contains("0 g"),
+        "Content stream should set black color before drawing ImageMask"
+    );
 }
 
 /// リダクション済み画像の差し替えが正しく行われることを検証。

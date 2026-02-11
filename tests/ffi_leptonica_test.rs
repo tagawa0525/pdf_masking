@@ -101,3 +101,56 @@ fn test_pix_from_raw_rgba_length_mismatch() {
     let pix = Pix::from_raw_rgba(width, height, &data);
     assert!(pix.is_err());
 }
+
+#[test]
+fn test_pix_clip_rectangle() {
+    // Create a 100x100 1-bit Pix and fill a 20x10 region
+    let mut pix = Pix::create(100, 100, 1).expect("create 1-bit Pix");
+    for y in 30..40 {
+        for x in 20..40 {
+            pix.set_pixel(x, y, 1).expect("set pixel");
+        }
+    }
+
+    // Clip the 20x10 region
+    let clipped = pix.clip_rectangle(20, 30, 20, 10).expect("clip_rectangle");
+
+    // Verify dimensions
+    assert_eq!(clipped.get_width(), 20, "clipped width should be 20");
+    assert_eq!(clipped.get_height(), 10, "clipped height should be 10");
+    assert_eq!(clipped.get_depth(), 1, "clipped depth should be 1");
+}
+
+#[test]
+fn test_pix_clip_rectangle_out_of_bounds() {
+    let pix = Pix::create(50, 50, 1).expect("create 1-bit Pix");
+
+    // Clip region that exceeds bounds should fail
+    let result = pix.clip_rectangle(40, 40, 20, 20);
+    assert!(result.is_err(), "should fail when clipping out of bounds");
+}
+
+#[test]
+fn test_pix_clip_rectangle_non_1bit() {
+    let pix = Pix::create(100, 100, 8).expect("create 8-bit Pix");
+
+    // clip_rectangle should work for non-1-bit images too
+    let result = pix.clip_rectangle(10, 10, 30, 30);
+    assert!(
+        result.is_ok(),
+        "clip_rectangle should work for 8-bit images"
+    );
+}
+
+#[test]
+fn test_pix_clip_rectangle_zero_size() {
+    let pix = Pix::create(100, 100, 1).expect("create 1-bit Pix");
+
+    // Zero width should fail
+    let result = pix.clip_rectangle(10, 10, 0, 20);
+    assert!(result.is_err(), "should fail with zero width");
+
+    // Zero height should fail
+    let result = pix.clip_rectangle(10, 10, 20, 0);
+    assert!(result.is_err(), "should fail with zero height");
+}

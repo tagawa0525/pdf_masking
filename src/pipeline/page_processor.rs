@@ -166,7 +166,6 @@ pub fn process_page(
                 page_width_pts,
                 page_height_pts,
                 image_streams: streams,
-                quality: mrc_config.fg_quality,
                 color_mode: mode,
                 page_index,
             };
