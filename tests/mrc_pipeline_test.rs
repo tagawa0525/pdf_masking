@@ -681,3 +681,91 @@ fn test_compose_text_outlines_no_text() {
     let text = String::from_utf8_lossy(&data.stripped_content_stream);
     assert!(text.contains("Do"), "should preserve Do operator");
 }
+
+// ---- crop_text_regions_jbig2 tests ----
+
+/// Test cropping a single text region as JBIG2 from a 1-bit mask.
+#[test]
+fn test_crop_text_regions_jbig2_single() {
+    let mut mask = Pix::create(200, 200, 1).expect("create 1-bit Pix");
+
+    // Create a 50x50 black region at (50, 50)
+    for y in 50..100 {
+        for x in 50..100 {
+            mask.set_pixel(x, y, 1).expect("set pixel");
+        }
+    }
+
+    let bboxes = vec![segmenter::PixelBBox {
+        x: 50,
+        y: 50,
+        width: 50,
+        height: 50,
+    }];
+
+    let result = compositor::crop_text_regions_jbig2(&mask, &bboxes);
+    assert!(
+        result.is_ok(),
+        "crop_text_regions_jbig2 failed: {:?}",
+        result.err()
+    );
+
+    let crops = result.unwrap();
+    assert_eq!(crops.len(), 1, "should have 1 crop");
+    // JBIG2 data should be non-empty
+    assert!(!crops[0].0.is_empty(), "JBIG2 data should not be empty");
+    // BBox should be preserved
+    assert_eq!(crops[0].1, bboxes[0], "bbox should be preserved");
+}
+
+/// Test cropping multiple regions from a 1-bit mask.
+#[test]
+fn test_crop_text_regions_jbig2_multiple() {
+    let mut mask = Pix::create(300, 200, 1).expect("create 1-bit Pix");
+
+    // Create two separate regions
+    for y in 20..50 {
+        for x in 20..70 {
+            mask.set_pixel(x, y, 1).expect("set pixel");
+        }
+    }
+    for y in 100..150 {
+        for x in 100..150 {
+            mask.set_pixel(x, y, 1).expect("set pixel");
+        }
+    }
+
+    let bboxes = vec![
+        segmenter::PixelBBox {
+            x: 20,
+            y: 20,
+            width: 50,
+            height: 30,
+        },
+        segmenter::PixelBBox {
+            x: 100,
+            y: 100,
+            width: 50,
+            height: 50,
+        },
+    ];
+
+    let result = compositor::crop_text_regions_jbig2(&mask, &bboxes);
+    assert!(result.is_ok(), "should succeed: {:?}", result.err());
+
+    let crops = result.unwrap();
+    assert_eq!(crops.len(), 2, "should have 2 crops");
+    for (jbig2_data, _) in &crops {
+        assert!(!jbig2_data.is_empty(), "each JBIG2 crop should be non-empty");
+    }
+}
+
+/// Test cropping with empty bboxes returns empty.
+#[test]
+fn test_crop_text_regions_jbig2_empty() {
+    let mask = Pix::create(200, 200, 1).expect("create 1-bit Pix");
+    let result = compositor::crop_text_regions_jbig2(&mask, &[]);
+    assert!(result.is_ok());
+    let crops = result.unwrap();
+    assert!(crops.is_empty(), "empty bboxes should yield empty crops");
+}
