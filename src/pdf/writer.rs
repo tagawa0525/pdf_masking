@@ -171,8 +171,8 @@ impl MrcPageWriter {
     pub fn build_mrc_content_stream(
         bg_name: &str,
         fg_name: &str,
-        width: u32,
-        height: u32,
+        width: f64,
+        height: f64,
     ) -> Vec<u8> {
         let bg = escape_pdf_name(bg_name);
         let fg = escape_pdf_name(fg_name);
@@ -181,7 +181,7 @@ impl MrcPageWriter {
     }
 
     /// BW用のコンテンツストリームバイト列を生成する。
-    fn build_bw_content_stream(img_name: &str, width: u32, height: u32) -> Vec<u8> {
+    fn build_bw_content_stream(img_name: &str, width: f64, height: f64) -> Vec<u8> {
         let name = escape_pdf_name(img_name);
         format!("q {width} 0 0 {height} 0 0 cm /{name} Do Q").into_bytes()
     }
@@ -231,6 +231,8 @@ impl MrcPageWriter {
     pub fn write_mrc_page(&mut self, layers: &MrcLayers) -> crate::error::Result<lopdf::ObjectId> {
         let width = layers.width;
         let height = layers.height;
+        let page_width_pts = layers.page_width_pts;
+        let page_height_pts = layers.page_height_pts;
         let color_space = match layers.color_mode {
             ColorMode::Grayscale => "DeviceGray",
             _ => "DeviceRGB",
@@ -257,7 +259,8 @@ impl MrcPageWriter {
             "XObject" => Object::Dictionary(xobject_dict),
         });
 
-        let content_bytes = Self::build_mrc_content_stream("BgImg", "FgImg", width, height);
+        let content_bytes =
+            Self::build_mrc_content_stream("BgImg", "FgImg", page_width_pts, page_height_pts);
         let content_stream = Stream::new(dictionary! {}, content_bytes);
         let content_id = self.doc.add_object(Object::Stream(content_stream));
 
@@ -267,8 +270,8 @@ impl MrcPageWriter {
             "MediaBox" => vec![
                 Object::Integer(0),
                 Object::Integer(0),
-                Object::Integer(width as i64),
-                Object::Integer(height as i64),
+                Object::Real(page_width_pts as f32),
+                Object::Real(page_height_pts as f32),
             ],
             "Resources" => resources_id,
             "Contents" => content_id,
@@ -283,6 +286,8 @@ impl MrcPageWriter {
     pub fn write_bw_page(&mut self, layers: &BwLayers) -> crate::error::Result<lopdf::ObjectId> {
         let width = layers.width;
         let height = layers.height;
+        let page_width_pts = layers.page_width_pts;
+        let page_height_pts = layers.page_height_pts;
 
         let mask_id = self.add_mask_xobject(&layers.mask_jbig2, width, height);
 
@@ -307,7 +312,7 @@ impl MrcPageWriter {
             "XObject" => Object::Dictionary(xobject_dict),
         });
 
-        let content_bytes = Self::build_bw_content_stream("BwImg", width, height);
+        let content_bytes = Self::build_bw_content_stream("BwImg", page_width_pts, page_height_pts);
         let content_stream = Stream::new(dictionary! {}, content_bytes);
         let content_id = self.doc.add_object(Object::Stream(content_stream));
 
@@ -317,8 +322,8 @@ impl MrcPageWriter {
             "MediaBox" => vec![
                 Object::Integer(0),
                 Object::Integer(0),
-                Object::Integer(width as i64),
-                Object::Integer(height as i64),
+                Object::Real(page_width_pts as f32),
+                Object::Real(page_height_pts as f32),
             ],
             "Resources" => resources_id,
             "Contents" => content_id,
@@ -745,6 +750,8 @@ mod tests {
             mask_jbig2: vec![0x97, 0x4A, 0x42, 0x32],
             width: 640,
             height: 480,
+            page_width_pts: 595.276,
+            page_height_pts: 841.89,
             color_mode: ColorMode::Rgb,
         };
         let mut writer = MrcPageWriter::new();
@@ -762,6 +769,8 @@ mod tests {
             mask_jbig2: vec![0x97, 0x4A, 0x42, 0x32],
             width: 640,
             height: 480,
+            page_width_pts: 595.276,
+            page_height_pts: 841.89,
             color_mode: ColorMode::Rgb,
         };
         let layers2 = crate::mrc::MrcLayers {
@@ -770,6 +779,8 @@ mod tests {
             mask_jbig2: vec![0x97, 0x4A, 0x42, 0x32, 0x01],
             width: 800,
             height: 600,
+            page_width_pts: 595.276,
+            page_height_pts: 841.89,
             color_mode: ColorMode::Rgb,
         };
         let layers3 = crate::mrc::MrcLayers {
@@ -778,6 +789,8 @@ mod tests {
             mask_jbig2: vec![0x97, 0x4A, 0x42, 0x32, 0x02],
             width: 1024,
             height: 768,
+            page_width_pts: 595.276,
+            page_height_pts: 841.89,
             color_mode: ColorMode::Rgb,
         };
 
@@ -801,6 +814,8 @@ mod tests {
             mask_jbig2: vec![0x97, 0x4A, 0x42, 0x32],
             width: 640,
             height: 480,
+            page_width_pts: 595.276,
+            page_height_pts: 841.89,
         };
         let mut writer = MrcPageWriter::new();
         writer.write_bw_page(&layers).expect("write BW page");
@@ -817,6 +832,8 @@ mod tests {
             mask_jbig2: vec![0x97, 0x4A, 0x42, 0x32],
             width: 640,
             height: 480,
+            page_width_pts: 595.276,
+            page_height_pts: 841.89,
             color_mode: ColorMode::Grayscale,
         };
         let mut writer = MrcPageWriter::new();
@@ -1021,12 +1038,16 @@ mod tests {
             mask_jbig2: vec![0x97, 0x4A, 0x42, 0x32],
             width: 640,
             height: 480,
+            page_width_pts: 595.276,
+            page_height_pts: 841.89,
             color_mode: ColorMode::Rgb,
         };
         let bw_layers = crate::mrc::BwLayers {
             mask_jbig2: vec![0x97, 0x4A, 0x42, 0x32],
             width: 640,
             height: 480,
+            page_width_pts: 595.276,
+            page_height_pts: 841.89,
         };
 
         let mut writer = MrcPageWriter::new();

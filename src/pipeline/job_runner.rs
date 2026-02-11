@@ -46,6 +46,8 @@ struct AnalysisResult {
     content: Vec<u8>,
     image_streams: Option<std::collections::HashMap<String, lopdf::Stream>>,
     fonts: Option<std::collections::HashMap<String, crate::pdf::font::ParsedFont>>,
+    page_width_pts: f64,
+    page_height_pts: f64,
 }
 
 /// Intermediate data for a page after rendering (Phase B).
@@ -55,6 +57,8 @@ struct RenderResult {
     bitmap: image::DynamicImage,
     content: Vec<u8>,
     image_streams: Option<std::collections::HashMap<String, lopdf::Stream>>,
+    page_width_pts: f64,
+    page_height_pts: f64,
 }
 
 /// Run a single PDF masking job through the 4-phase pipeline.
@@ -161,12 +165,16 @@ fn phase_a_analyze(
             None
         };
 
+        let (page_width_pts, page_height_pts) = reader.page_dimensions(page_num)?;
+
         content_streams.push(AnalysisResult {
             page_idx,
             mode,
             content,
             image_streams,
             fonts,
+            page_width_pts,
+            page_height_pts,
         });
     }
     Ok(content_streams)
@@ -206,6 +214,8 @@ fn phase_a2_text_to_outlines(
                 pdf_path: &config.input_path,
                 image_streams: cs.image_streams.as_ref(),
                 fonts: cs.fonts.as_ref().unwrap(),
+                page_width_pts: cs.page_width_pts,
+                page_height_pts: cs.page_height_pts,
             };
             let result = params.process();
             match result {
@@ -245,6 +255,8 @@ fn phase_bc_render_and_mrc(
             bitmap,
             content: cs.content,
             image_streams: cs.image_streams,
+            page_width_pts: cs.page_width_pts,
+            page_height_pts: cs.page_height_pts,
         });
     }
 
@@ -273,6 +285,8 @@ fn phase_bc_render_and_mrc(
                 cache_store,
                 pdf_path: &config.input_path,
                 image_streams: pd.image_streams.as_ref(),
+                page_width_pts: pd.page_width_pts,
+                page_height_pts: pd.page_height_pts,
             };
             params.process()
         })

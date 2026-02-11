@@ -14,7 +14,8 @@ use pdf_masking::pdf::writer::MrcPageWriter;
 #[test]
 fn test_build_mrc_content_stream() {
     // MRC用のコンテンツストリームを生成し、正しいオペレータ列であることを検証する。
-    let stream_bytes = MrcPageWriter::build_mrc_content_stream("BgImg", "FgImg", 640, 480);
+    // A4サイズ（595.276 × 841.89 pt）を使用
+    let stream_bytes = MrcPageWriter::build_mrc_content_stream("BgImg", "FgImg", 595.276, 841.89);
 
     let content_str = String::from_utf8(stream_bytes).expect("valid UTF-8");
 
@@ -43,15 +44,21 @@ fn test_build_mrc_content_stream() {
     // Do オペレータがあること
     assert!(content_str.contains("Do"), "should contain Do operator");
 
-    // 幅と高さの値が含まれること
-    assert!(content_str.contains("640"), "should contain width value");
-    assert!(content_str.contains("480"), "should contain height value");
+    // PDFポイント寸法の値が含まれること
+    assert!(
+        content_str.contains("595.276"),
+        "should contain width value in PDF points"
+    );
+    assert!(
+        content_str.contains("841.89"),
+        "should contain height value in PDF points"
+    );
 }
 
 #[test]
 fn test_build_mrc_content_stream_escapes_names() {
     // PDF Name仕様に従って名前がエスケープされることを検証する。
-    let stream_bytes = MrcPageWriter::build_mrc_content_stream("Bg Img", "Fg/Img", 100, 100);
+    let stream_bytes = MrcPageWriter::build_mrc_content_stream("Bg Img", "Fg/Img", 100.0, 100.0);
     let content_str = String::from_utf8(stream_bytes).expect("valid UTF-8");
 
     // 空白は#20にエスケープされること
@@ -78,6 +85,8 @@ fn test_write_mrc_page() {
         mask_jbig2: vec![0x97, 0x4A, 0x42, 0x32],      // ダミーJBIG2マスク
         width: 640,
         height: 480,
+        page_width_pts: 595.276,
+        page_height_pts: 841.89,
         color_mode: ColorMode::Rgb,
     };
 
@@ -168,6 +177,8 @@ fn test_write_text_masked_page_basic() {
         }],
         modified_images: HashMap::new(),
         page_index: 0,
+        page_width_pts: 595.276,
+        page_height_pts: 841.89,
         color_mode: ColorMode::Rgb,
     };
 
@@ -250,6 +261,8 @@ fn test_write_text_masked_page_no_text_regions() {
         text_regions: vec![],
         modified_images: HashMap::new(),
         page_index: 0,
+        page_width_pts: 595.276,
+        page_height_pts: 841.89,
         color_mode: ColorMode::Rgb,
     };
 
@@ -320,6 +333,8 @@ fn test_write_text_masked_page_jbig2_properties() {
         }],
         modified_images: HashMap::new(),
         page_index: 0,
+        page_width_pts: 595.276,
+        page_height_pts: 841.89,
         color_mode: ColorMode::Rgb,
     };
 
@@ -494,6 +509,8 @@ fn test_write_text_masked_page_with_modified_images() {
         text_regions: vec![],
         modified_images,
         page_index: 0,
+        page_width_pts: 595.276,
+        page_height_pts: 841.89,
         color_mode: ColorMode::Rgb,
     };
 

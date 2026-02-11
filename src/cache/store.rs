@@ -58,6 +58,10 @@ struct CacheMetadata {
     width: u32,
     #[serde(default)]
     height: u32,
+    #[serde(default)]
+    page_width_pts: f64,
+    #[serde(default)]
+    page_height_pts: f64,
     #[serde(default = "default_color_mode")]
     color_mode: String,
     #[serde(default)]
@@ -159,25 +163,30 @@ impl CacheStore {
 
     /// MRC または BW の PageOutput をキャッシュに保存する。
     fn store_mrc_or_bw(&self, key: &str, output: &PageOutput) -> crate::error::Result<()> {
-        let (mask_jbig2, fg, bg, width, height, mode) = match output {
-            PageOutput::Mrc(layers) => (
-                &layers.mask_jbig2,
-                Some(&layers.foreground_jpeg),
-                Some(&layers.background_jpeg),
-                layers.width,
-                layers.height,
-                layers.color_mode,
-            ),
-            PageOutput::BwMask(layers) => (
-                &layers.mask_jbig2,
-                None,
-                None,
-                layers.width,
-                layers.height,
-                ColorMode::Bw,
-            ),
-            _ => unreachable!(),
-        };
+        let (mask_jbig2, fg, bg, width, height, page_width_pts, page_height_pts, mode) =
+            match output {
+                PageOutput::Mrc(layers) => (
+                    &layers.mask_jbig2,
+                    Some(&layers.foreground_jpeg),
+                    Some(&layers.background_jpeg),
+                    layers.width,
+                    layers.height,
+                    layers.page_width_pts,
+                    layers.page_height_pts,
+                    layers.color_mode,
+                ),
+                PageOutput::BwMask(layers) => (
+                    &layers.mask_jbig2,
+                    None,
+                    None,
+                    layers.width,
+                    layers.height,
+                    layers.page_width_pts,
+                    layers.page_height_pts,
+                    ColorMode::Bw,
+                ),
+                _ => unreachable!(),
+            };
 
         let dir = self.key_dir(key)?;
         let tmp_dir = dir.with_extension("tmp");
@@ -205,6 +214,8 @@ impl CacheStore {
             cache_type: cache_type.to_string(),
             width,
             height,
+            page_width_pts,
+            page_height_pts,
             color_mode: color_mode_to_str(mode).to_string(),
             page_index: 0,
             regions: vec![],
@@ -278,6 +289,8 @@ impl CacheStore {
             cache_type: "text_masked".to_string(),
             width: bitmap_width,
             height: bitmap_height,
+            page_width_pts: data.page_width_pts,
+            page_height_pts: data.page_height_pts,
             color_mode: color_mode_to_str(data.color_mode).to_string(),
             page_index: data.page_index,
             regions: region_metas,
@@ -370,6 +383,8 @@ impl CacheStore {
                 mask_jbig2,
                 width: metadata.width,
                 height: metadata.height,
+                page_width_pts: metadata.page_width_pts,
+                page_height_pts: metadata.page_height_pts,
             }))),
             mode => {
                 let foreground_jpeg = fs::read(dir.join("foreground.jpg")).cache_err()?;
@@ -381,6 +396,8 @@ impl CacheStore {
                     background_jpeg,
                     width: metadata.width,
                     height: metadata.height,
+                    page_width_pts: metadata.page_width_pts,
+                    page_height_pts: metadata.page_height_pts,
                     color_mode: mode,
                 })))
             }
@@ -427,6 +444,8 @@ impl CacheStore {
             text_regions,
             modified_images,
             page_index: metadata.page_index,
+            page_width_pts: metadata.page_width_pts,
+            page_height_pts: metadata.page_height_pts,
             color_mode,
         })))
     }

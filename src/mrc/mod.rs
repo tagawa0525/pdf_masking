@@ -15,6 +15,8 @@ pub struct MrcLayers {
     pub background_jpeg: Vec<u8>,
     pub width: u32,
     pub height: u32,
+    pub page_width_pts: f64,
+    pub page_height_pts: f64,
     pub color_mode: ColorMode,
 }
 
@@ -24,6 +26,8 @@ pub struct BwLayers {
     pub mask_jbig2: Vec<u8>,
     pub width: u32,
     pub height: u32,
+    pub page_width_pts: f64,
+    pub page_height_pts: f64,
 }
 
 /// スキップモード用データ
@@ -57,6 +61,8 @@ pub struct TextMaskedData {
     pub text_regions: Vec<TextRegionCrop>,
     pub modified_images: HashMap<String, ImageModification>,
     pub page_index: u32,
+    pub page_width_pts: f64,
+    pub page_height_pts: f64,
     pub color_mode: ColorMode,
 }
 

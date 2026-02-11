@@ -329,7 +329,15 @@ fn test_compose_mrc_layers() {
         fg_quality: 30,
     };
 
-    let result = compositor::compose(&data, width, height, &config, ColorMode::Rgb);
+    let result = compositor::compose(
+        &data,
+        width,
+        height,
+        595.276,
+        841.89,
+        &config,
+        ColorMode::Rgb,
+    );
     assert!(result.is_ok(), "compose failed: {:?}", result.err());
 
     let layers = result.unwrap();
@@ -346,8 +354,16 @@ fn test_mrc_layers_has_all_components() {
         fg_quality: 30,
     };
 
-    let layers = compositor::compose(&data, width, height, &config, ColorMode::Rgb)
-        .expect("compose should succeed");
+    let layers = compositor::compose(
+        &data,
+        width,
+        height,
+        595.276,
+        841.89,
+        &config,
+        ColorMode::Rgb,
+    )
+    .expect("compose should succeed");
 
     assert!(
         !layers.mask_jbig2.is_empty(),
@@ -517,6 +533,8 @@ fn test_compose_text_outlines_replaces_text_with_paths() {
         content_bytes: content,
         fonts: &fonts,
         image_streams: &image_streams,
+        page_width_pts: 595.276,
+        page_height_pts: 841.89,
         color_mode: ColorMode::Rgb,
         page_index: 0,
     };
@@ -555,6 +573,8 @@ fn test_compose_text_outlines_returns_err_on_missing_font() {
         content_bytes: content,
         fonts: &fonts,
         image_streams: &image_streams,
+        page_width_pts: 595.276,
+        page_height_pts: 841.89,
         color_mode: ColorMode::Rgb,
         page_index: 0,
     };
@@ -574,6 +594,8 @@ fn test_compose_text_outlines_no_text() {
         content_bytes: content,
         fonts: &fonts,
         image_streams: &image_streams,
+        page_width_pts: 595.276,
+        page_height_pts: 841.89,
         color_mode: ColorMode::Rgb,
         page_index: 0,
     };

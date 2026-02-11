@@ -32,6 +32,8 @@ pub struct ProcessPageOutlinesParams<'a> {
     pub pdf_path: &'a Path,
     pub image_streams: Option<&'a HashMap<String, lopdf::Stream>>,
     pub fonts: &'a HashMap<String, ParsedFont>,
+    pub page_width_pts: f64,
+    pub page_height_pts: f64,
 }
 
 impl ProcessPageOutlinesParams<'_> {
@@ -81,6 +83,8 @@ impl ProcessPageOutlinesParams<'_> {
             content_bytes: self.content_stream,
             fonts: self.fonts,
             image_streams: streams,
+            page_width_pts: self.page_width_pts,
+            page_height_pts: self.page_height_pts,
             color_mode,
             page_index: self.page_index,
         };
@@ -113,6 +117,8 @@ pub fn process_page_outlines(
     pdf_path: &Path,
     image_streams: Option<&HashMap<String, lopdf::Stream>>,
     fonts: &HashMap<String, ParsedFont>,
+    page_width_pts: f64,
+    page_height_pts: f64,
 ) -> crate::error::Result<ProcessedPage> {
     let params = ProcessPageOutlinesParams {
         page_index,
@@ -122,6 +128,8 @@ pub fn process_page_outlines(
         pdf_path,
         image_streams,
         fonts,
+        page_width_pts,
+        page_height_pts,
     };
     params.process()
 }
@@ -136,6 +144,8 @@ pub struct ProcessPageParams<'a> {
     pub cache_store: Option<&'a CacheStore>,
     pub pdf_path: &'a Path,
     pub image_streams: Option<&'a HashMap<String, lopdf::Stream>>,
+    pub page_width_pts: f64,
+    pub page_height_pts: f64,
 }
 
 impl ProcessPageParams<'_> {
@@ -194,17 +204,18 @@ impl ProcessPageParams<'_> {
         let (width, height) = (rgba_image.width(), rgba_image.height());
         let rgba_data = rgba_image.into_raw();
 
+        let page_width_pts = self.page_width_pts;
+        let page_height_pts = self.page_height_pts;
+
         let output = match color_mode {
             ColorMode::Bw => {
-                let bw_layers = compose_bw(&rgba_data, width, height)?;
+                let bw_layers =
+                    compose_bw(&rgba_data, width, height, page_width_pts, page_height_pts)?;
                 PageOutput::BwMask(bw_layers)
             }
             mode @ (ColorMode::Rgb | ColorMode::Grayscale) => {
                 let empty_streams = HashMap::new();
                 let streams = self.image_streams.unwrap_or(&empty_streams);
-
-                let page_width_pts = width as f64 * 72.0 / self.cache_settings.dpi as f64;
-                let page_height_pts = height as f64 * 72.0 / self.cache_settings.dpi as f64;
                 let params = TextMaskedParams {
                     content_bytes: self.content_stream,
                     rgba_data: &rgba_data,
@@ -225,7 +236,15 @@ impl ProcessPageParams<'_> {
                             self.page_index + 1,
                             e
                         );
-                        let mrc_layers = compose(&rgba_data, width, height, self.mrc_config, mode)?;
+                        let mrc_layers = compose(
+                            &rgba_data,
+                            width,
+                            height,
+                            page_width_pts,
+                            page_height_pts,
+                            self.mrc_config,
+                            mode,
+                        )?;
                         PageOutput::Mrc(mrc_layers)
                     }
                 }
@@ -259,6 +278,8 @@ pub fn process_page(
     cache_store: Option<&CacheStore>,
     pdf_path: &Path,
     image_streams: Option<&HashMap<String, lopdf::Stream>>,
+    page_width_pts: f64,
+    page_height_pts: f64,
 ) -> crate::error::Result<ProcessedPage> {
     let params = ProcessPageParams {
         page_index,
@@ -269,6 +290,8 @@ pub fn process_page(
         cache_store,
         pdf_path,
         image_streams,
+        page_width_pts,
+        page_height_pts,
     };
     params.process()
 }

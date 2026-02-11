@@ -24,6 +24,72 @@ impl PdfReader {
         self.doc.get_pages().len() as u32
     }
 
+    /// 指定ページ辞書からMediaBoxを取得する（Parent経由の継承も考慮）。
+    fn get_media_box(&self, dict: &lopdf::Dictionary) -> crate::error::Result<lopdf::Object> {
+        // まず現在の辞書からMediaBoxを探す
+        if let Ok(obj) = dict.get(b"MediaBox") {
+            return Ok(obj.clone());
+        }
+
+        // 見つからなければParentをたどって継承を確認する
+        if let Ok(lopdf::Object::Reference(parent_id)) = dict.get(b"Parent") {
+            let parent_dict = self.doc.get_dictionary(*parent_id)?;
+            return self.get_media_box(parent_dict);
+        }
+
+        Err(crate::error::PdfMaskError::pdf_read("MediaBox not found"))
+    }
+
+    /// 指定ページ(1-indexed)のMediaBoxからページ寸法(width_pts, height_pts)を返す。
+    pub fn page_dimensions(&self, page_num: u32) -> crate::error::Result<(f64, f64)> {
+        let page_id = self.get_page_id(page_num)?;
+        let page_dict = self.doc.get_dictionary(page_id)?;
+
+        // MediaBoxを取得（継承も考慮）
+        let media_box = self.get_media_box(page_dict)?;
+
+        let media_box_array = media_box.as_array()?;
+        if media_box_array.len() < 4 {
+            return Err(crate::error::PdfMaskError::pdf_read("Invalid MediaBox"));
+        }
+
+        // MediaBoxの値は整数または実数の可能性がある
+        let to_f64 = |obj: &lopdf::Object| -> crate::error::Result<f64> {
+            match obj {
+                lopdf::Object::Integer(i) => Ok(*i as f64),
+                lopdf::Object::Real(f) => Ok(*f as f64),
+                _ => Err(crate::error::PdfMaskError::pdf_read(
+                    "Invalid MediaBox value",
+                )),
+            }
+        };
+
+        let x0 = to_f64(&media_box_array[0])?;
+        let y0 = to_f64(&media_box_array[1])?;
+        let x1 = to_f64(&media_box_array[2])?;
+        let y1 = to_f64(&media_box_array[3])?;
+
+        let width = (x1 - x0).abs();
+        let height = (y1 - y0).abs();
+
+        // Validate that the computed page dimensions are positive and reasonable.
+        if width <= 0.0 || height <= 0.0 {
+            return Err(crate::error::PdfMaskError::pdf_read(
+                "Invalid MediaBox: non-positive page dimensions",
+            ));
+        }
+
+        // Optionally enforce an upper bound based on typical PDF limits (14,400 pt ≈ 200 in).
+        const PDF_MAX_DIMENSION_PT: f64 = 14_400.0;
+        if width > PDF_MAX_DIMENSION_PT || height > PDF_MAX_DIMENSION_PT {
+            return Err(crate::error::PdfMaskError::pdf_read(
+                "Invalid MediaBox: page dimensions exceed PDF limits",
+            ));
+        }
+
+        Ok((width, height))
+    }
+
     /// 指定ページ(1-indexed)のコンテンツストリームをバイト列として返す。
     /// 複数のContentストリームがある場合は結合して返す。
     pub fn page_content_stream(&self, page_num: u32) -> crate::error::Result<Vec<u8>> {

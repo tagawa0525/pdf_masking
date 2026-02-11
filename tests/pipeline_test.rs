@@ -36,6 +36,8 @@ fn test_process_page_cache_miss() {
         None,
         Path::new("test.pdf"),
         None,
+        595.276,
+        841.89,
     );
     assert!(
         result.is_ok(),
@@ -82,6 +84,8 @@ fn test_process_page_cache_hit() {
         Some(&cache_store),
         Path::new("test.pdf"),
         None,
+        595.276,
+        841.89,
     );
     assert!(result1.is_ok());
     let processed1 = result1.unwrap();
@@ -99,6 +103,8 @@ fn test_process_page_cache_hit() {
         Some(&cache_store),
         Path::new("test.pdf"),
         None,
+        595.276,
+        841.89,
     );
     assert!(result2.is_ok());
     let processed2 = result2.unwrap();
@@ -159,6 +165,8 @@ fn test_process_page_text_masked_with_image_streams() {
         None,
         Path::new("test.pdf"),
         Some(&image_streams),
+        595.276,
+        841.89,
     );
     assert!(
         result.is_ok(),
@@ -207,6 +215,8 @@ fn test_process_page_text_masked_without_image_streams() {
         None,
         Path::new("test.pdf"),
         None, // image_streams=None でもTextMaskedモードになるべき
+        595.276,
+        841.89,
     );
     assert!(
         result.is_ok(),
@@ -305,6 +315,8 @@ fn test_process_page_text_masked_cache_roundtrip() {
         Some(&cache_store),
         Path::new("test.pdf"),
         Some(&image_streams),
+        595.276,
+        841.89,
     );
     assert!(
         result1.is_ok(),
@@ -325,6 +337,8 @@ fn test_process_page_text_masked_cache_roundtrip() {
         Some(&cache_store),
         Path::new("test.pdf"),
         Some(&image_streams),
+        595.276,
+        841.89,
     );
     assert!(
         result2.is_ok(),
@@ -375,6 +389,8 @@ fn test_process_page_outlines_produces_text_masked() {
         Path::new("sample/pdf_test.pdf"),
         None,
         &fonts,
+        595.276,
+        841.89,
     );
     assert!(
         result.is_ok(),
@@ -433,6 +449,8 @@ fn test_process_page_outlines_accepts_bw_mode() {
         Path::new("sample/pdf_test.pdf"),
         None,
         &fonts,
+        595.276,
+        841.89,
     );
     assert!(
         result.is_ok(),
@@ -485,6 +503,8 @@ fn test_process_page_outlines_error_on_missing_font() {
         Path::new("test.pdf"),
         None,
         &fonts,
+        595.276,
+        841.89,
     );
     assert!(result.is_err(), "should fail when font is missing");
 }
@@ -520,6 +540,8 @@ fn test_process_page_outlines_cache_roundtrip() {
         Path::new("sample/pdf_test.pdf"),
         None,
         &fonts,
+        595.276,
+        841.89,
     );
     assert!(result1.is_ok(), "first call: {:?}", result1.err());
     let processed1 = result1.unwrap();
@@ -534,6 +556,8 @@ fn test_process_page_outlines_cache_roundtrip() {
         Path::new("sample/pdf_test.pdf"),
         None,
         &fonts,
+        595.276,
+        841.89,
     );
     assert!(result2.is_ok(), "second call: {:?}", result2.err());
     let processed2 = result2.unwrap();
@@ -568,6 +592,8 @@ fn test_process_page_succeeds_with_any_content_stream() {
         None,
         Path::new("test.pdf"),
         None,
+        595.276,
+        841.89,
     );
     assert!(
         result.is_ok(),
