@@ -38,7 +38,7 @@ pub struct MrcConfig {
 /// * `width`     - Image width in pixels
 /// * `height`    - Image height in pixels
 /// * `config`    - Quality settings for the output layers
-/// * `color_mode` - RGB or Grayscale
+/// * `color_mode` - RGB, Grayscale, or Bw
 pub fn compose(
     rgba_data: &[u8],
     width: u32,
@@ -92,7 +92,7 @@ pub fn compose(
 /// * `bitmap` - レンダリング済みのページビットマップ
 /// * `bboxes` - テキスト領域の矩形リスト（ピクセル座標）
 /// * `quality` - JPEG 品質 (1-100)
-/// * `color_mode` - RGB または Grayscale
+/// * `color_mode` - RGB, Grayscale, または Bw
 ///
 /// # Returns
 /// `(jpeg_data, bbox)` のペアリスト
@@ -169,7 +169,7 @@ pub struct TextMaskedParams<'a> {
     pub image_streams: &'a HashMap<String, lopdf::Stream>,
     /// JPEG品質 (1-100)
     pub quality: u8,
-    /// RGB or Grayscale
+    /// RGB, Grayscale, or Bw
     pub color_mode: ColorMode,
     /// ページ番号(0-based)
     pub page_index: u32,
@@ -284,7 +284,7 @@ pub struct TextOutlinesParams<'a> {
     pub fonts: &'a HashMap<String, ParsedFont>,
     /// XObject名 → lopdf::Stream のマップ
     pub image_streams: &'a HashMap<String, lopdf::Stream>,
-    /// RGB or Grayscale
+    /// RGB, Grayscale, or Bw
     pub color_mode: ColorMode,
     /// ページ番号(0-based)
     pub page_index: u32,
@@ -296,8 +296,11 @@ pub struct TextOutlinesParams<'a> {
 /// コンテンツストリームに残す。text_regionsは空になる。
 pub fn compose_text_outlines(params: &TextOutlinesParams) -> crate::error::Result<TextMaskedData> {
     // 1. テキスト→アウトライン変換（フォント未発見時はErrをそのまま返す）
-    let outlines_content =
-        crate::pdf::text_to_outlines::convert_text_to_outlines(params.content_bytes, params.fonts)?;
+    let outlines_content = crate::pdf::text_to_outlines::convert_text_to_outlines(
+        params.content_bytes,
+        params.fonts,
+        params.color_mode == ColorMode::Bw,
+    )?;
 
     // 2. 白色fill矩形を検出
     let white_rects = extract_white_fill_rects(params.content_bytes)?;

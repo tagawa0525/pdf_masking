@@ -100,21 +100,22 @@ pub fn run_job(config: &JobConfig) -> crate::error::Result<JobResult> {
     for &(page_idx, mode) in &non_skip {
         let page_num = page_idx + 1;
         let content = reader.page_content_stream(page_num)?;
-        let image_streams =
-            if config.preserve_images && matches!(mode, ColorMode::Rgb | ColorMode::Grayscale) {
-                let streams = reader.page_image_streams(page_num)?;
-                if streams.is_empty() {
-                    None
-                } else {
-                    Some(streams)
-                }
-            } else {
+        let image_streams = if config.preserve_images
+            && matches!(mode, ColorMode::Rgb | ColorMode::Grayscale | ColorMode::Bw)
+        {
+            let streams = reader.page_image_streams(page_num)?;
+            if streams.is_empty() {
                 None
-            };
-        // text_to_outlines=true かつ RGB/Grayscale → フォント解析
+            } else {
+                Some(streams)
+            }
+        } else {
+            None
+        };
+        // text_to_outlines=true かつ RGB/Grayscale/Bw → フォント解析
         let fonts = if config.text_to_outlines
             && config.preserve_images
-            && matches!(mode, ColorMode::Rgb | ColorMode::Grayscale)
+            && matches!(mode, ColorMode::Rgb | ColorMode::Grayscale | ColorMode::Bw)
         {
             crate::pdf::font::parse_page_fonts(reader.document(), page_num).ok()
         } else {
@@ -138,7 +139,10 @@ pub fn run_job(config: &JobConfig) -> crate::error::Result<JobResult> {
     for cs in content_streams {
         let eligible = config.text_to_outlines
             && config.preserve_images
-            && matches!(cs.mode, ColorMode::Rgb | ColorMode::Grayscale)
+            && matches!(
+                cs.mode,
+                ColorMode::Rgb | ColorMode::Grayscale | ColorMode::Bw
+            )
             && cs.fonts.is_some();
 
         if eligible {

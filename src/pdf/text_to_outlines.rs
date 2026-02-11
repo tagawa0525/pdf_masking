@@ -14,6 +14,7 @@ use crate::pdf::text_state::{FillColor, TjArrayEntry};
 pub fn convert_text_to_outlines(
     content_bytes: &[u8],
     fonts: &HashMap<String, ParsedFont>,
+    force_bw: bool,
 ) -> Result<Vec<u8>> {
     if content_bytes.is_empty() {
         return Ok(Vec::new());
@@ -287,6 +288,7 @@ pub fn convert_text_to_outlines(
                         &fill_color,
                         fonts,
                         &mut text_path_buf,
+                        force_bw,
                     )?;
                 }
             }
@@ -309,6 +311,7 @@ pub fn convert_text_to_outlines(
                                     &fill_color,
                                     fonts,
                                     &mut text_path_buf,
+                                    force_bw,
                                 )?;
                             }
                             TjArrayEntry::Adjustment(val) => {
@@ -335,6 +338,7 @@ pub fn convert_text_to_outlines(
                         &fill_color,
                         fonts,
                         &mut text_path_buf,
+                        force_bw,
                     )?;
                 }
             }
@@ -361,6 +365,7 @@ pub fn convert_text_to_outlines(
                         &fill_color,
                         fonts,
                         &mut text_path_buf,
+                        force_bw,
                     )?;
                 }
             }
@@ -471,6 +476,7 @@ fn render_text_codes(
     fill_color: &FillColor,
     fonts: &HashMap<String, ParsedFont>,
     output: &mut Vec<u8>,
+    force_bw: bool,
 ) -> Result<()> {
     let font = fonts
         .get(&ts.font_name)
@@ -490,6 +496,7 @@ fn render_text_codes(
                 fill_color,
                 horizontal_scaling: ts.horizontal_scaling,
                 text_rise: ts.text_rise,
+                force_bw,
             });
             output.extend_from_slice(&path_bytes);
         }
