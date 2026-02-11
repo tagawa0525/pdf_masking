@@ -14,7 +14,8 @@ use pdf_masking::pdf::writer::MrcPageWriter;
 #[test]
 fn test_build_mrc_content_stream() {
     // MRC用のコンテンツストリームを生成し、正しいオペレータ列であることを検証する。
-    let stream_bytes = MrcPageWriter::build_mrc_content_stream("BgImg", "FgImg", 640.0, 480.0);
+    // A4サイズ（595.276 × 841.89 pt）を使用
+    let stream_bytes = MrcPageWriter::build_mrc_content_stream("BgImg", "FgImg", 595.276, 841.89);
 
     let content_str = String::from_utf8(stream_bytes).expect("valid UTF-8");
 
@@ -43,9 +44,15 @@ fn test_build_mrc_content_stream() {
     // Do オペレータがあること
     assert!(content_str.contains("Do"), "should contain Do operator");
 
-    // 幅と高さの値が含まれること
-    assert!(content_str.contains("640"), "should contain width value");
-    assert!(content_str.contains("480"), "should contain height value");
+    // PDFポイント寸法の値が含まれること
+    assert!(
+        content_str.contains("595.276"),
+        "should contain width value in PDF points"
+    );
+    assert!(
+        content_str.contains("841.89"),
+        "should contain height value in PDF points"
+    );
 }
 
 #[test]
