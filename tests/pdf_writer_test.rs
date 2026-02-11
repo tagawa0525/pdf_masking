@@ -156,7 +156,7 @@ fn test_write_text_masked_page_basic() {
     let data = TextMaskedData {
         stripped_content_stream: b"q Q".to_vec(),
         text_regions: vec![TextRegionCrop {
-            jbig2_data: vec![0xFF, 0xD8, 0xFF, 0xE0], // ダミーJBIG2
+            jbig2_data: vec![0x97, 0x4A, 0x42, 0x32], // ダミーJBIG2（JBIG2シグネチャ先頭バイト）
             bbox_points: BBox {
                 x_min: 72.0,
                 y_min: 600.0,
