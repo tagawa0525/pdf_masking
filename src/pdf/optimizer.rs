@@ -21,7 +21,11 @@ use crate::error::PdfMaskError;
 pub fn remove_fonts_from_pages(doc: &mut Document, page_ids: &[ObjectId]) {
     let masked_set: HashSet<ObjectId> = page_ids.iter().copied().collect();
 
-    // Collect all page IDs and their indirect Resources references
+    // --- Phase 1: Collect (immutable reads) ---
+    // Gather every page's indirect Resources reference upfront.
+    // This snapshot is needed later to decide whether an indirect Resources
+    // dictionary is shared with non-masked pages. We must finish all immutable
+    // borrows of `doc` before Phase 2 begins any mutation (borrow-checker).
     let all_page_ids: Vec<ObjectId> = doc.get_pages().into_values().collect();
 
     let mut all_res_refs: Vec<(ObjectId, Option<ObjectId>)> = Vec::new();
@@ -34,6 +38,8 @@ pub fn remove_fonts_from_pages(doc: &mut Document, page_ids: &[ObjectId]) {
         all_res_refs.push((pid, res_ref));
     }
 
+    // --- Phase 2: Modify (mutable writes) ---
+    // Using the snapshot from Phase 1, mutate each masked page's Resources.
     for &page_id in page_ids {
         let resources_ref = {
             let Ok(page_dict) = doc.get_dictionary(page_id) else {
@@ -52,18 +58,19 @@ pub fn remove_fonts_from_pages(doc: &mut Document, page_ids: &[ObjectId]) {
                 .any(|&(pid, ref_opt)| !masked_set.contains(&pid) && ref_opt == Some(res_id));
 
             if is_shared {
-                // Clone the Resources dictionary and add as a new object
+                // Shared with non-masked pages — clone so we don't break them.
+                // We read-then-clone to release the immutable borrow before
+                // adding the new object and updating the page reference.
                 let cloned_dict = doc.get_dictionary(res_id).ok().cloned();
                 if let Some(mut new_dict) = cloned_dict {
                     new_dict.remove(b"Font");
                     let new_res_id = doc.add_object(Object::Dictionary(new_dict));
-                    // Update the page to point to the new Resources object
                     if let Ok(page_dict) = doc.get_dictionary_mut(page_id) {
                         page_dict.set("Resources", Object::Reference(new_res_id));
                     }
                 }
             } else {
-                // Not shared: modify in place
+                // Exclusive to masked pages — safe to modify in place.
                 if let Ok(res_dict) = doc.get_dictionary_mut(res_id) {
                     res_dict.remove(b"Font");
                 }
@@ -82,33 +89,25 @@ pub fn remove_fonts_from_pages(doc: &mut Document, page_ids: &[ObjectId]) {
 ///
 /// 既にフィルターが設定されているストリームはスキップする（二重圧縮防止）。
 pub fn compress_streams(doc: &mut Document) -> crate::error::Result<()> {
-    let ids: Vec<ObjectId> = doc.objects.keys().copied().collect();
-
-    for id in ids {
-        let needs_compression = {
-            let Some(Object::Stream(stream)) = doc.objects.get(&id) else {
-                continue;
-            };
-            // Skip streams that already have a filter
-            stream.dict.get(b"Filter").is_err()
+    for obj in doc.objects.values_mut() {
+        let Object::Stream(stream) = obj else {
+            continue;
         };
-
-        if needs_compression {
-            let Some(Object::Stream(stream)) = doc.objects.get_mut(&id) else {
-                continue;
-            };
-
-            let mut encoder = ZlibEncoder::new(Vec::new(), Compression::default());
-            encoder.write_all(&stream.content).map_err(|e| {
-                PdfMaskError::pdf_write(format!("stream compression write failed: {e}"))
-            })?;
-            let compressed = encoder.finish().map_err(|e| {
-                PdfMaskError::pdf_write(format!("stream compression finish failed: {e}"))
-            })?;
-
-            stream.dict.set("Filter", "FlateDecode");
-            stream.set_content(compressed);
+        // Skip streams that already have a filter (avoid double-compression).
+        if stream.dict.get(b"Filter").is_ok() {
+            continue;
         }
+
+        let mut encoder = ZlibEncoder::new(Vec::new(), Compression::default());
+        encoder.write_all(&stream.content).map_err(|e| {
+            PdfMaskError::pdf_write(format!("stream compression write failed: {e}"))
+        })?;
+        let compressed = encoder.finish().map_err(|e| {
+            PdfMaskError::pdf_write(format!("stream compression finish failed: {e}"))
+        })?;
+
+        stream.dict.set("Filter", "FlateDecode");
+        stream.set_content(compressed);
     }
 
     Ok(())

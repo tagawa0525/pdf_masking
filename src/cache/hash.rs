@@ -25,12 +25,7 @@ pub struct CacheSettings {
 fn settings_to_canonical_json(settings: &CacheSettings) -> String {
     let mut map = BTreeMap::new();
     map.insert("bg_quality", serde_json::json!(settings.bg_quality));
-    let color_mode_str = match settings.color_mode {
-        ColorMode::Rgb => "rgb",
-        ColorMode::Grayscale => "grayscale",
-        ColorMode::Bw => "bw",
-        ColorMode::Skip => "skip",
-    };
+    let color_mode_str = super::color_mode_to_str(settings.color_mode);
     map.insert("color_mode", serde_json::json!(color_mode_str));
     map.insert("dpi", serde_json::json!(settings.dpi));
     map.insert("fg_dpi", serde_json::json!(settings.fg_dpi));

@@ -40,6 +40,62 @@ impl Matrix {
     }
 }
 
+/// CTM（Current Transformation Matrix）スタック管理。
+///
+/// q/Q/cmオペレータのグラフィックス状態保存・復元パターンを共通化する。
+pub(crate) struct CtmStack {
+    stack: Vec<Matrix>,
+}
+
+impl CtmStack {
+    /// 新しいCTMスタック（単位行列を初期値として持つ）を作成する。
+    pub(crate) fn new() -> Self {
+        Self {
+            stack: vec![Matrix::identity()],
+        }
+    }
+
+    /// 現在のCTMをスタックにpush（qオペレータ）。
+    pub(crate) fn push(&mut self) {
+        let current = self.stack.last().cloned().unwrap_or_else(Matrix::identity);
+        self.stack.push(current);
+    }
+
+    /// スタックからpop（Qオペレータ）。
+    pub(crate) fn pop(&mut self) {
+        if self.stack.len() > 1 {
+            self.stack.pop();
+        }
+    }
+
+    /// cmオペレータのオペランドを適用してCTMを更新する。
+    pub(crate) fn apply_cm(&mut self, operands: &[lopdf::Object]) -> crate::error::Result<()> {
+        if operands.len() == 6 {
+            let vals: Vec<f64> = operands
+                .iter()
+                .map(operand_to_f64)
+                .collect::<Result<Vec<_>, _>>()?;
+            let cm_matrix = Matrix {
+                a: vals[0],
+                b: vals[1],
+                c: vals[2],
+                d: vals[3],
+                e: vals[4],
+                f: vals[5],
+            };
+            if let Some(current) = self.stack.last_mut() {
+                *current = current.multiply(&cm_matrix);
+            }
+        }
+        Ok(())
+    }
+
+    /// 現在のCTMを取得する。
+    pub(crate) fn current(&self) -> Matrix {
+        self.stack.last().cloned().unwrap_or_else(Matrix::identity)
+    }
+}
+
 /// 矩形領域を表すバウンディングボックス。
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct BBox {
@@ -76,44 +132,15 @@ pub fn extract_xobject_placements(
     let content = Content::decode(content_bytes)
         .map_err(|e| crate::error::PdfMaskError::content_stream(e.to_string()))?;
 
-    let mut ctm_stack: Vec<Matrix> = vec![Matrix::identity()];
+    let mut ctm = CtmStack::new();
     let mut placements: Vec<ImagePlacement> = Vec::new();
 
     let operations: &[lopdf::content::Operation] = content.operations.as_ref();
     for op in operations {
         match op.operator.as_str() {
-            "q" => {
-                // グラフィックス状態を保存: 現在のCTMをスタックにpush
-                let current = ctm_stack.last().cloned().unwrap_or_else(Matrix::identity);
-                ctm_stack.push(current);
-            }
-            "Q" => {
-                // グラフィックス状態を復元: スタックからpop
-                if ctm_stack.len() > 1 {
-                    ctm_stack.pop();
-                }
-            }
-            "cm" => {
-                // CTMを更新: 現在のCTM = 現在のCTM × Matrix(a,b,c,d,e,f)
-                if op.operands.len() == 6 {
-                    let vals: Vec<f64> = op
-                        .operands
-                        .iter()
-                        .map(operand_to_f64)
-                        .collect::<Result<Vec<_>, _>>()?;
-                    let cm_matrix = Matrix {
-                        a: vals[0],
-                        b: vals[1],
-                        c: vals[2],
-                        d: vals[3],
-                        e: vals[4],
-                        f: vals[5],
-                    };
-                    if let Some(current) = ctm_stack.last_mut() {
-                        *current = current.multiply(&cm_matrix);
-                    }
-                }
-            }
+            "q" => ctm.push(),
+            "Q" => ctm.pop(),
+            "cm" => ctm.apply_cm(&op.operands)?,
             "Do" => {
                 // XObjectを描画: 名前とCTMを記録
                 if let Some(operand) = op.operands.first() {
@@ -121,7 +148,7 @@ pub fn extract_xobject_placements(
                         .as_name()
                         .map_err(|e| crate::error::PdfMaskError::content_stream(e.to_string()))?;
                     let name = String::from_utf8_lossy(name_bytes).into_owned();
-                    let current_ctm = ctm_stack.last().cloned().unwrap_or_else(Matrix::identity);
+                    let current_ctm = ctm.current();
                     let bbox = ctm_to_bbox(&current_ctm);
                     placements.push(ImagePlacement {
                         name,
@@ -293,16 +320,132 @@ pub fn pixel_to_page_coords(
     })
 }
 
-/// fill colorの状態
+/// fill colorが白色かどうかを追跡する。
+///
+/// `text_state::FillColor`（色値を保持するenum）とは異なり、
+/// 白色判定結果のみを保持する軽量トラッカー。
 #[derive(Debug, Clone)]
-struct FillColor {
+struct FillColorTracker {
     /// 白色 (RGB: 1,1,1 / Gray: 1 / CMYK: 0,0,0,0) かどうか
     is_white: bool,
 }
 
-impl FillColor {
+impl FillColorTracker {
     fn default_black() -> Self {
-        FillColor { is_white: false }
+        FillColorTracker { is_white: false }
+    }
+}
+
+/// fill colorオペレータに基づいてFillColorTrackerを更新する。
+///
+/// 対象オペレータ: `rg`(RGB), `g`(Gray), `k`(CMYK), `sc`/`scn`(汎用)
+fn update_fill_color(op: &lopdf::content::Operation, tracker: &mut FillColorTracker) {
+    match op.operator.as_str() {
+        "rg" => {
+            // RGB fill color: r g b rg
+            if op.operands.len() == 3
+                && let (Ok(r), Ok(g), Ok(b)) = (
+                    operand_to_f64(&op.operands[0]),
+                    operand_to_f64(&op.operands[1]),
+                    operand_to_f64(&op.operands[2]),
+                )
+            {
+                tracker.is_white = is_white_rgb(r, g, b);
+            }
+        }
+        "g" => {
+            // Gray fill color: gray g
+            if op.operands.len() == 1
+                && let Ok(gray) = operand_to_f64(&op.operands[0])
+            {
+                tracker.is_white = is_white_gray(gray);
+            }
+        }
+        "k" => {
+            // CMYK fill color: c m y k k
+            if op.operands.len() == 4
+                && let (Ok(c), Ok(m), Ok(y), Ok(k)) = (
+                    operand_to_f64(&op.operands[0]),
+                    operand_to_f64(&op.operands[1]),
+                    operand_to_f64(&op.operands[2]),
+                    operand_to_f64(&op.operands[3]),
+                )
+            {
+                tracker.is_white = is_white_cmyk(c, m, y, k);
+            }
+        }
+        "sc" | "scn" => {
+            // Generic fill color: 値の数で判定
+            tracker.is_white = match op.operands.len() {
+                1 => operand_to_f64(&op.operands[0])
+                    .map(is_white_gray)
+                    .unwrap_or(false),
+                3 => {
+                    if let (Ok(r), Ok(g), Ok(b)) = (
+                        operand_to_f64(&op.operands[0]),
+                        operand_to_f64(&op.operands[1]),
+                        operand_to_f64(&op.operands[2]),
+                    ) {
+                        is_white_rgb(r, g, b)
+                    } else {
+                        false
+                    }
+                }
+                4 => {
+                    if let (Ok(c), Ok(m), Ok(y), Ok(k)) = (
+                        operand_to_f64(&op.operands[0]),
+                        operand_to_f64(&op.operands[1]),
+                        operand_to_f64(&op.operands[2]),
+                        operand_to_f64(&op.operands[3]),
+                    ) {
+                        is_white_cmyk(c, m, y, k)
+                    } else {
+                        false
+                    }
+                }
+                _ => false,
+            };
+        }
+        _ => {}
+    }
+}
+
+/// パス構築オペレータに基づいてrectバッファを更新する。
+///
+/// `re`の場合は矩形を追加、それ以外のパスオペレータ(`m`/`l`/`c`/`v`/`y`/`h`)
+/// の場合はバッファをクリアする（矩形のみのパスではなくなるため）。
+fn update_path_rects(op: &lopdf::content::Operation, rects: &mut Vec<(f64, f64, f64, f64)>) {
+    match op.operator.as_str() {
+        "re" => {
+            if op.operands.len() == 4
+                && let (Ok(x), Ok(y), Ok(w), Ok(h)) = (
+                    operand_to_f64(&op.operands[0]),
+                    operand_to_f64(&op.operands[1]),
+                    operand_to_f64(&op.operands[2]),
+                    operand_to_f64(&op.operands[3]),
+                )
+            {
+                rects.push((x, y, w, h));
+            }
+        }
+        // Non-rectangle path construction: path is no longer just rectangles
+        _ => {
+            rects.clear();
+        }
+    }
+}
+
+/// 白色fill矩形のBBoxをresultsに追加する。
+fn collect_white_fill_bboxes(
+    is_white: bool,
+    ctm: &Matrix,
+    rects: &[(f64, f64, f64, f64)],
+    results: &mut Vec<BBox>,
+) {
+    if is_white {
+        for &(x, y, w, h) in rects {
+            results.push(rect_to_bbox(ctm, x, y, w, h));
+        }
     }
 }
 
@@ -327,8 +470,8 @@ pub fn extract_white_fill_rects(content_bytes: &[u8]) -> crate::error::Result<Ve
     let content = Content::decode(content_bytes)
         .map_err(|e| crate::error::PdfMaskError::content_stream(e.to_string()))?;
 
-    let mut ctm_stack: Vec<Matrix> = vec![Matrix::identity()];
-    let mut fill_color_stack: Vec<FillColor> = vec![FillColor::default_black()];
+    let mut ctm = CtmStack::new();
+    let mut fill_color_stack: Vec<FillColorTracker> = vec![FillColorTracker::default_black()];
     let mut results: Vec<BBox> = Vec::new();
 
     // 現在のパス上の矩形（reオペレータで蓄積、fillで一括処理）
@@ -337,129 +480,31 @@ pub fn extract_white_fill_rects(content_bytes: &[u8]) -> crate::error::Result<Ve
     for op in &content.operations {
         match op.operator.as_str() {
             "q" => {
-                let current_ctm = ctm_stack.last().cloned().unwrap_or_else(Matrix::identity);
-                ctm_stack.push(current_ctm);
+                ctm.push();
                 let current_fill = fill_color_stack
                     .last()
                     .cloned()
-                    .unwrap_or_else(FillColor::default_black);
+                    .unwrap_or_else(FillColorTracker::default_black);
                 fill_color_stack.push(current_fill);
             }
             "Q" => {
-                if ctm_stack.len() > 1 {
-                    ctm_stack.pop();
-                }
+                ctm.pop();
                 if fill_color_stack.len() > 1 {
                     fill_color_stack.pop();
                 }
             }
             "cm" => {
-                if op.operands.len() == 6 {
-                    let vals: Vec<f64> = op
-                        .operands
-                        .iter()
-                        .map(operand_to_f64)
-                        .collect::<Result<Vec<_>, _>>()?;
-                    let cm_matrix = Matrix {
-                        a: vals[0],
-                        b: vals[1],
-                        c: vals[2],
-                        d: vals[3],
-                        e: vals[4],
-                        f: vals[5],
-                    };
-                    if let Some(current) = ctm_stack.last_mut() {
-                        *current = current.multiply(&cm_matrix);
-                    }
-                }
+                ctm.apply_cm(&op.operands)?;
             }
             // Fill color operators
-            "rg" => {
-                // RGB fill color: r g b rg
-                if op.operands.len() == 3
-                    && let (Ok(r), Ok(g), Ok(b)) = (
-                        operand_to_f64(&op.operands[0]),
-                        operand_to_f64(&op.operands[1]),
-                        operand_to_f64(&op.operands[2]),
-                    )
-                    && let Some(fc) = fill_color_stack.last_mut()
-                {
-                    fc.is_white = is_white_rgb(r, g, b);
-                }
-            }
-            "g" => {
-                // Gray fill color: gray g
-                if op.operands.len() == 1
-                    && let Ok(gray) = operand_to_f64(&op.operands[0])
-                    && let Some(fc) = fill_color_stack.last_mut()
-                {
-                    fc.is_white = is_white_gray(gray);
-                }
-            }
-            "k" => {
-                // CMYK fill color: c m y k k
-                if op.operands.len() == 4
-                    && let (Ok(c), Ok(m), Ok(y), Ok(k)) = (
-                        operand_to_f64(&op.operands[0]),
-                        operand_to_f64(&op.operands[1]),
-                        operand_to_f64(&op.operands[2]),
-                        operand_to_f64(&op.operands[3]),
-                    )
-                    && let Some(fc) = fill_color_stack.last_mut()
-                {
-                    fc.is_white = is_white_cmyk(c, m, y, k);
-                }
-            }
-            "sc" | "scn" => {
-                // Generic fill color: 値の数で判定
+            "rg" | "g" | "k" | "sc" | "scn" => {
                 if let Some(fc) = fill_color_stack.last_mut() {
-                    fc.is_white = match op.operands.len() {
-                        1 => operand_to_f64(&op.operands[0])
-                            .map(is_white_gray)
-                            .unwrap_or(false),
-                        3 => {
-                            if let (Ok(r), Ok(g), Ok(b)) = (
-                                operand_to_f64(&op.operands[0]),
-                                operand_to_f64(&op.operands[1]),
-                                operand_to_f64(&op.operands[2]),
-                            ) {
-                                is_white_rgb(r, g, b)
-                            } else {
-                                false
-                            }
-                        }
-                        4 => {
-                            if let (Ok(c), Ok(m), Ok(y), Ok(k)) = (
-                                operand_to_f64(&op.operands[0]),
-                                operand_to_f64(&op.operands[1]),
-                                operand_to_f64(&op.operands[2]),
-                                operand_to_f64(&op.operands[3]),
-                            ) {
-                                is_white_cmyk(c, m, y, k)
-                            } else {
-                                false
-                            }
-                        }
-                        _ => false,
-                    };
+                    update_fill_color(op, fc);
                 }
             }
-            // Path construction: rectangle
-            "re" => {
-                if op.operands.len() == 4
-                    && let (Ok(x), Ok(y), Ok(w), Ok(h)) = (
-                        operand_to_f64(&op.operands[0]),
-                        operand_to_f64(&op.operands[1]),
-                        operand_to_f64(&op.operands[2]),
-                        operand_to_f64(&op.operands[3]),
-                    )
-                {
-                    current_rects.push((x, y, w, h));
-                }
-            }
-            // Non-rectangle path construction: path is no longer just rectangles
-            "m" | "l" | "c" | "v" | "y" | "h" => {
-                current_rects.clear();
+            // Path construction
+            "re" | "m" | "l" | "c" | "v" | "y" | "h" => {
+                update_path_rects(op, &mut current_rects);
             }
             // Fill operators
             "f" | "F" | "f*" => {
@@ -467,13 +512,7 @@ pub fn extract_white_fill_rects(content_bytes: &[u8]) -> crate::error::Result<Ve
                     .last()
                     .map(|fc| fc.is_white)
                     .unwrap_or(false);
-                if is_white {
-                    let ctm = ctm_stack.last().cloned().unwrap_or_else(Matrix::identity);
-                    for (x, y, w, h) in &current_rects {
-                        let bbox = rect_to_bbox(&ctm, *x, *y, *w, *h);
-                        results.push(bbox);
-                    }
-                }
+                collect_white_fill_bboxes(is_white, &ctm.current(), &current_rects, &mut results);
                 current_rects.clear();
             }
             // Path end without fill

@@ -1,5 +1,6 @@
 // Phase 6: pdfium-render wrapper: page -> DynamicImage (in-memory only)
 
+use std::cell::RefCell;
 use std::path::{Path, PathBuf};
 
 use image::DynamicImage;
@@ -44,6 +45,31 @@ fn create_pdfium() -> crate::error::Result<Pdfium> {
     Ok(Pdfium::new(bindings))
 }
 
+// Thread-local singleton for the Pdfium instance.
+//
+// `Pdfium` is neither `Send` nor `Sync` (its `PdfiumLibraryBindings` trait
+// object lacks those bounds), so a global static is not possible. Instead we
+// use `thread_local!` to lazily load the shared library once per thread,
+// avoiding the overhead of reloading it on every `render_page` call.
+thread_local! {
+    static PDFIUM: RefCell<Option<Pdfium>> = const { RefCell::new(None) };
+}
+
+/// Runs the given closure with a reference to the thread-local [`Pdfium`]
+/// instance, initializing it on first access.
+fn with_pdfium<F, R>(f: F) -> crate::error::Result<R>
+where
+    F: FnOnce(&Pdfium) -> crate::error::Result<R>,
+{
+    PDFIUM.with(|cell| {
+        let mut opt = cell.borrow_mut();
+        if opt.is_none() {
+            *opt = Some(create_pdfium()?);
+        }
+        f(opt.as_ref().expect("just initialised above"))
+    })
+}
+
 /// Renders a PDF page at the specified DPI and returns a DynamicImage.
 ///
 /// The PDF is loaded from disk, the specified page is rendered to an in-memory
@@ -73,30 +99,35 @@ pub fn render_page(
         ));
     }
 
-    let pdfium = create_pdfium()?;
+    let pdf_path_str = pdf_path
+        .to_str()
+        .ok_or_else(|| {
+            crate::error::PdfMaskError::render("PDF path contains non-UTF-8 characters")
+        })?
+        .to_owned();
 
-    let pdf_path_str = pdf_path.to_str().ok_or_else(|| {
-        crate::error::PdfMaskError::render("PDF path contains non-UTF-8 characters")
-    })?;
-    let document = pdfium.load_pdf_from_file(pdf_path_str, None)?;
+    with_pdfium(|pdfium| {
+        let document = pdfium.load_pdf_from_file(&pdf_path_str, None)?;
 
-    let page_index_u16 = u16::try_from(page_index)
-        .map_err(|_| crate::error::PdfMaskError::render("page index exceeds u16 range"))?;
+        // pdfium-render uses u16 for page indices, limiting documents to 65536 pages max.
+        let page_index_u16 = u16::try_from(page_index)
+            .map_err(|_| crate::error::PdfMaskError::render("page index exceeds u16 range"))?;
 
-    let page = document.pages().get(page_index_u16)?;
+        let page = document.pages().get(page_index_u16)?;
 
-    // PDF default user unit: 1 point = 1/72 inch
-    // At the given DPI, each point maps to (dpi / 72) pixels
-    let width_pts = page.width().value;
-    let height_pts = page.height().value;
-    let width_px = (width_pts * dpi as f32 / 72.0).round() as i32;
-    let height_px = (height_pts * dpi as f32 / 72.0).round() as i32;
+        // PDF default user unit: 1 point = 1/72 inch
+        // At the given DPI, each point maps to (dpi / 72) pixels
+        let width_pts = page.width().value;
+        let height_pts = page.height().value;
+        let width_px = (width_pts * dpi as f32 / 72.0).round() as i32;
+        let height_px = (height_pts * dpi as f32 / 72.0).round() as i32;
 
-    let config = PdfRenderConfig::new()
-        .set_target_width(width_px)
-        .set_target_height(height_px);
+        let config = PdfRenderConfig::new()
+            .set_target_width(width_px)
+            .set_target_height(height_px);
 
-    let bitmap = page.render_with_config(&config)?;
+        let bitmap = page.render_with_config(&config)?;
 
-    Ok(bitmap.as_image())
+        Ok(bitmap.as_image())
+    })
 }

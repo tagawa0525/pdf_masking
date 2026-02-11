@@ -118,6 +118,9 @@ impl Pix {
             }
 
             // Fix #11: Use byte-level copy to avoid unaligned u32 cast UB
+            // SAFETY: `data` is RGBA (4 bytes/pixel) matching leptonica's 32-bpp
+            // pixel layout. `pix_data` points to a valid buffer of at least
+            // `expected_size` bytes, as guaranteed by a successful `pixCreate`.
             ptr::copy_nonoverlapping(data.as_ptr(), pix_data as *mut u8, expected_size);
 
             Ok(Pix { ptr })
@@ -311,7 +314,8 @@ impl Pix {
             for i in 0..count {
                 let box_ptr: *mut BOX = boxaGetBox(boxa, i, L_CLONE as i32);
                 if box_ptr.is_null() {
-                    boxaDestroy(&mut (boxa as *mut BOXA));
+                    let mut boxa_ptr = boxa;
+                    boxaDestroy(&mut boxa_ptr);
                     return Err(PdfMaskError::segmentation(format!(
                         "boxaGetBox returned null for index {}",
                         i
@@ -323,10 +327,12 @@ impl Pix {
                 let mut w: i32 = 0;
                 let mut h: i32 = 0;
                 let ret = boxGetGeometry(box_ptr, &mut x, &mut y, &mut w, &mut h);
-                boxDestroy(&mut (box_ptr as *mut BOX));
+                let mut box_ptr_to_destroy = box_ptr;
+                boxDestroy(&mut box_ptr_to_destroy);
 
                 if ret != 0 {
-                    boxaDestroy(&mut (boxa as *mut BOXA));
+                    let mut boxa_ptr = boxa;
+                    boxaDestroy(&mut boxa_ptr);
                     return Err(PdfMaskError::segmentation(format!(
                         "boxGetGeometry failed for index {}",
                         i
@@ -336,7 +342,8 @@ impl Pix {
                 result.push((x as u32, y as u32, w as u32, h as u32));
             }
 
-            boxaDestroy(&mut (boxa as *mut BOXA));
+            let mut boxa_ptr = boxa;
+            boxaDestroy(&mut boxa_ptr);
             Ok(result)
         }
     }

@@ -4,8 +4,9 @@ use std::process::ExitCode;
 use pdf_masking::config::job::JobFile;
 use pdf_masking::config::merged::MergedConfig;
 use pdf_masking::config::{self};
+use pdf_masking::error::PdfMaskError;
 use pdf_masking::linearize;
-use pdf_masking::pipeline::job_runner::JobConfig;
+use pdf_masking::pipeline::job_runner::{JobConfig, JobResult};
 use pdf_masking::pipeline::orchestrator::run_all_jobs;
 
 fn main() -> ExitCode {
@@ -27,37 +28,43 @@ fn main() -> ExitCode {
     }
 
     // Collect job configs and their linearize flags from all job files.
+    let (job_configs, linearize_flags) = match collect_jobs(&args) {
+        Ok(pair) => pair,
+        Err(e) => {
+            eprintln!("ERROR: {e}");
+            return ExitCode::FAILURE;
+        }
+    };
+
+    // Run all jobs through the pipeline.
+    let results = run_all_jobs(&job_configs);
+
+    // Report results and optionally linearize.
+    report_results(&results, &job_configs, &linearize_flags)
+}
+
+/// Parse all YAML job file arguments and build the corresponding [`JobConfig`]s
+/// along with per-job linearize flags.
+fn collect_jobs(args: &[String]) -> Result<(Vec<JobConfig>, Vec<bool>), PdfMaskError> {
     let mut job_configs: Vec<JobConfig> = Vec::new();
     let mut linearize_flags: Vec<bool> = Vec::new();
 
-    for job_file_arg in &args {
+    for job_file_arg in args {
         let job_file_path = Path::new(job_file_arg);
 
         // Load settings from the same directory as the job file.
-        let settings = match config::load_settings_for_job(job_file_path) {
-            Ok(s) => s,
-            Err(e) => {
-                eprintln!("ERROR: Failed to load settings for {job_file_arg}: {e}");
-                return ExitCode::FAILURE;
-            }
-        };
+        let settings = config::load_settings_for_job(job_file_path).map_err(|e| {
+            PdfMaskError::config(format!("Failed to load settings for {job_file_arg}: {e}"))
+        })?;
 
         // Read and parse the job YAML file.
-        let yaml_content = match std::fs::read_to_string(job_file_path) {
-            Ok(c) => c,
-            Err(e) => {
-                eprintln!("ERROR: Failed to read job file {job_file_arg}: {e}");
-                return ExitCode::FAILURE;
-            }
-        };
+        let yaml_content = std::fs::read_to_string(job_file_path).map_err(|e| {
+            PdfMaskError::config(format!("Failed to read job file {job_file_arg}: {e}"))
+        })?;
 
-        let job_file: JobFile = match serde_yml::from_str(&yaml_content) {
-            Ok(jf) => jf,
-            Err(e) => {
-                eprintln!("ERROR: Failed to parse job file {job_file_arg}: {e}");
-                return ExitCode::FAILURE;
-            }
-        };
+        let job_file: JobFile = serde_yml::from_str(&yaml_content).map_err(|e| {
+            PdfMaskError::config(format!("Failed to parse job file {job_file_arg}: {e}"))
+        })?;
 
         // Resolve job file directory for relative paths.
         let job_dir = job_file_path
@@ -74,13 +81,7 @@ fn main() -> ExitCode {
 
             // Resolve per-page color mode overrides (1-based)
             let default_color_mode = merged.color_mode;
-            let color_mode_overrides = match job.resolve_page_modes() {
-                Ok(m) => m,
-                Err(e) => {
-                    eprintln!("ERROR: {e}");
-                    return ExitCode::FAILURE;
-                }
-            };
+            let color_mode_overrides = job.resolve_page_modes()?;
 
             linearize_flags.push(merged.linearize);
 
@@ -97,10 +98,16 @@ fn main() -> ExitCode {
         }
     }
 
-    // Run all jobs through the pipeline.
-    let results = run_all_jobs(&job_configs);
+    Ok((job_configs, linearize_flags))
+}
 
-    // Report results and optionally linearize.
+/// Print per-job results, perform post-processing (linearize), and return
+/// the appropriate [`ExitCode`].
+fn report_results(
+    results: &[pdf_masking::error::Result<JobResult>],
+    job_configs: &[JobConfig],
+    linearize_flags: &[bool],
+) -> ExitCode {
     let mut has_error = false;
     for (i, result) in results.iter().enumerate() {
         match result {
