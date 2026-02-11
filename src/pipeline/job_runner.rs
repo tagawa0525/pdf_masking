@@ -220,10 +220,12 @@ fn phase_a2_text_to_outlines(
             let result = params.process();
             match result {
                 Ok(page) => {
+                    debug!(page = cs.page_idx, "text-to-outlines succeeded");
                     outlines_pages.push(page);
                     continue;
                 }
-                Err(_) => {
+                Err(e) => {
+                    debug!(page = cs.page_idx, reason = %e, "text-to-outlines failed, falling back to rendering");
                     needs_rendering.push(cs);
                 }
             }
