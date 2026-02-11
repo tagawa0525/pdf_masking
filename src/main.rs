@@ -127,7 +127,7 @@ fn report_results(
         match result {
             Ok(job_result) => {
                 info!(
-                    "{} -> {} ({} pages)",
+                    "OK: {} -> {} ({} pages)",
                     job_result.input_path.display(),
                     job_result.output_path.display(),
                     job_result.pages_processed
