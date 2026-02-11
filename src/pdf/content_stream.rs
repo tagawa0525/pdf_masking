@@ -1,4 +1,5 @@
 use lopdf::content::Content;
+use tracing::debug;
 
 /// 6要素アフィン変換行列 [a, b, c, d, e, f]
 /// PDF仕様: [ a b 0 ]
@@ -163,6 +164,7 @@ pub fn extract_xobject_placements(
         }
     }
 
+    debug!(count = placements.len(), "extracted XObject placements");
     Ok(placements)
 }
 
@@ -259,6 +261,12 @@ pub fn strip_text_operators(content_bytes: &[u8]) -> crate::error::Result<Vec<u8
             }
         }
     }
+
+    debug!(
+        original = content.operations.len(),
+        remaining = filtered_operations.len(),
+        "stripped text operators"
+    );
 
     // 再エンコード
     let filtered_content = Content {
@@ -523,6 +531,7 @@ pub fn extract_white_fill_rects(content_bytes: &[u8]) -> crate::error::Result<Ve
         }
     }
 
+    debug!(count = results.len(), "extracted white fill rects");
     Ok(results)
 }
 

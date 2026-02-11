@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use std::path::Path;
 
 use lopdf::Document;
+use tracing::debug;
 
 pub struct PdfReader {
     doc: Document,
@@ -10,6 +11,7 @@ pub struct PdfReader {
 impl PdfReader {
     /// PDFファイルを開いてPdfReaderを作成する。
     pub fn open(path: impl AsRef<Path>) -> crate::error::Result<Self> {
+        debug!(path = %path.as_ref().display(), "opening PDF");
         let doc = Document::load(path)?;
         Ok(Self { doc })
     }
@@ -117,6 +119,7 @@ impl PdfReader {
 
         names.sort();
         names.dedup();
+        debug!(page = page_num, count = names.len(), "found image XObjects");
         Ok(names)
     }
 
@@ -197,6 +200,11 @@ impl PdfReader {
             self.collect_image_streams_from_dict(dict, &mut streams)?;
         }
 
+        debug!(
+            page = page_num,
+            count = streams.len(),
+            "collected image streams"
+        );
         Ok(streams)
     }
 
