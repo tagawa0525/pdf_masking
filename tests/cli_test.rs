@@ -99,8 +99,8 @@ fn test_rust_log_off_suppresses_error_output() {
 
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
-        !stderr.contains("ERROR"),
-        "RUST_LOG=off should suppress ERROR output, got: {stderr}"
+        stderr.trim().is_empty(),
+        "RUST_LOG=off should suppress all log output, got: {stderr}"
     );
 }
 
