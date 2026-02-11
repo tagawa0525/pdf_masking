@@ -573,14 +573,25 @@ impl MrcPageWriter {
         let new_id = self.doc.new_object_id();
         self.copy_id_map.insert(source_id, new_id);
 
-        let source_obj = source
-            .get_object(source_id)
-            .map_err(|e| crate::error::PdfMaskError::pdf_read(e.to_string()))?;
+        // 処理を試行し、エラー時はマップをクリーンアップ
+        let result = (|| -> crate::error::Result<lopdf::ObjectId> {
+            let source_obj = source
+                .get_object(source_id)
+                .map_err(|e| crate::error::PdfMaskError::pdf_read(e.to_string()))?;
 
-        let new_obj = self.deep_copy_value(source, source_obj)?;
-        self.doc.objects.insert(new_id, new_obj);
+            let new_obj = self.deep_copy_value(source, source_obj)?;
+            self.doc.objects.insert(new_id, new_obj);
 
-        Ok(new_id)
+            Ok(new_id)
+        })();
+
+        match result {
+            Ok(id) => Ok(id),
+            Err(e) => {
+                self.copy_id_map.remove(&source_id);
+                Err(e)
+            }
+        }
     }
 
     /// オブジェクト値を再帰的にコピーし、Reference先もコピーする。
