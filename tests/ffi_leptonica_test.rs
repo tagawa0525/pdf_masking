@@ -141,3 +141,16 @@ fn test_pix_clip_rectangle_non_1bit() {
         "clip_rectangle should work for 8-bit images"
     );
 }
+
+#[test]
+fn test_pix_clip_rectangle_zero_size() {
+    let pix = Pix::create(100, 100, 1).expect("create 1-bit Pix");
+
+    // Zero width should fail
+    let result = pix.clip_rectangle(10, 10, 0, 20);
+    assert!(result.is_err(), "should fail with zero width");
+
+    // Zero height should fail
+    let result = pix.clip_rectangle(10, 10, 20, 0);
+    assert!(result.is_err(), "should fail with zero height");
+}

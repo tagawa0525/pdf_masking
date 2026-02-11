@@ -453,26 +453,43 @@ impl Pix {
     /// # Returns
     /// `Ok(Pix)` containing the clipped region, `Err` on failure
     pub fn clip_rectangle(&self, x: u32, y: u32, w: u32, h: u32) -> Result<Pix> {
-        // Validate dimensions
-        if x >= self.get_width() || y >= self.get_height() {
+        let img_width = self.get_width();
+        let img_height = self.get_height();
+
+        // Validate origin
+        if x >= img_width || y >= img_height {
             return Err(PdfMaskError::segmentation(format!(
                 "clip rectangle origin ({}, {}) is out of bounds for {}x{} image",
-                x,
-                y,
-                self.get_width(),
-                self.get_height()
+                x, y, img_width, img_height
             )));
         }
 
-        if x + w > self.get_width() || y + h > self.get_height() {
+        // Reject zero-sized rectangles to avoid creating a 0-sized BOX
+        if w == 0 || h == 0 {
+            return Err(PdfMaskError::segmentation(format!(
+                "clip rectangle must have non-zero width and height (x={}, y={}, w={}, h={})",
+                x, y, w, h
+            )));
+        }
+
+        // Use checked_add to avoid u32 overflow when validating bounds
+        let x_end = x.checked_add(w).ok_or_else(|| {
+            PdfMaskError::segmentation(format!(
+                "clip rectangle x + w overflows u32 (x={}, w={})",
+                x, w
+            ))
+        })?;
+        let y_end = y.checked_add(h).ok_or_else(|| {
+            PdfMaskError::segmentation(format!(
+                "clip rectangle y + h overflows u32 (y={}, h={})",
+                y, h
+            ))
+        })?;
+
+        if x_end > img_width || y_end > img_height {
             return Err(PdfMaskError::segmentation(format!(
                 "clip rectangle (x={}, y={}, w={}, h={}) exceeds image bounds ({}x{})",
-                x,
-                y,
-                w,
-                h,
-                self.get_width(),
-                self.get_height()
+                x, y, w, h, img_width, img_height
             )));
         }
 
