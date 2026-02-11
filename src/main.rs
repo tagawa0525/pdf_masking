@@ -11,8 +11,26 @@ use pdf_masking::pipeline::orchestrator::run_all_jobs;
 use tracing::{error, info};
 
 fn main() -> ExitCode {
-    // Initialize tracing subscriber first so --help/--version output also goes
-    // through the structured logging pipeline.
+    let args: Vec<String> = std::env::args().skip(1).collect();
+
+    // Handle --help and --version before initializing tracing to ensure
+    // these messages are always visible regardless of RUST_LOG setting.
+    if args.is_empty() || args.iter().any(|a| a == "--help" || a == "-h") {
+        eprintln!("Usage: pdf_masking <jobs.yaml>...");
+        eprintln!("  Process PDF files according to job specifications.");
+        return if args.is_empty() {
+            ExitCode::FAILURE
+        } else {
+            ExitCode::SUCCESS
+        };
+    }
+
+    if args.iter().any(|a| a == "--version" || a == "-V") {
+        eprintln!("pdf_masking {}", env!("CARGO_PKG_VERSION"));
+        return ExitCode::SUCCESS;
+    }
+
+    // Initialize tracing subscriber after --help/--version checks.
     // Default to INFO level; override via RUST_LOG environment variable.
     tracing_subscriber::fmt()
         .with_env_filter(
@@ -24,23 +42,6 @@ fn main() -> ExitCode {
         .without_time()
         .with_writer(std::io::stderr)
         .init();
-
-    let args: Vec<String> = std::env::args().skip(1).collect();
-
-    if args.is_empty() || args.iter().any(|a| a == "--help" || a == "-h") {
-        info!("Usage: pdf_masking <jobs.yaml>...");
-        info!("  Process PDF files according to job specifications.");
-        return if args.is_empty() {
-            ExitCode::FAILURE
-        } else {
-            ExitCode::SUCCESS
-        };
-    }
-
-    if args.iter().any(|a| a == "--version" || a == "-V") {
-        info!("pdf_masking {}", env!("CARGO_PKG_VERSION"));
-        return ExitCode::SUCCESS;
-    }
 
     // Collect job configs and their linearize flags from all job files.
     let (job_configs, linearize_flags) = match collect_jobs(&args) {
