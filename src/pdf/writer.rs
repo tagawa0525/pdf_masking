@@ -896,7 +896,6 @@ mod tests {
     #[test]
     fn test_copy_page_from() {
         // Create a source document with 2 pages
-        #[cfg(feature = "mrc")]
         let mut source = Document::with_version("1.4");
         let pages_id = source.new_object_id();
 
