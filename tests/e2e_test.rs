@@ -1,3 +1,5 @@
+#![cfg(feature = "mrc")]
+
 // Phase 13: E2E integration tests
 //
 // End-to-end tests that verify the complete pipeline from CLI invocation

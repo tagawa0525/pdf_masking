@@ -6,8 +6,12 @@
 use std::collections::HashMap;
 
 use pdf_masking::config::job::ColorMode;
+#[cfg(feature = "mrc")]
 use pdf_masking::ffi::leptonica::Pix;
-use pdf_masking::mrc::{compositor, jbig2, jpeg, segmenter};
+use pdf_masking::mrc::compositor;
+use pdf_masking::mrc::jpeg;
+#[cfg(feature = "mrc")]
+use pdf_masking::mrc::{jbig2, segmenter};
 use pdf_masking::pdf::font::ParsedFont;
 
 fn load_sample_fonts() -> HashMap<String, ParsedFont> {
@@ -17,6 +21,7 @@ fn load_sample_fonts() -> HashMap<String, ParsedFont> {
 
 /// Generate a synthetic 200x200 RGBA test image.
 /// Upper half: black (text-like region), lower half: white (background).
+#[cfg(feature = "mrc")]
 fn create_test_rgba_image() -> (Vec<u8>, u32, u32) {
     let width: u32 = 200;
     let height: u32 = 200;
@@ -47,6 +52,7 @@ fn create_test_rgba_image() -> (Vec<u8>, u32, u32) {
 // ---- segmenter.rs tests ----
 
 /// Test that segment_text_mask produces a Pix from RGBA input.
+#[cfg(feature = "mrc")]
 #[test]
 fn test_segment_creates_text_mask() {
     let (data, width, height) = create_test_rgba_image();
@@ -64,6 +70,7 @@ fn test_segment_creates_text_mask() {
 }
 
 /// Test that the text mask is 1-bit depth.
+#[cfg(feature = "mrc")]
 #[test]
 fn test_segment_mask_is_1bit() {
     let (data, width, height) = create_test_rgba_image();
@@ -77,6 +84,7 @@ fn test_segment_mask_is_1bit() {
 // ---- jbig2.rs tests ----
 
 /// Test encoding a 1-bit mask to JBIG2 format.
+#[cfg(feature = "mrc")]
 #[test]
 fn test_encode_mask_to_jbig2() {
     // Create a simple 1-bit mask
@@ -88,6 +96,7 @@ fn test_encode_mask_to_jbig2() {
 }
 
 /// Test that JBIG2 encoding produces non-empty output.
+#[cfg(feature = "mrc")]
 #[test]
 fn test_encode_returns_non_empty() {
     let mut mask = Pix::create(100, 100, 1).expect("failed to create 1-bit Pix");
@@ -100,6 +109,7 @@ fn test_encode_returns_non_empty() {
 
 /// Test encoding a background RGBA image to JPEG format.
 #[test]
+#[cfg(feature = "mrc")]
 fn test_encode_background_jpeg() {
     let (data, width, height) = create_test_rgba_image();
 
@@ -121,6 +131,7 @@ fn test_encode_background_jpeg() {
 
 /// Test encoding a foreground RGBA image to JPEG format.
 #[test]
+#[cfg(feature = "mrc")]
 fn test_encode_foreground_jpeg() {
     // Create a mostly-white image (foreground with text removed)
     let width: u32 = 100;
@@ -140,6 +151,7 @@ fn test_encode_foreground_jpeg() {
 
 /// Test encoding a grayscale image to JPEG format.
 #[test]
+#[cfg(feature = "mrc")]
 fn test_encode_gray_to_jpeg() {
     let width: u32 = 100;
     let height: u32 = 100;

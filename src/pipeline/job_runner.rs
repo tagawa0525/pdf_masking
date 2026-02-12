@@ -2,6 +2,7 @@
 
 use std::path::PathBuf;
 
+#[cfg(feature = "mrc")]
 use rayon::prelude::*;
 use tracing::debug;
 
@@ -9,13 +10,15 @@ use crate::cache::hash::CacheSettings;
 use crate::cache::store::CacheStore;
 use crate::config::job::ColorMode;
 use crate::error::PdfMaskError;
+#[cfg(feature = "mrc")]
 use crate::mrc::compositor::MrcConfig;
 use crate::mrc::{PageOutput, SkipData};
 use crate::pdf::reader::PdfReader;
 use crate::pdf::writer::MrcPageWriter;
-use crate::pipeline::page_processor::{
-    ProcessPageOutlinesParams, ProcessPageParams, ProcessedPage,
-};
+#[cfg(feature = "mrc")]
+use crate::pipeline::page_processor::ProcessPageParams;
+use crate::pipeline::page_processor::{ProcessPageOutlinesParams, ProcessedPage};
+#[cfg(feature = "mrc")]
 use crate::render::pdfium::render_page;
 
 /// Configuration for a single job.
@@ -51,6 +54,7 @@ struct AnalysisResult {
 }
 
 /// Intermediate data for a page after rendering (Phase B).
+#[cfg(feature = "mrc")]
 struct RenderResult {
     page_idx: u32,
     mode: ColorMode,
@@ -116,6 +120,8 @@ pub fn run_job(config: &JobConfig) -> crate::error::Result<JobResult> {
         outlines = outlines_pages.len(),
         "phase B+C: rendering and MRC composition"
     );
+
+    #[cfg(feature = "mrc")]
     let successful_pages = phase_bc_render_and_mrc(
         needs_rendering,
         outlines_pages,
@@ -123,6 +129,35 @@ pub fn run_job(config: &JobConfig) -> crate::error::Result<JobResult> {
         config,
         cache_store.as_ref(),
     )?;
+
+    #[cfg(not(feature = "mrc"))]
+    let successful_pages = {
+        if !needs_rendering.is_empty() {
+            let pages: Vec<u32> = needs_rendering.iter().map(|a| a.page_idx + 1).collect();
+            return Err(PdfMaskError::render(format!(
+                "text-to-outlines conversion failed for page(s) {:?} and MRC fallback \
+                 is unavailable (compiled without 'mrc' feature). Ensure fonts are \
+                 embedded in the source PDF, or rebuild with `cargo build --features mrc`.",
+                pages
+            )));
+        }
+
+        // Combine outlines_pages with skip pages
+        let mut all_pages = outlines_pages;
+        for &(page_idx, mode) in &page_modes {
+            if mode == ColorMode::Skip {
+                all_pages.push(ProcessedPage {
+                    page_index: page_idx,
+                    output: PageOutput::Skip(SkipData {
+                        page_index: page_idx,
+                    }),
+                    cache_key: String::new(),
+                });
+            }
+        }
+        all_pages.sort_by_key(|p| p.page_index);
+        all_pages
+    };
 
     let pages_processed = successful_pages.len();
 
@@ -240,6 +275,7 @@ fn phase_a2_text_to_outlines(
 ///
 /// Renders pages that need bitmaps, then runs MRC composition in parallel.
 /// Skip pages are appended with no processing.
+#[cfg(feature = "mrc")]
 fn phase_bc_render_and_mrc(
     needs_rendering: Vec<AnalysisResult>,
     outlines_pages: Vec<ProcessedPage>,
@@ -332,10 +368,12 @@ fn phase_d_write(
     let mut masked_page_ids: Vec<lopdf::ObjectId> = Vec::new();
     for page in successful_pages {
         match &page.output {
+            #[cfg(feature = "mrc")]
             PageOutput::Mrc(layers) => {
                 let page_id = writer.write_mrc_page(layers)?;
                 masked_page_ids.push(page_id);
             }
+            #[cfg(feature = "mrc")]
             PageOutput::BwMask(bw) => {
                 let page_id = writer.write_bw_page(bw)?;
                 masked_page_ids.push(page_id);

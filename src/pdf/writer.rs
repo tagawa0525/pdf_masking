@@ -7,7 +7,9 @@ use tracing::debug;
 
 use crate::config::job::ColorMode;
 use crate::error::PdfMaskError;
-use crate::mrc::{BwLayers, ImageModification, MrcLayers, TextMaskedData, TextRegionCrop};
+#[cfg(feature = "mrc")]
+use crate::mrc::{BwLayers, MrcLayers};
+use crate::mrc::{ImageModification, TextMaskedData, TextRegionCrop};
 
 /// PDF Name仕様 (PDF Reference 7.3.5) に従い、名前をエスケープする。
 ///
@@ -229,6 +231,7 @@ impl MrcPageWriter {
     }
 
     /// MrcLayersからPDFページを構築する。
+    #[cfg(feature = "mrc")]
     pub fn write_mrc_page(&mut self, layers: &MrcLayers) -> crate::error::Result<lopdf::ObjectId> {
         let width = layers.width;
         let height = layers.height;
@@ -285,6 +288,7 @@ impl MrcPageWriter {
     }
 
     /// BwLayersからPDFページを構築する（JBIG2マスクのみ）。
+    #[cfg(feature = "mrc")]
     pub fn write_bw_page(&mut self, layers: &BwLayers) -> crate::error::Result<lopdf::ObjectId> {
         let width = layers.width;
         let height = layers.height;
@@ -705,6 +709,7 @@ mod tests {
         assert_eq!(escape_pdf_name("A\x7FB"), "A#7FB");
     }
 
+    #[cfg(feature = "mrc")]
     #[test]
     fn test_create_background_xobject() {
         let jpeg_data: Vec<u8> = vec![0xFF, 0xD8, 0xFF, 0xE0];
@@ -713,6 +718,7 @@ mod tests {
         assert!(obj_id.0 > 0, "object id should be positive");
     }
 
+    #[cfg(feature = "mrc")]
     #[test]
     fn test_create_mask_xobject() {
         let jbig2_data: Vec<u8> = vec![0x97, 0x4A, 0x42, 0x32];
@@ -721,6 +727,7 @@ mod tests {
         assert!(obj_id.0 > 0, "object id should be positive");
     }
 
+    #[cfg(feature = "mrc")]
     #[test]
     fn test_create_foreground_xobject_with_smask() {
         let fg_jpeg: Vec<u8> = vec![0xFF, 0xD8, 0xFF, 0xE1];
@@ -740,6 +747,7 @@ mod tests {
         }
     }
 
+    #[cfg(feature = "mrc")]
     #[test]
     fn test_save_to_bytes_without_catalog_fails() {
         let mut writer = MrcPageWriter::new();
@@ -747,6 +755,7 @@ mod tests {
         assert!(result.is_err(), "save without Catalog should fail");
     }
 
+    #[cfg(feature = "mrc")]
     #[test]
     fn test_save_to_bytes_with_valid_document() {
         let layers = crate::mrc::MrcLayers {
@@ -766,6 +775,7 @@ mod tests {
         assert_eq!(doc.get_pages().len(), 1);
     }
 
+    #[cfg(feature = "mrc")]
     #[test]
     fn test_multi_page_write() {
         let layers1 = crate::mrc::MrcLayers {
@@ -813,6 +823,7 @@ mod tests {
         assert_eq!(doc.get_pages().len(), 3, "should have 3 pages");
     }
 
+    #[cfg(feature = "mrc")]
     #[test]
     fn test_write_bw_page() {
         let layers = crate::mrc::BwLayers {
@@ -829,6 +840,7 @@ mod tests {
         assert_eq!(doc.get_pages().len(), 1);
     }
 
+    #[cfg(feature = "mrc")]
     #[test]
     fn test_write_grayscale_mrc_page() {
         let layers = crate::mrc::MrcLayers {
@@ -880,6 +892,7 @@ mod tests {
         }
     }
 
+    #[cfg(feature = "mrc")]
     #[test]
     fn test_copy_page_from() {
         // Create a source document with 2 pages
@@ -941,6 +954,7 @@ mod tests {
         assert_eq!(arr.len(), 4);
     }
 
+    #[cfg(feature = "mrc")]
     #[test]
     fn test_copy_shared_resources_deduplication() {
         // 2ページが同一フォントオブジェクトを共有するソースPDFを作成
@@ -1035,6 +1049,7 @@ mod tests {
         );
     }
 
+    #[cfg(feature = "mrc")]
     #[test]
     fn test_mixed_mode_pages() {
         let mrc_layers = crate::mrc::MrcLayers {

@@ -1,6 +1,8 @@
 pub mod compositor;
+#[cfg(feature = "mrc")]
 pub mod jbig2;
 pub mod jpeg;
+#[cfg(feature = "mrc")]
 pub mod segmenter;
 
 use std::collections::HashMap;
@@ -8,6 +10,7 @@ use std::collections::HashMap;
 use crate::config::job::ColorMode;
 use crate::pdf::content_stream::BBox;
 
+#[cfg(feature = "mrc")]
 #[derive(Debug)]
 pub struct MrcLayers {
     pub mask_jbig2: Vec<u8>,
@@ -21,6 +24,7 @@ pub struct MrcLayers {
 }
 
 /// JBIG2マスクのみ（BWモード用）
+#[cfg(feature = "mrc")]
 #[derive(Debug)]
 pub struct BwLayers {
     pub mask_jbig2: Vec<u8>,
@@ -70,8 +74,10 @@ pub struct TextMaskedData {
 #[derive(Debug)]
 pub enum PageOutput {
     /// RGB/Grayscale 3層MRC
+    #[cfg(feature = "mrc")]
     Mrc(MrcLayers),
     /// JBIG2マスクのみ（BWモード）
+    #[cfg(feature = "mrc")]
     BwMask(BwLayers),
     /// 元ページをそのままコピー
     Skip(SkipData),

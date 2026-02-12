@@ -4,6 +4,10 @@ version = "0.1.0"
 edition = "2024"
 rust-version = "1.93"
 
+[features]
+default = ["mrc"]
+mrc = ["dep:pdfium-render", "dep:leptonica-sys", "dep:libc", "dep:cc"]
+
 [dependencies]
 # Error handling
 thiserror = "2.0.18"
@@ -14,16 +18,16 @@ serde_yml = "0.0.12"
 
 # PDF processing (Phase 2+)
 lopdf = "0.39.0"
-pdfium-render = "0.8.37"
+pdfium-render = { version = "0.8.37", optional = true }
 
 # Image processing (Phase 5+)
 image = "0.25.9"
 
 # Leptonica (Phase 3+, via system library)
-leptonica-sys = "0.4.9"
+leptonica-sys = { version = "0.4.9", optional = true }
 
 # JBIG2 encoding (Phase 4+, via C++ shim)
-libc = "0.2.181"
+libc = { version = "0.2.181", optional = true }
 
 # Parallel processing
 rayon = "1.11.0"
@@ -49,7 +53,7 @@ tracing-subscriber = { version = "0.3.22", features = ["env-filter"] }
 flate2 = "1.1.9"
 
 [build-dependencies]
-cc = "1.2.55"
+cc = { version = "1.2.55", optional = true }
 
 # Testing utilities
 [dev-dependencies]

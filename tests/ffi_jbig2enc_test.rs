@@ -1,3 +1,5 @@
+#![cfg(feature = "mrc")]
+
 use pdf_masking::ffi::jbig2enc;
 use pdf_masking::ffi::leptonica::Pix;
 

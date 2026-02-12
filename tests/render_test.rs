@@ -1,3 +1,5 @@
+#![cfg(feature = "mrc")]
+
 // Phase 6: Render integration tests
 //
 // Tests for rendering PDF pages to DynamicImage using pdfium-render.

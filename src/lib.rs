@@ -1,9 +1,11 @@
 pub mod cache;
 pub mod config;
 pub mod error;
+#[cfg(feature = "mrc")]
 pub mod ffi;
 pub mod linearize;
 pub mod mrc;
 pub mod pdf;
 pub mod pipeline;
+#[cfg(feature = "mrc")]
 pub mod render;
