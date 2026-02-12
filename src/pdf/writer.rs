@@ -1053,7 +1053,6 @@ mod tests {
     #[test]
     fn test_mixed_mode_pages() {
         let mrc_layers = crate::mrc::MrcLayers {
-            #[cfg(feature = "mrc")]
             background_jpeg: vec![0xFF, 0xD8, 0xFF, 0xE0],
             foreground_jpeg: vec![0xFF, 0xD8, 0xFF, 0xE1],
             mask_jbig2: vec![0x97, 0x4A, 0x42, 0x32],
