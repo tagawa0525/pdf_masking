@@ -959,7 +959,6 @@ mod tests {
     fn test_copy_shared_resources_deduplication() {
         // 2ページが同一フォントオブジェクトを共有するソースPDFを作成
         let mut source = Document::with_version("1.4");
-        #[cfg(feature = "mrc")]
         let pages_id = source.new_object_id();
 
         // 共有フォントオブジェクト（両ページのResourcesが参照）
