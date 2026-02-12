@@ -659,6 +659,7 @@ fn test_strip_text_operators_multiple_text_blocks() {
 // ============================================================
 
 #[test]
+#[cfg(feature = "mrc")]
 fn test_pixel_to_page_coords_basic() {
     // 612x792pt ページ、300DPI → 2550x3300px ビットマップ
     let pixel_bbox = PixelBBox {
@@ -675,6 +676,7 @@ fn test_pixel_to_page_coords_basic() {
 }
 
 #[test]
+#[cfg(feature = "mrc")]
 fn test_pixel_to_page_coords_y_inversion() {
     // ビットマップ上端（y=0）はPDFの上端（y=792）
     let pixel_bbox = PixelBBox {
@@ -693,6 +695,7 @@ fn test_pixel_to_page_coords_y_inversion() {
 }
 
 #[test]
+#[cfg(feature = "mrc")]
 fn test_pixel_to_page_coords_center_region() {
     // ビットマップ中央の領域
     let pixel_bbox = PixelBBox {
@@ -710,6 +713,7 @@ fn test_pixel_to_page_coords_center_region() {
 }
 
 #[test]
+#[cfg(feature = "mrc")]
 fn test_pixel_to_page_coords_bottom_right() {
     // ビットマップ右下（PDFの右下は y_min=0）
     let pixel_bbox = PixelBBox {
@@ -727,6 +731,7 @@ fn test_pixel_to_page_coords_bottom_right() {
 }
 
 #[test]
+#[cfg(feature = "mrc")]
 fn test_pixel_to_page_coords_zero_bitmap_rejected() {
     let pixel_bbox = PixelBBox {
         x: 0,

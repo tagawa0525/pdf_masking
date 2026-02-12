@@ -709,6 +709,7 @@ mod tests {
         assert_eq!(escape_pdf_name("A\x7FB"), "A#7FB");
     }
 
+    #[cfg(feature = "mrc")]
     #[test]
     fn test_create_background_xobject() {
         let jpeg_data: Vec<u8> = vec![0xFF, 0xD8, 0xFF, 0xE0];
@@ -717,6 +718,7 @@ mod tests {
         assert!(obj_id.0 > 0, "object id should be positive");
     }
 
+    #[cfg(feature = "mrc")]
     #[test]
     fn test_create_mask_xobject() {
         let jbig2_data: Vec<u8> = vec![0x97, 0x4A, 0x42, 0x32];
@@ -725,6 +727,7 @@ mod tests {
         assert!(obj_id.0 > 0, "object id should be positive");
     }
 
+    #[cfg(feature = "mrc")]
     #[test]
     fn test_create_foreground_xobject_with_smask() {
         let fg_jpeg: Vec<u8> = vec![0xFF, 0xD8, 0xFF, 0xE1];
@@ -744,6 +747,7 @@ mod tests {
         }
     }
 
+    #[cfg(feature = "mrc")]
     #[test]
     fn test_save_to_bytes_without_catalog_fails() {
         let mut writer = MrcPageWriter::new();
@@ -751,6 +755,7 @@ mod tests {
         assert!(result.is_err(), "save without Catalog should fail");
     }
 
+    #[cfg(feature = "mrc")]
     #[test]
     fn test_save_to_bytes_with_valid_document() {
         let layers = crate::mrc::MrcLayers {
@@ -770,6 +775,7 @@ mod tests {
         assert_eq!(doc.get_pages().len(), 1);
     }
 
+    #[cfg(feature = "mrc")]
     #[test]
     fn test_multi_page_write() {
         let layers1 = crate::mrc::MrcLayers {
@@ -817,6 +823,7 @@ mod tests {
         assert_eq!(doc.get_pages().len(), 3, "should have 3 pages");
     }
 
+    #[cfg(feature = "mrc")]
     #[test]
     fn test_write_bw_page() {
         let layers = crate::mrc::BwLayers {
@@ -833,6 +840,7 @@ mod tests {
         assert_eq!(doc.get_pages().len(), 1);
     }
 
+    #[cfg(feature = "mrc")]
     #[test]
     fn test_write_grayscale_mrc_page() {
         let layers = crate::mrc::MrcLayers {
@@ -884,9 +892,11 @@ mod tests {
         }
     }
 
+    #[cfg(feature = "mrc")]
     #[test]
     fn test_copy_page_from() {
         // Create a source document with 2 pages
+        #[cfg(feature = "mrc")]
         let mut source = Document::with_version("1.4");
         let pages_id = source.new_object_id();
 
@@ -945,10 +955,12 @@ mod tests {
         assert_eq!(arr.len(), 4);
     }
 
+    #[cfg(feature = "mrc")]
     #[test]
     fn test_copy_shared_resources_deduplication() {
         // 2ページが同一フォントオブジェクトを共有するソースPDFを作成
         let mut source = Document::with_version("1.4");
+        #[cfg(feature = "mrc")]
         let pages_id = source.new_object_id();
 
         // 共有フォントオブジェクト（両ページのResourcesが参照）
@@ -1039,9 +1051,11 @@ mod tests {
         );
     }
 
+    #[cfg(feature = "mrc")]
     #[test]
     fn test_mixed_mode_pages() {
         let mrc_layers = crate::mrc::MrcLayers {
+            #[cfg(feature = "mrc")]
             background_jpeg: vec![0xFF, 0xD8, 0xFF, 0xE0],
             foreground_jpeg: vec![0xFF, 0xD8, 0xFF, 0xE1],
             mask_jbig2: vec![0x97, 0x4A, 0x42, 0x32],

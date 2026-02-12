@@ -1,3 +1,5 @@
+#![cfg(feature = "mrc")]
+
 // Phase 8: Cache integration tests
 //
 // Tests for cache key computation (hash.rs) and file-system cache store (store.rs).

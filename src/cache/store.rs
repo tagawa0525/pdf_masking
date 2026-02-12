@@ -155,10 +155,16 @@ impl CacheStore {
     ) -> crate::error::Result<()> {
         validate_cache_key(key)?;
 
+        #[cfg(feature = "mrc")]
         let cache_type = match output {
             PageOutput::Skip(_) => "skip",
             PageOutput::Mrc(_) => "mrc",
             PageOutput::BwMask(_) => "bw",
+            PageOutput::TextMasked(_) => "text_masked",
+        };
+        #[cfg(not(feature = "mrc"))]
+        let cache_type = match output {
+            PageOutput::Skip(_) => "skip",
             PageOutput::TextMasked(_) => "text_masked",
         };
         debug!(cache_type, key_prefix = &key[..16], "cache store");

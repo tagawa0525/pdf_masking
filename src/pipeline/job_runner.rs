@@ -2,6 +2,7 @@
 
 use std::path::PathBuf;
 
+#[cfg(feature = "mrc")]
 use rayon::prelude::*;
 use tracing::debug;
 

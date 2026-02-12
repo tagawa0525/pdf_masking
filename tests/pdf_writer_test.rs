@@ -1,3 +1,5 @@
+#![cfg(feature = "mrc")]
+
 // Phase 7: PDF構築（MRC → PDF）テスト
 
 use lopdf::{Document, Object, dictionary};
