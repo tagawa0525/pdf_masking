@@ -209,7 +209,7 @@ pub fn segment_text_mask(rgba_data: &[u8], width: u32, height: u32) -> crate::er
     //    degenerate tiles) so it adapts to both small and large images.
     let tile_sx = width.clamp(16, 2000);
     let tile_sy = height.clamp(16, 2000);
-    let (binary, _threshold_map) = otsu_adaptive_threshold(&gray, tile_sx, tile_sy, 0, 0, 0.0)
+    let (_threshold_map, binary) = otsu_adaptive_threshold(&gray, tile_sx, tile_sy, 0, 0, 0.0)
         .map_err(|e| PdfMaskError::segmentation(e.to_string()))?;
 
     // 4. Extract region masks from the binary image
