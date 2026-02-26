@@ -63,10 +63,10 @@ pub fn compose(
     color_mode: ColorMode,
 ) -> crate::error::Result<MrcLayers> {
     // 1. Segment: RGBA -> 1-bit text mask
-    let mut text_mask = segmenter::segment_text_mask(rgba_data, width, height)?;
+    let text_mask = segmenter::segment_text_mask(rgba_data, width, height)?;
 
     // 2. Mask layer: JBIG2-encode the 1-bit mask
-    let mask_jbig2 = jbig2::encode_mask(&mut text_mask)?;
+    let mask_jbig2 = jbig2::encode_mask(&text_mask)?;
 
     // 3. Convert RGBA -> image
     let img = RgbaImage::from_raw(width, height, rgba_data.to_vec())
@@ -116,8 +116,8 @@ pub fn compose_bw(
     page_width_pts: f64,
     page_height_pts: f64,
 ) -> crate::error::Result<BwLayers> {
-    let mut text_mask = segmenter::segment_text_mask(rgba_data, width, height)?;
-    let mask_jbig2 = jbig2::encode_mask(&mut text_mask)?;
+    let text_mask = segmenter::segment_text_mask(rgba_data, width, height)?;
+    let mask_jbig2 = jbig2::encode_mask(&text_mask)?;
 
     debug!(mask_bytes = mask_jbig2.len(), "compose BW layers");
     Ok(BwLayers {
@@ -145,18 +145,19 @@ pub type CroppedJbig2Region = (Vec<u8>, PixelBBox);
 /// 各領域のJBIG2データとピクセルBBoxのペアリスト
 #[cfg(feature = "mrc")]
 pub fn crop_text_regions_jbig2(
-    text_mask: &crate::ffi::leptonica::Pix,
+    text_mask: &leptonica::Pix,
     bboxes: &[PixelBBox],
 ) -> crate::error::Result<Vec<CroppedJbig2Region>> {
     let mut results = Vec::with_capacity(bboxes.len());
 
     for bbox in bboxes {
         // クロップ
-        let clipped = text_mask.clip_rectangle(bbox.x, bbox.y, bbox.width, bbox.height)?;
+        let clipped = text_mask
+            .clip_rectangle(bbox.x, bbox.y, bbox.width, bbox.height)
+            .map_err(|e| PdfMaskError::segmentation(e.to_string()))?;
 
         // JBIG2エンコード
-        let mut clipped_mut = clipped;
-        let jbig2_data = jbig2::encode_mask(&mut clipped_mut)?;
+        let jbig2_data = jbig2::encode_mask(&clipped)?;
 
         results.push((jbig2_data, bbox.clone()));
     }

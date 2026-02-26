@@ -7,6 +7,8 @@ use crate::mrc::jpeg;
 use crate::pdf::content_stream::BBox;
 use flate2::read::ZlibDecoder;
 use image::{DynamicImage, GrayImage, RgbImage};
+#[cfg(feature = "mrc")]
+use leptonica;
 use lopdf::Object;
 use std::io::Read;
 use tracing::{debug, warn};
@@ -447,11 +449,12 @@ pub fn optimize_image_encoding(
             .pixels()
             .flat_map(|p| [p.0[0], p.0[0], p.0[0], 255])
             .collect();
-        if let Ok(pix) = crate::ffi::leptonica::Pix::from_raw_rgba(w, h, &rgba_for_binarize) {
+        if let Ok(pix) = crate::mrc::segmenter::pix_from_raw_rgba(w, h, &rgba_for_binarize) {
             let sx = w.clamp(16, 2000);
             let sy = h.clamp(16, 2000);
-            if let Ok(mut binary) = pix.otsu_adaptive_threshold(sx, sy)
-                && let Ok(jbig2_data) = jbig2::encode_mask(&mut binary)
+            if let Ok((binary, _)) =
+                leptonica::color::otsu_adaptive_threshold(&pix, sx, sy, 0, 0, 0.0)
+                && let Ok(jbig2_data) = jbig2::encode_mask(&binary)
             {
                 candidates.push(OptimizedImage {
                     data: jbig2_data,

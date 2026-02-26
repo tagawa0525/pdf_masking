@@ -6,7 +6,7 @@ rust-version = "1.93"
 
 [features]
 default = ["mrc"]
-mrc = ["dep:pdfium-render", "dep:leptonica-sys", "dep:libc", "dep:cc"]
+mrc = ["dep:pdfium-render", "dep:leptonica", "dep:jbig2enc"]
 
 [dependencies]
 # Error handling
@@ -23,11 +23,11 @@ pdfium-render = { version = "0.8.37", optional = true }
 # Image processing (Phase 5+)
 image = "0.25.9"
 
-# Leptonica (Phase 3+, via system library)
-leptonica-sys = { version = "0.4.9", optional = true }
+# Leptonica (Phase 3+, pure Rust)
+leptonica = { version = "0.1.1", optional = true }
 
-# JBIG2 encoding (Phase 4+, via C++ shim)
-libc = { version = "0.2.181", optional = true }
+# JBIG2 encoding (Phase 4+, pure Rust)
+jbig2enc = { version = "0.1.0", default-features = false, optional = true }
 
 # Parallel processing
 rayon = "1.11.0"
@@ -52,9 +52,6 @@ tracing-subscriber = { version = "0.3.22", features = ["env-filter"] }
 # Compression (Phase 9+)
 flate2 = "1.1.9"
 
-[build-dependencies]
-cc = { version = "1.2.55", optional = true }
-
 # Testing utilities
 [dev-dependencies]
-tempfile = "3.25.0"
+tempfile = "3.26.0"
