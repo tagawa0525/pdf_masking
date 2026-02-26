@@ -452,8 +452,9 @@ pub fn optimize_image_encoding(
         if let Ok(pix) = crate::mrc::segmenter::pix_from_raw_rgba(w, h, &rgba_for_binarize) {
             let sx = w.clamp(16, 2000);
             let sy = h.clamp(16, 2000);
-            if let Ok((binary, _)) =
-                leptonica::color::otsu_adaptive_threshold(&pix, sx, sy, 0, 0, 0.0)
+            if let Ok(gray_pix) = pix.convert_rgb_to_gray(0.0, 0.0, 0.0)
+                && let Ok((_, binary)) =
+                    leptonica::color::otsu_adaptive_threshold(&gray_pix, sx, sy, 0, 0, 0.0)
                 && let Ok(jbig2_data) = jbig2::encode_mask(&binary)
             {
                 candidates.push(OptimizedImage {
