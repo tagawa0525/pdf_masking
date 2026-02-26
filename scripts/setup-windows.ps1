@@ -3,14 +3,13 @@
     pdf_masking の Windows 開発環境セットアップスクリプト。
 
 .DESCRIPTION
-    ネイティブ依存ライブラリ (leptonica, jbig2enc, pdfium) をダウンロード・ビルドし、
+    ネイティブ依存ライブラリ (pdfium) をダウンロードし、
     環境変数設定スクリプト (env-windows.ps1) を生成する。
 
-    初回のみ実行が必要。以降は各ターミナルセッションで env-windows.ps1 を読み込む。
+    leptonica と jbig2enc は pure Rust crate のため、C ライブラリの
+    インストールは不要。
 
-.PARAMETER Triplet
-    vcpkg トリプレット (既定: x64-windows-static-md)。
-    静的ライブラリ + 動的CRT で Rust の既定リンク方式と一致する。
+    初回のみ実行が必要。以降は各ターミナルセッションで env-windows.ps1 を読み込む。
 
 .PARAMETER PdfiumRepo
     pdfium プリビルドバイナリの GitHub リポジトリ (owner/repo 形式)。
@@ -22,7 +21,6 @@
 #>
 
 param(
-    [string]$Triplet = "x64-windows-static-md",
     [string]$PdfiumRepo = "nicehash/nicehash-pdfium-binaries"
 )
 
@@ -53,26 +51,7 @@ Write-Step "Prerequisites check"
 
 $ok = $true
 $ok = (Assert-Command "git"   "https://git-scm.com/") -and $ok
-$ok = (Assert-Command "cmake" "https://cmake.org/ or winget install Kitware.CMake") -and $ok
 $ok = (Assert-Command "cargo" "https://rustup.rs/") -and $ok
-
-# MSVC (cl.exe) の存在確認
-$vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
-if (Test-Path $vswhere) {
-    $vsPath = & $vswhere -latest -products * `
-        -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 `
-        -property installationPath 2>$null
-    if ($vsPath) {
-        Write-Host "  [OK] MSVC ($vsPath)" -ForegroundColor Green
-    } else {
-        Write-Host "  [MISSING] Visual Studio C++ Build Tools" -ForegroundColor Red
-        Write-Host "           winget install Microsoft.VisualStudio.2022.BuildTools" -ForegroundColor Yellow
-        $ok = $false
-    }
-} else {
-    Write-Host "  [MISSING] Visual Studio / Build Tools" -ForegroundColor Red
-    $ok = $false
-}
 
 if (-not $ok) {
     Write-Host "`nMissing prerequisites. Install them and re-run." -ForegroundColor Red
@@ -85,90 +64,7 @@ if (-not $ok) {
 New-Item -ItemType Directory -Path $DepsDir -Force | Out-Null
 
 # ============================================================
-# 3. vcpkg のセットアップ
-# ============================================================
-Write-Step "vcpkg"
-
-$VcpkgDir = Join-Path $DepsDir "vcpkg"
-$VcpkgExe = Join-Path $VcpkgDir "vcpkg.exe"
-
-if (-not (Test-Path $VcpkgExe)) {
-    if (-not (Test-Path $VcpkgDir)) {
-        Write-Host "Cloning vcpkg (pinned to 2025.04.09)..."
-        git clone https://github.com/microsoft/vcpkg.git $VcpkgDir
-        git -C $VcpkgDir checkout 2025.04.09
-    }
-    Write-Host "Bootstrapping vcpkg..."
-    & (Join-Path $VcpkgDir "bootstrap-vcpkg.bat") -disableMetrics
-    if ($LASTEXITCODE -ne 0) { throw "vcpkg bootstrap failed" }
-}
-
-$VcpkgInstalled = Join-Path $VcpkgDir "installed" $Triplet
-Write-Host "vcpkg ready: $VcpkgDir" -ForegroundColor Green
-
-# ============================================================
-# 4. leptonica (vcpkg)
-# ============================================================
-Write-Step "leptonica (via vcpkg, triplet=$Triplet)"
-
-& $VcpkgExe install "leptonica:$Triplet"
-if ($LASTEXITCODE -ne 0) { throw "vcpkg install leptonica failed" }
-
-$LeptonicaInclude = Join-Path $VcpkgInstalled "include"
-Write-Host "leptonica installed: $VcpkgInstalled" -ForegroundColor Green
-
-# ============================================================
-# 5. jbig2enc (ソースからビルド)
-# ============================================================
-Write-Step "jbig2enc (build from source)"
-
-$Jbig2SrcDir     = Join-Path $DepsDir "jbig2enc-src"
-$Jbig2BuildDir   = Join-Path $DepsDir "jbig2enc-build"
-$Jbig2InstallDir = Join-Path $DepsDir "jbig2enc"
-
-# ソース取得
-# jbig2enc は最終リリースがないため、動作確認済みのコミットにピン留めする。
-$Jbig2encCommit = "5aeb24dcc1e51cfbae68f64bb40b2a9f7e4cf034"
-if (-not (Test-Path (Join-Path $Jbig2SrcDir ".git"))) {
-    Write-Host "Cloning jbig2enc (pinned to $Jbig2encCommit)..."
-    git clone https://github.com/agl/jbig2enc.git $Jbig2SrcDir
-    git -C $Jbig2SrcDir checkout $Jbig2encCommit
-}
-
-# CMakeLists.txt をコピー (autotools は Windows 非対応)
-Copy-Item (Join-Path $PSScriptRoot "jbig2enc-CMakeLists.txt") `
-          (Join-Path $Jbig2SrcDir "CMakeLists.txt") -Force
-
-# ビルド
-# Visual Studio ジェネレータ使用時にアーキテクチャを明示しないと Win32 (x86) になることがあるため、
-# vcpkg トリプレットや VS 開発者コマンドプロンプトの設定からアーキテクチャを推測して指定する。
-$CmakeJbig2ArchArgs = @()
-if ($Env:VSCMD_ARG_TGT_ARCH) {
-    $CmakeJbig2ArchArgs += '-A'
-    $CmakeJbig2ArchArgs += $Env:VSCMD_ARG_TGT_ARCH
-} elseif ($Triplet -like 'x64-*') {
-    $CmakeJbig2ArchArgs += '-A'
-    $CmakeJbig2ArchArgs += 'x64'
-}
-
-Write-Host "Configuring jbig2enc..."
-cmake @CmakeJbig2ArchArgs -S $Jbig2SrcDir -B $Jbig2BuildDir `
-    -DCMAKE_PREFIX_PATH="$VcpkgInstalled" `
-    -DLEPTONICA_INCLUDE_DIR="$LeptonicaInclude"
-if ($LASTEXITCODE -ne 0) { throw "jbig2enc cmake configure failed" }
-
-Write-Host "Building jbig2enc..."
-cmake --build $Jbig2BuildDir --config Release
-if ($LASTEXITCODE -ne 0) { throw "jbig2enc build failed" }
-
-Write-Host "Installing jbig2enc..."
-cmake --install $Jbig2BuildDir --config Release --prefix $Jbig2InstallDir
-if ($LASTEXITCODE -ne 0) { throw "jbig2enc install failed" }
-
-Write-Host "jbig2enc installed: $Jbig2InstallDir" -ForegroundColor Green
-
-# ============================================================
-# 6. pdfium (プリビルドバイナリ)
+# 3. pdfium (プリビルドバイナリ)
 # ============================================================
 Write-Step "pdfium (prebuilt binaries)"
 
@@ -260,7 +156,7 @@ if ($pdfiumDll) {
 }
 
 # ============================================================
-# 7. qpdf
+# 4. qpdf
 # ============================================================
 Write-Step "qpdf"
 
@@ -275,7 +171,7 @@ if (Get-Command qpdf -ErrorAction SilentlyContinue) {
 }
 
 # ============================================================
-# 8. env-windows.ps1 生成
+# 5. env-windows.ps1 生成
 # ============================================================
 Write-Step "Generating env-windows.ps1"
 
@@ -283,17 +179,8 @@ $envContent = @"
 # Auto-generated by setup-windows.ps1 at $(Get-Date -Format "yyyy-MM-dd HH:mm:ss")
 # Usage: . .\scripts\env-windows.ps1
 
-# --- build.rs: C++ shim compilation ---
-`$env:JBIG2ENC_INCLUDE_PATH = "$Jbig2InstallDir\include"
-`$env:JBIG2ENC_LIB_PATH     = "$Jbig2InstallDir\lib"
-`$env:LEPTONICA_INCLUDE_PATH = "$LeptonicaInclude"
-
 # --- pdfium-render: runtime dynamic loading ---
 `$env:PDFIUM_DYNAMIC_LIB_PATH = "$PdfiumLibDir"
-
-# --- leptonica-sys: vcpkg integration ---
-`$env:VCPKG_ROOT       = "$VcpkgDir"
-`$env:VCPKGRS_TRIPLET  = "$Triplet"
 
 # --- DLLs and tools ---
 `$env:PATH = "$PdfiumLibDir;`$env:PATH"
@@ -313,10 +200,10 @@ Write-Step "Setup complete"
 Write-Host @"
 
 Next steps:
-  1. Open a Developer Command Prompt or run vcvarsall.bat
-  2. Load environment:  . .\scripts\env-windows.ps1
-  3. Build:             cargo build
-  4. Test:              cargo test
+  1. Load environment:  . .\scripts\env-windows.ps1
+  2. Build:             cargo build
+  3. Test:              cargo test
 
+Note: leptonica and jbig2enc are pure Rust crates; no C/C++ compiler is required.
 Tip: Add '. $envScriptPath' to your PowerShell profile.
 "@

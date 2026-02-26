@@ -6,8 +6,6 @@
 use std::collections::HashMap;
 
 use pdf_masking::config::job::ColorMode;
-#[cfg(feature = "mrc")]
-use pdf_masking::ffi::leptonica::Pix;
 use pdf_masking::mrc::compositor;
 use pdf_masking::mrc::jpeg;
 #[cfg(feature = "mrc")]
@@ -49,6 +47,19 @@ fn create_test_rgba_image() -> (Vec<u8>, u32, u32) {
     (data, width, height)
 }
 
+/// PixMut にピクセルをセットして Pix に変換するヘルパー
+#[cfg(feature = "mrc")]
+fn make_1bit_pix_with_pixels(width: u32, height: u32, pixels: &[(u32, u32)]) -> leptonica::Pix {
+    use leptonica::{Pix, PixelDepth};
+
+    let pix = Pix::new(width, height, PixelDepth::Bit1).expect("create Pix");
+    let mut pix_mut = pix.try_into_mut().unwrap();
+    for &(x, y) in pixels {
+        pix_mut.set_pixel(x, y, 1).expect("set pixel");
+    }
+    pix_mut.into()
+}
+
 // ---- segmenter.rs tests ----
 
 /// Test that segment_text_mask produces a Pix from RGBA input.
@@ -65,20 +76,26 @@ fn test_segment_creates_text_mask() {
     );
 
     let mask = result.unwrap();
-    assert_eq!(mask.get_width(), width);
-    assert_eq!(mask.get_height(), height);
+    assert_eq!(mask.width(), width);
+    assert_eq!(mask.height(), height);
 }
 
 /// Test that the text mask is 1-bit depth.
 #[cfg(feature = "mrc")]
 #[test]
 fn test_segment_mask_is_1bit() {
+    use leptonica::PixelDepth;
+
     let (data, width, height) = create_test_rgba_image();
 
     let mask = segmenter::segment_text_mask(&data, width, height)
         .expect("segment_text_mask should succeed");
 
-    assert_eq!(mask.get_depth(), 1, "Text mask should be 1-bit depth");
+    assert_eq!(
+        mask.depth(),
+        PixelDepth::Bit1,
+        "Text mask should be 1-bit depth"
+    );
 }
 
 // ---- jbig2.rs tests ----
@@ -87,11 +104,14 @@ fn test_segment_mask_is_1bit() {
 #[cfg(feature = "mrc")]
 #[test]
 fn test_encode_mask_to_jbig2() {
-    // Create a simple 1-bit mask
-    let mut mask = Pix::create(100, 100, 1).expect("failed to create 1-bit Pix");
-    mask.set_all_pixels(1).expect("failed to set pixels");
+    use leptonica::{Pix, PixelDepth};
 
-    let result = jbig2::encode_mask(&mut mask);
+    let pix = Pix::new(100, 100, PixelDepth::Bit1).expect("failed to create 1-bit Pix");
+    let mut pix_mut = pix.try_into_mut().unwrap();
+    pix_mut.set_all_arbitrary(1).expect("failed to set pixels");
+    let mask: leptonica::Pix = pix_mut.into();
+
+    let result = jbig2::encode_mask(&mask);
     assert!(result.is_ok(), "encode_mask failed: {:?}", result.err());
 }
 
@@ -99,9 +119,11 @@ fn test_encode_mask_to_jbig2() {
 #[cfg(feature = "mrc")]
 #[test]
 fn test_encode_returns_non_empty() {
-    let mut mask = Pix::create(100, 100, 1).expect("failed to create 1-bit Pix");
+    use leptonica::{Pix, PixelDepth};
 
-    let data = jbig2::encode_mask(&mut mask).expect("encode_mask should succeed");
+    let mask = Pix::new(100, 100, PixelDepth::Bit1).expect("failed to create 1-bit Pix");
+
+    let data = jbig2::encode_mask(&mask).expect("encode_mask should succeed");
     assert!(!data.is_empty(), "JBIG2 encoded data should not be empty");
 }
 
@@ -203,18 +225,17 @@ fn test_gray_jpeg_smaller_than_rgb() {
 // ---- segmenter::extract_text_bboxes tests ----
 
 /// Test that extract_text_bboxes returns bboxes for a mask with content.
+#[cfg(feature = "mrc")]
 #[test]
 fn test_extract_text_bboxes_with_content() {
     let w: u32 = 100;
     let h: u32 = 100;
-    let mut mask = Pix::create(w, h, 1).expect("create 1-bit Pix");
 
     // Create a 20x10 block (large enough to pass the 4x4 filter)
-    for y in 10..20 {
-        for x in 20..40 {
-            mask.set_pixel(x, y, 1).expect("set pixel");
-        }
-    }
+    let pixels: Vec<(u32, u32)> = (10..20u32)
+        .flat_map(|y| (20..40u32).map(move |x| (x, y)))
+        .collect();
+    let mask = make_1bit_pix_with_pixels(w, h, &pixels);
 
     let bboxes = segmenter::extract_text_bboxes(&mask, 0).expect("extract_text_bboxes");
     assert_eq!(bboxes.len(), 1, "Should find exactly one bbox");
@@ -231,31 +252,32 @@ fn test_extract_text_bboxes_with_content() {
 }
 
 /// Test that extract_text_bboxes returns empty for an all-zero mask.
+#[cfg(feature = "mrc")]
 #[test]
 fn test_extract_text_bboxes_empty_mask() {
-    let mask = Pix::create(100, 100, 1).expect("create 1-bit Pix");
+    use leptonica::{Pix, PixelDepth};
+
+    let mask = Pix::new(100, 100, PixelDepth::Bit1).expect("create 1-bit Pix");
     // All-zero mask → no connected components
     let bboxes = segmenter::extract_text_bboxes(&mask, 0).expect("extract_text_bboxes");
     assert!(bboxes.is_empty(), "Empty mask should yield no bboxes");
 }
 
 /// Test that small bboxes (< 4x4) are filtered out.
+#[cfg(feature = "mrc")]
 #[test]
 fn test_extract_text_bboxes_filters_small() {
+    use leptonica::region::conncomp::{ConnectivityType, find_connected_components};
+
     // Create a 1-bit mask with only a tiny 2x2 connected component
-    let mut mask = Pix::create(100, 100, 1).expect("create 1-bit Pix");
-    // Set a 2x2 block of pixels (too small, should be filtered)
-    mask.set_pixel(10, 10, 1).expect("set pixel");
-    mask.set_pixel(11, 10, 1).expect("set pixel");
-    mask.set_pixel(10, 11, 1).expect("set pixel");
-    mask.set_pixel(11, 11, 1).expect("set pixel");
+    let mask = make_1bit_pix_with_pixels(100, 100, &[(10, 10), (11, 10), (10, 11), (11, 11)]);
 
     // Verify connected component exists before filtering
-    let raw_bboxes = mask
-        .connected_component_bboxes(4)
-        .expect("connected_component_bboxes");
-    assert_eq!(raw_bboxes.len(), 1, "Should have one small component");
-    assert_eq!(raw_bboxes[0], (10, 10, 2, 2), "Component should be 2x2");
+    let components = find_connected_components(&mask, ConnectivityType::FourWay)
+        .expect("find_connected_components");
+    assert_eq!(components.len(), 1, "Should have one small component");
+    let bounds = components[0].bounds;
+    assert_eq!((bounds.x, bounds.y, bounds.w, bounds.h), (10, 10, 2, 2));
 
     // extract_text_bboxes should filter it out (< 4x4)
     let bboxes = segmenter::extract_text_bboxes(&mask, 0).expect("extract_text_bboxes");
@@ -267,21 +289,14 @@ fn test_extract_text_bboxes_filters_small() {
 }
 
 /// Test merge_distance parameter merges nearby bboxes.
+#[cfg(feature = "mrc")]
 #[test]
 fn test_extract_text_bboxes_merge() {
-    let mut mask = Pix::create(200, 100, 1).expect("create 1-bit Pix");
-
     // Create two separate 10x10 blocks with a 5px gap between them
-    for y in 10..20 {
-        for x in 10..20 {
-            mask.set_pixel(x, y, 1).expect("set pixel");
-        }
-    }
-    for y in 10..20 {
-        for x in 25..35 {
-            mask.set_pixel(x, y, 1).expect("set pixel");
-        }
-    }
+    let pixels: Vec<(u32, u32)> = (10..20u32)
+        .flat_map(|y| (10..20u32).chain(25..35u32).map(move |x| (x, y)))
+        .collect();
+    let mask = make_1bit_pix_with_pixels(200, 100, &pixels);
 
     // Without merging: 2 separate bboxes
     let bboxes_no_merge = segmenter::extract_text_bboxes(&mask, 0).expect("no merge");
@@ -296,43 +311,60 @@ fn test_extract_text_bboxes_merge() {
     assert_eq!(bboxes_merged[0].width, 25); // 35 - 10
 }
 
-/// Test connected_component_bboxes FFI wrapper directly.
+// ---- connected component tests (pure Rust API) ----
+
+/// Test find_connected_components on empty 1-bit image.
+#[cfg(feature = "mrc")]
 #[test]
-fn test_connected_component_bboxes_empty() {
-    let mask = Pix::create(50, 50, 1).expect("create 1-bit Pix");
-    let bboxes = mask
-        .connected_component_bboxes(4)
-        .expect("connected_component_bboxes");
+fn test_connected_components_empty() {
+    use leptonica::region::conncomp::{ConnectivityType, find_connected_components};
+    use leptonica::{Pix, PixelDepth};
+
+    let mask = Pix::new(50, 50, PixelDepth::Bit1).expect("create 1-bit Pix");
+    let components = find_connected_components(&mask, ConnectivityType::FourWay)
+        .expect("find_connected_components");
     assert!(
-        bboxes.is_empty(),
+        components.is_empty(),
         "Empty 1-bit image should have no connected components"
     );
 }
 
-/// Test connected_component_bboxes with all-set mask.
+/// Test find_connected_components with all-set mask.
+#[cfg(feature = "mrc")]
 #[test]
-fn test_connected_component_bboxes_full() {
-    let mut mask = Pix::create(50, 50, 1).expect("create 1-bit Pix");
-    mask.set_all_pixels(1).expect("set all pixels");
-    let bboxes = mask
-        .connected_component_bboxes(4)
-        .expect("connected_component_bboxes");
+fn test_connected_components_full() {
+    use leptonica::region::conncomp::{ConnectivityType, find_connected_components};
+    use leptonica::{Pix, PixelDepth};
+
+    let pix = Pix::new(50, 50, PixelDepth::Bit1).expect("create 1-bit Pix");
+    let mut pix_mut = pix.try_into_mut().unwrap();
+    pix_mut.set_all_arbitrary(1).expect("set all pixels");
+    let mask: leptonica::Pix = pix_mut.into();
+
+    let components = find_connected_components(&mask, ConnectivityType::FourWay)
+        .expect("find_connected_components");
     // All-set image → one big connected component
-    assert_eq!(bboxes.len(), 1, "All-set image should be one component");
-    assert_eq!(bboxes[0], (0, 0, 50, 50));
+    assert_eq!(components.len(), 1, "All-set image should be one component");
+    let b = components[0].bounds;
+    assert_eq!((b.x, b.y, b.w, b.h), (0, 0, 50, 50));
 }
 
-/// Test connected_component_bboxes rejects non-1-bit images.
+/// Test find_connected_components rejects non-1-bit images.
+#[cfg(feature = "mrc")]
 #[test]
-fn test_connected_component_bboxes_wrong_depth() {
-    let mask = Pix::create(50, 50, 8).expect("create 8-bit Pix");
-    let result = mask.connected_component_bboxes(4);
+fn test_connected_components_wrong_depth() {
+    use leptonica::region::conncomp::{ConnectivityType, find_connected_components};
+    use leptonica::{Pix, PixelDepth};
+
+    let mask = Pix::new(50, 50, PixelDepth::Bit8).expect("create 8-bit Pix");
+    let result = find_connected_components(&mask, ConnectivityType::FourWay);
     assert!(result.is_err(), "Should reject non-1-bit image");
 }
 
 // ---- compositor.rs tests ----
 
 /// Test the full MRC pipeline: RGBA bitmap + config -> MrcLayers.
+#[cfg(feature = "mrc")]
 #[test]
 fn test_compose_mrc_layers() {
     let (data, width, height) = create_test_rgba_image();
@@ -358,6 +390,7 @@ fn test_compose_mrc_layers() {
 }
 
 /// Test that all three MRC layers are non-empty.
+#[cfg(feature = "mrc")]
 #[test]
 fn test_mrc_layers_has_all_components() {
     let (data, width, height) = create_test_rgba_image();
@@ -394,6 +427,7 @@ fn test_mrc_layers_has_all_components() {
 // ---- compose_text_masked tests ----
 
 /// Test compose_text_masked with empty content stream.
+#[cfg(feature = "mrc")]
 #[test]
 fn test_compose_text_masked_empty_content() {
     let (data, width, height) = create_test_rgba_image();
@@ -426,6 +460,7 @@ fn test_compose_text_masked_empty_content() {
 }
 
 /// Test compose_text_masked strips BT...ET blocks from content.
+#[cfg(feature = "mrc")]
 #[test]
 fn test_compose_text_masked_strips_text() {
     let content = b"BT /F1 12 Tf (Hello) Tj ET";
@@ -458,6 +493,7 @@ fn test_compose_text_masked_strips_text() {
 }
 
 /// Test compose_text_masked in grayscale mode.
+#[cfg(feature = "mrc")]
 #[test]
 fn test_compose_text_masked_grayscale() {
     let (data, width, height) = create_test_rgba_image();
@@ -489,6 +525,7 @@ fn test_compose_text_masked_grayscale() {
 }
 
 /// Test that text regions have valid PDF bounding boxes.
+#[cfg(feature = "mrc")]
 #[test]
 fn test_compose_text_masked_valid_bboxes() {
     let (data, width, height) = create_test_rgba_image();
@@ -625,16 +662,14 @@ fn test_compose_text_outlines_no_text() {
 // ---- crop_text_regions_jbig2 tests ----
 
 /// Test cropping a single text region as JBIG2 from a 1-bit mask.
+#[cfg(feature = "mrc")]
 #[test]
 fn test_crop_text_regions_jbig2_single() {
-    let mut mask = Pix::create(200, 200, 1).expect("create 1-bit Pix");
-
     // Create a 50x50 black region at (50, 50)
-    for y in 50..100 {
-        for x in 50..100 {
-            mask.set_pixel(x, y, 1).expect("set pixel");
-        }
-    }
+    let pixels: Vec<(u32, u32)> = (50..100u32)
+        .flat_map(|y| (50..100u32).map(move |x| (x, y)))
+        .collect();
+    let mask = make_1bit_pix_with_pixels(200, 200, &pixels);
 
     let bboxes = vec![segmenter::PixelBBox {
         x: 50,
@@ -659,21 +694,17 @@ fn test_crop_text_regions_jbig2_single() {
 }
 
 /// Test cropping multiple regions from a 1-bit mask.
+#[cfg(feature = "mrc")]
 #[test]
 fn test_crop_text_regions_jbig2_multiple() {
-    let mut mask = Pix::create(300, 200, 1).expect("create 1-bit Pix");
-
-    // Create two separate regions
-    for y in 20..50 {
-        for x in 20..70 {
-            mask.set_pixel(x, y, 1).expect("set pixel");
-        }
-    }
-    for y in 100..150 {
-        for x in 100..150 {
-            mask.set_pixel(x, y, 1).expect("set pixel");
-        }
-    }
+    let pixels1: Vec<(u32, u32)> = (20..50u32)
+        .flat_map(|y| (20..70u32).map(move |x| (x, y)))
+        .collect();
+    let pixels2: Vec<(u32, u32)> = (100..150u32)
+        .flat_map(|y| (100..150u32).map(move |x| (x, y)))
+        .collect();
+    let all_pixels: Vec<(u32, u32)> = pixels1.into_iter().chain(pixels2).collect();
+    let mask = make_1bit_pix_with_pixels(300, 200, &all_pixels);
 
     let bboxes = vec![
         segmenter::PixelBBox {
@@ -704,9 +735,12 @@ fn test_crop_text_regions_jbig2_multiple() {
 }
 
 /// Test cropping with empty bboxes returns empty.
+#[cfg(feature = "mrc")]
 #[test]
 fn test_crop_text_regions_jbig2_empty() {
-    let mask = Pix::create(200, 200, 1).expect("create 1-bit Pix");
+    use leptonica::{Pix, PixelDepth};
+
+    let mask = Pix::new(200, 200, PixelDepth::Bit1).expect("create 1-bit Pix");
     let result = compositor::crop_text_regions_jbig2(&mask, &[]);
     assert!(result.is_ok());
     let crops = result.unwrap();

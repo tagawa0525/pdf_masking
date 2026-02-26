@@ -2,7 +2,8 @@
 
 use tracing::debug;
 
-use crate::ffi::leptonica::Pix;
+#[cfg(feature = "mrc")]
+use leptonica::{Pix, PixMut, PixelDepth};
 
 /// テキスト領域のピクセル座標バウンディングボックス。
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -11,6 +12,58 @@ pub struct PixelBBox {
     pub y: u32,
     pub width: u32,
     pub height: u32,
+}
+
+/// RGBAデータから leptonica 32-bit Pix を作成するヘルパー。
+///
+/// `segmenter.rs` と `image_xobject.rs` の両方から使用する。
+#[cfg(feature = "mrc")]
+pub fn pix_from_raw_rgba(width: u32, height: u32, data: &[u8]) -> crate::error::Result<Pix> {
+    use crate::error::PdfMaskError;
+
+    let expected_size = width
+        .checked_mul(height)
+        .and_then(|wh| wh.checked_mul(4))
+        .ok_or_else(|| {
+            PdfMaskError::segmentation(format!(
+                "Overflow computing buffer size for {}x{} RGBA image",
+                width, height
+            ))
+        })? as usize;
+
+    if data.len() != expected_size {
+        return Err(PdfMaskError::segmentation(format!(
+            "Data size mismatch: expected {} bytes, got {}",
+            expected_size,
+            data.len()
+        )));
+    }
+
+    // 32-bit Pix を作成してピクセルデータをコピー
+    let pix = Pix::new(width, height, PixelDepth::Bit32)
+        .map_err(|e| PdfMaskError::segmentation(e.to_string()))?;
+
+    let mut pix_mut: PixMut = pix.try_into_mut().unwrap_or_else(|p| p.to_mut());
+
+    // RGBA データを 32-bit Pix のワード配列にコピー
+    // leptonica の 32-bit レイアウト: 各ピクセルが 1 word (u32)
+    // RGBA の各バイトをシフトして合成する
+    for y in 0..height {
+        for x in 0..width {
+            let idx = ((y * width + x) * 4) as usize;
+            let r = data[idx] as u32;
+            let g = data[idx + 1] as u32;
+            let b = data[idx + 2] as u32;
+            let a = data[idx + 3] as u32;
+            // leptonica 32-bit pixel layout: R<<24 | G<<16 | B<<8 | A
+            let val = (r << 24) | (g << 16) | (b << 8) | a;
+            pix_mut.set_pixel(x, y, val).map_err(|e| {
+                PdfMaskError::segmentation(format!("Failed to set pixel at ({}, {}): {}", x, y, e))
+            })?;
+        }
+    }
+
+    Ok(pix_mut.into())
 }
 
 /// テキストマスクから矩形領域を抽出する。
@@ -25,21 +78,29 @@ pub struct PixelBBox {
 ///
 /// # Returns
 /// マージ済みのテキスト領域矩形リスト
+#[cfg(feature = "mrc")]
 pub fn extract_text_bboxes(
     text_mask: &Pix,
     merge_distance: u32,
 ) -> crate::error::Result<Vec<PixelBBox>> {
-    // Connected components のバウンディングボックスを取得
-    let raw_boxes = text_mask.connected_component_bboxes(4)?;
+    use crate::error::PdfMaskError;
+    use leptonica::region::conncomp::{ConnectivityType, find_connected_components};
 
-    // PixelBBox に変換
-    let mut bboxes: Vec<PixelBBox> = raw_boxes
+    // Connected components のバウンディングボックスを取得
+    let components = find_connected_components(text_mask, ConnectivityType::FourWay)
+        .map_err(|e| PdfMaskError::segmentation(e.to_string()))?;
+
+    // PixelBBox に変換（負の値は 0 にクランプ）
+    let mut bboxes: Vec<PixelBBox> = components
         .into_iter()
-        .map(|(x, y, w, h)| PixelBBox {
-            x,
-            y,
-            width: w,
-            height: h,
+        .map(|cc| {
+            let b = cc.bounds;
+            PixelBBox {
+                x: b.x.max(0) as u32,
+                y: b.y.max(0) as u32,
+                width: b.w.max(0) as u32,
+                height: b.h.max(0) as u32,
+            }
         })
         .collect();
 
@@ -129,27 +190,60 @@ fn bboxes_are_nearby(a: &PixelBBox, b: &PixelBBox, distance: u32) -> bool {
 /// * `rgba_data` - Raw RGBA pixel data (4 bytes per pixel)
 /// * `width`     - Image width in pixels
 /// * `height`    - Image height in pixels
+#[cfg(feature = "mrc")]
 pub fn segment_text_mask(rgba_data: &[u8], width: u32, height: u32) -> crate::error::Result<Pix> {
+    use crate::error::PdfMaskError;
+    use leptonica::color::otsu_adaptive_threshold;
+    use leptonica::recog::pageseg::{PageSegOptions, segment_regions};
+
     // 1. RGBA -> leptonica 32-bit Pix
-    let pix = Pix::from_raw_rgba(width, height, rgba_data)?;
+    let pix = pix_from_raw_rgba(width, height, rgba_data)?;
 
     // 2. Convert 32-bit RGBA to 8-bit grayscale (Otsu requires 8 bpp)
-    let gray = pix.convert_to_gray()?;
+    let gray = pix
+        .convert_rgb_to_gray(0.0, 0.0, 0.0)
+        .map_err(|e| PdfMaskError::segmentation(e.to_string()))?;
 
     // 3. Otsu adaptive threshold -> 1-bit binary image
     //    Tile size is capped at the image dimension (min 16px to avoid
     //    degenerate tiles) so it adapts to both small and large images.
     let tile_sx = width.clamp(16, 2000);
     let tile_sy = height.clamp(16, 2000);
-    let binary = gray.otsu_adaptive_threshold(tile_sx, tile_sy)?;
+    let (_threshold_map, binary) = otsu_adaptive_threshold(&gray, tile_sx, tile_sy, 0, 0, 0.0)
+        .map_err(|e| PdfMaskError::segmentation(e.to_string()))?;
 
     // 4. Extract region masks from the binary image
-    let masks = binary.get_region_masks()?;
+    let opts = PageSegOptions {
+        detect_halftone: true,
+        ..Default::default()
+    };
+    let result =
+        segment_regions(&binary, &opts).map_err(|e| PdfMaskError::segmentation(e.to_string()))?;
 
-    // Use the textline mask if leptonica detected text regions.
-    // Otherwise return an empty (all-zero) 1-bit mask.
-    match masks.textline {
-        Some(textline_mask) => Ok(textline_mask),
-        None => Pix::create(width, height, 1),
+    // Use the textline mask if it contains any foreground pixels.
+    // If empty, return an all-zero 1-bit mask.
+    let textline_mask = result.textline_mask;
+    let has_text = has_foreground(&textline_mask);
+
+    if has_text {
+        Ok(textline_mask)
+    } else {
+        Pix::new(width, height, PixelDepth::Bit1)
+            .map_err(|e| PdfMaskError::segmentation(e.to_string()))
     }
+}
+
+/// 1-bit Pix にフォアグラウンドピクセル（1）が存在するか確認する。
+#[cfg(feature = "mrc")]
+fn has_foreground(pix: &Pix) -> bool {
+    let w = pix.width();
+    let h = pix.height();
+    for y in 0..h {
+        for x in 0..w {
+            if pix.get_pixel(x, y).unwrap_or(0) != 0 {
+                return true;
+            }
+        }
+    }
+    false
 }
